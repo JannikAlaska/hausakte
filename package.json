@@ -1,0 +1,16 @@
+{
+  "name": "hausakte",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Hausakte – 3D-Modell, Bauteile, Projekte, Förderung und Dokumente für die Modernisierung eines Hauses",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "esbuild": "^0.24.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "three": "^0.160.0"
+  }
+}

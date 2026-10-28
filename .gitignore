@@ -1,0 +1,7 @@
+node_modules/
+dist/
+web/
+upload/
+# private house data (address, purchase price) – lives in Supabase, not in git
+src/house-private.js
+.DS_Store

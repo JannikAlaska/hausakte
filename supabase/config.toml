@@ -1,0 +1,8 @@
+project_id = "kowakeiwjrwiqoshwiun"
+
+# Both functions check the caller themselves (ai: signed-in member, signup: invite code).
+[functions.ai]
+verify_jwt = false
+
+[functions.signup]
+verify_jwt = false
