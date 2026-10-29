@@ -77,7 +77,7 @@ function SceneView({ data, sceneRef }) {
     const s = sceneRef.current;
     if (!s) return;
     if (ui.view === 'grundriss') {
-      const fid = ui.floorId && ui.floorId !== 'roof' && ui.floorId !== 'site' ? ui.floorId : null;
+      const fid = ui.floorId && ui.floorId !== 'roof' && ui.floorId !== 'site' && !String(ui.floorId).startsWith('ctx:') ? ui.floorId : null;
       const showLines = ui.floorId !== 'site' && ui.planLines !== false;
       if (fid) s.setView({ mode: 'floor', floorId: fid, showRoof: ui.showRoof, showLabels: ui.showLabels, showLines });
       else s.setView({ mode: 'all', floorId: null, showRoof: true, showLabels: ui.showLabels, showLines });

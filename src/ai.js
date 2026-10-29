@@ -95,7 +95,7 @@ export function houseContext(d, { withProjects = true, withComponents = true, wi
   }
   const lineInfo = [];
   for (const f of floors)
-    for (const l of f.lines || []) {
+    for (const l of (f.lines || []).filter((x) => !x.auto)) {
       let len = 0;
       for (let i = 1; i < (l.pts || []).length; i++) len += Math.hypot(l.pts[i][0] - l.pts[i - 1][0], l.pts[i][1] - l.pts[i - 1][1], (l.pts[i][2] ?? 0) - (l.pts[i - 1][2] ?? 0));
       lineInfo.push(`- ${f.short || f.name}: ${lineKind(l.kind).name}${l.riser ? ' (Steigleitung)' : ''}${l.label ? ` „${l.label}“` : ''}, ${fmtNum(len, 1)} m, ${l.status || 'bestand'}${l.notes ? `, ${String(l.notes).slice(0, 120)}` : ''}`);
@@ -104,6 +104,16 @@ export function houseContext(d, { withProjects = true, withComponents = true, wi
     L.push('');
     L.push('EINGEZEICHNETE LEITUNGEN');
     L.push(...lineInfo.slice(0, 40));
+  }
+  const outb = (h.model?.context || []).filter((b) => b.kind !== 'neighbor');
+  if (outb.length) {
+    L.push('');
+    L.push('NEBENGEBÄUDE');
+    for (const b of outb) {
+      const rooms = (b.rooms || []).map((r) => `${r.name} ${fmtNum(roomArea(r), 1)} m²`).join(', ');
+      const fx = (b.points || []).map((q) => `${q.count > 1 ? q.count + '× ' : ''}${fixtureKind(q.kind).name}`).join(', ');
+      L.push(`- ${b.name || 'Nebengebäude'}: ${fmtNum(b.w, 1)} × ${fmtNum(b.d, 1)} m, Wandhöhe ${fmtNum(b.h ?? 2.4, 1)} m${b.open ? ', offen' : ''}${rooms ? `; Räume: ${rooms}` : ''}${(b.lines || []).length ? `; ${b.lines.length} Leitungen (${[...new Set(b.lines.map((l) => lineKind(l.kind).name))].join(', ')})` : ''}${fx ? `; Anschlüsse: ${fx}` : ''}${b.notes ? `; Notiz: ${String(b.notes).slice(0, 160)}` : ''}`);
+    }
   }
   const fixInfo = [];
   for (const f of floors) {

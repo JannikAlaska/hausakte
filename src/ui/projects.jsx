@@ -347,10 +347,20 @@ function Gantt({ data }) {
 }
 
 // ================= Drawer =================
+const P_TABS = [
+  { key: 'uebersicht', label: 'Übersicht', icon: 'info' },
+  { key: 'zeitplan', label: 'Zeitplan', icon: 'calendar' },
+  { key: 'kosten', label: 'Kosten', icon: 'euro' },
+  { key: 'foerderung', label: 'Förderung', icon: 'flag' },
+  { key: 'aufgaben', label: 'Aufgaben', icon: 'checkCircle' },
+  { key: 'dokumente', label: 'Dokumente', icon: 'file' },
+];
+
 export function ProjectDrawer({ data, drawer }) {
   const p = data.projects[drawer.id];
   const [autoRun, setAutoRun] = useState(0);
-  const fundRef = useRef(null);
+  const [tab, setTab] = useState(drawer.tab || 'uebersicht');
+  useEffect(() => setTab(drawer.tab || 'uebersicht'), [drawer.id]);
   if (!p)
     return (
       <Drawer title="Projekt nicht gefunden" onClose={closeDrawer}>
@@ -361,13 +371,23 @@ export function ProjectDrawer({ data, drawer }) {
   const kind = projectKind(p.kind);
   const all = Object.values(data.projects);
   const issues = projectIssues(p, all);
+  const warns = issues.filter((i) => i.level === 'warn');
   const cost = projectCost(p);
+  const docs = Object.values(data.documents || {}).filter((d) => d.projectId === p.id);
+  const cons = p.constraints || [];
   const runFunding = () => {
-    fundRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setTab('foerderung');
     setAutoRun((n) => n + 1);
   };
+  const tabs = P_TABS.map((t) => ({
+    ...t,
+    count: t.key === 'zeitplan' ? (p.milestones || []).length || null : t.key === 'foerderung' ? (p.funding || []).length || null : t.key === 'aufgaben' ? cons.filter((c) => !c.done).length || null : t.key === 'dokumente' ? docs.length || null : null,
+    warn: t.key === 'zeitplan' && warns.some((w) => w.kind === 'dependency' || w.kind === 'dates' || w.kind === 'overdue'),
+  }));
+  const nextMs = [...(p.milestones || [])].filter((m) => !m.done && isISO(m.date)).sort((a, b) => (a.date < b.date ? -1 : 1))[0];
   return (
     <Drawer
+      className="project-drawer"
       eyebrow={`Projekt · ${kind.name}`}
       title={p.title || 'Ohne Titel'}
       icon={kind.icon}
@@ -381,6 +401,9 @@ export function ProjectDrawer({ data, drawer }) {
           {p.example ? <Pill className="pill-example">Beispiel</Pill> : null}
         </>
       }
+      tabs={tabs}
+      tab={tab}
+      onTab={setTab}
       footer={
         <>
           <ConfirmBtn onConfirm={() => { deleteProject(p.id); closeDrawer(); toast('Projekt gelöscht'); }} />
@@ -390,160 +413,225 @@ export function ProjectDrawer({ data, drawer }) {
         </>
       }
     >
-      {issues.filter((i) => i.level === 'warn').length ? (
-        <div className="callout callout-warn" style={{ marginTop: 10 }}>
-          <Icon name="alert" size={16} />
-          <div>
-            {issues
-              .filter((i) => i.level === 'warn')
-              .map((i, k) => (
-                <div key={k}>{i.text}</div>
-              ))}
+      {tab === 'uebersicht' ? (
+        <>
+          <div className="p-summary">
+            <button type="button" className="p-sum" onClick={() => setTab('kosten')}>
+              <span>Kosten</span>
+              <b>{fmtEuro(cost.best)}</b>
+              <small>{cost.funding ? `− ${fmtEuro(cost.funding)} Förderung` : 'noch ohne Förderung'}</small>
+            </button>
+            <button type="button" className="p-sum" onClick={() => setTab('zeitplan')}>
+              <span>Zeitraum</span>
+              <b>{p.start && p.end ? `${Math.max(1, Math.round((diffDays(p.start, p.end) + 1) / 7))} Wochen` : 'offen'}</b>
+              <small>{nextMs ? `nächster Meilenstein ${fmtDayMonth(nextMs.date)}` : p.start ? `ab ${fmtDate(p.start)}` : 'Termine festlegen'}</small>
+            </button>
+            <button type="button" className="p-sum" onClick={() => setTab('aufgaben')}>
+              <span>Aufgaben</span>
+              <b>{cons.length ? `${cons.filter((c) => c.done).length} von ${cons.length}` : 'keine'}</b>
+              <small>{(p.dependsOn || []).length ? `wartet auf ${(p.dependsOn || []).length}` : 'keine Abhängigkeit'}</small>
+            </button>
           </div>
-        </div>
+
+          {warns.length ? (
+            <div className="callout callout-warn">
+              <Icon name="alert" size={16} />
+              <div>
+                {warns.map((i, k) => (
+                  <div key={k}>{i.text}</div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {p.hints?.trim() ? (
+            <div className="callout callout-info hints-callout">
+              <Icon name="info" size={16} />
+              <div>
+                <b>Hinweise</b>
+                <div className="pre-wrap">{p.hints}</div>
+              </div>
+            </div>
+          ) : null}
+
+          {p.kind === 'heizung' ? <HeatHint data={data} /> : null}
+          {p.kind === 'pv' ? <PvHint data={data} /> : null}
+
+          <Section title="Grunddaten">
+            <Field label="Titel">
+              <TextInput id={'p-title-' + p.id} value={p.title} onChange={(v) => set({ title: v })} />
+            </Field>
+            <div className="grid2">
+              <Field label="Art der Maßnahme">
+                <Select id={'p-kind-' + p.id} value={p.kind} onChange={(v) => set({ kind: v })} options={PROJECT_KINDS.map((k) => ({ value: k.key, label: k.name }))} />
+              </Field>
+              <Field label="Priorität">
+                <Seg small value={p.priority || 2} onChange={(v) => set({ priority: v })} options={[{ value: 1, label: 'Hoch' }, { value: 2, label: 'Mittel' }, { value: 3, label: 'Niedrig' }]} />
+              </Field>
+            </div>
+            <Field label="Status">
+              <div className="chips">
+                {STATUS.map((st) => (
+                  <button key={st.key} type="button" className={`chip ${p.status === st.key ? 'is-on' : ''}`} onClick={() => set({ status: st.key })}>
+                    {st.name}
+                  </button>
+                ))}
+              </div>
+            </Field>
+            <ComponentLinks p={p} data={data} set={set} />
+          </Section>
+
+          <Section title="Hinweise & Notizen">
+            <Field label="Hinweise" hint="Wird oben hervorgehoben – z. B. Abhängigkeiten, Fristen, Auflagen">
+              <TextInput id={'p-hints-' + p.id} multiline rows={3} value={p.hints || ''} onChange={(v) => set({ hints: v })} placeholder="z. B. Erst nach Zählerschrank-Tausch · Antrag KfW vor Auftrag · Gerüst mit Dach teilen" />
+            </Field>
+            <Field label="Notizen">
+              <TextInput id={'p-notes-' + p.id} multiline rows={5} value={p.notes} onChange={(v) => set({ notes: v })} placeholder="Ziele, Wünsche, Gespräche mit Handwerkern …" />
+            </Field>
+          </Section>
+        </>
       ) : null}
 
-      {p.hints?.trim() ? (
-        <div className="callout callout-info hints-callout" style={{ marginTop: 10 }}>
-          <Icon name="info" size={16} />
-          <div>
-            <b>Hinweise</b>
-            <div className="pre-wrap">{p.hints}</div>
-          </div>
-        </div>
+      {tab === 'zeitplan' ? (
+        <>
+          {warns.filter((w) => ['dependency', 'dates', 'overdue'].includes(w.kind)).length ? (
+            <div className="callout callout-warn">
+              <Icon name="alert" size={16} />
+              <div>
+                {warns
+                  .filter((w) => ['dependency', 'dates', 'overdue'].includes(w.kind))
+                  .map((i, k) => (
+                    <div key={k}>{i.text}</div>
+                  ))}
+              </div>
+            </div>
+          ) : null}
+          <Section title="Termine" aside={p.start && p.end ? `${Math.max(1, Math.round((diffDays(p.start, p.end) + 1) / 7))} Wochen` : null}>
+            <div className="grid2">
+              <Field label="Start">
+                <DateInput id={'p-start-' + p.id} value={p.start} onChange={(v) => set({ start: v, end: p.end && v && p.end < v ? addDays(v, diffDays(p.start || v, p.end)) : p.end })} />
+              </Field>
+              <Field label="Ende">
+                <DateInput id={'p-end-' + p.id} value={p.end} onChange={(v) => set({ end: v })} />
+              </Field>
+            </div>
+          </Section>
+          <Section title="Meilensteine" aside={(p.milestones || []).length ? `${(p.milestones || []).filter((m) => m.done).length}/${(p.milestones || []).length} erledigt` : null}>
+            <Milestones p={p} set={set} data={data} noLabel />
+          </Section>
+          <Section title="Abhängigkeiten">
+            <Dependencies p={p} data={data} set={set} />
+          </Section>
+          <AiRunner
+            title="Zeitplan & Abhängigkeiten"
+            icon="calendar"
+            desc="Prüft Jahreszeit, Vorlaufzeiten, Reihenfolge der Gewerke und Abhängigkeiten zu deinen anderen Projekten."
+            saved={p.ai?.timing}
+            run={(signal) => aiTiming(p, data, { signal })}
+            onSave={(rec) => set({ ai: { ...(p.ai || {}), timing: rec } })}
+            render={(r) => <TimingResult r={r} p={p} data={data} set={set} />}
+          />
+        </>
       ) : null}
 
-      {p.kind === 'heizung' ? <HeatHint data={data} /> : null}
-      {p.kind === 'pv' ? <PvHint data={data} /> : null}
-
-      <Section n={1} title="Grunddaten">
-        <Field label="Titel">
-          <TextInput id={'p-title-' + p.id} value={p.title} onChange={(v) => set({ title: v })} />
-        </Field>
-        <div className="grid2">
-          <Field label="Art der Maßnahme">
-            <Select id={'p-kind-' + p.id} value={p.kind} onChange={(v) => set({ kind: v })} options={PROJECT_KINDS.map((k) => ({ value: k.key, label: k.name }))} />
-          </Field>
-          <Field label="Priorität">
-            <Seg small value={p.priority || 2} onChange={(v) => set({ priority: v })} options={[{ value: 1, label: 'Hoch' }, { value: 2, label: 'Mittel' }, { value: 3, label: 'Niedrig' }]} />
-          </Field>
-        </div>
-        <Field label="Status">
-          <div className="chips">
-            {STATUS.map((s) => (
-              <button key={s.key} type="button" className={`chip ${p.status === s.key ? 'is-on' : ''}`} onClick={() => set({ status: s.key })}>
-                {s.name}
-              </button>
-            ))}
+      {tab === 'kosten' ? (
+        <>
+          <div className="sum-strip">
+            <div>
+              <span>Kosten</span>
+              <b>{fmtEuro(cost.best)}</b>
+            </div>
+            <div>
+              <span>Förderung</span>
+              <b style={{ color: 'var(--accent-ink)' }}>− {fmtEuro(cost.funding)}</b>
+            </div>
+            <div>
+              <span>Eigenanteil</span>
+              <b>{fmtEuro(cost.net)}</b>
+            </div>
           </div>
-        </Field>
-        <ComponentLinks p={p} data={data} set={set} />
-        <Field label="Hinweise" hint="Wird oben im Projekt hervorgehoben – z. B. Abhängigkeiten, Fristen, Auflagen">
-          <TextInput id={'p-hints-' + p.id} multiline rows={3} value={p.hints || ''} onChange={(v) => set({ hints: v })} placeholder="z. B. Erst nach Zählerschrank-Tausch · Antrag KfW vor Auftrag · Gerüst mit Dach teilen" />
-        </Field>
-        <Field label="Notizen">
-          <TextInput id={'p-notes-' + p.id} multiline value={p.notes} onChange={(v) => set({ notes: v })} placeholder="Ziele, Wünsche, Gespräche mit Handwerkern …" />
-        </Field>
-      </Section>
+          <Section title="Kostenpositionen" aside={fmtEuro(cost.best)}>
+            <Costs p={p} set={set} />
+            <Field label="Davon Eigenleistung" hint="Wert deiner eigenen Arbeit (für Finanzierung)">
+              <NumInput id={'p-own-' + p.id} value={p.ownWork} onChange={(v) => set({ ownWork: v })} unit="€" digits={0} />
+            </Field>
+          </Section>
+          <Section title="Angebote vergleichen">
+            <OfferCompare p={p} data={data} set={set} />
+          </Section>
+          <AiRunner
+            title="Kostenschätzung"
+            icon="euro"
+            desc="Schätzt Positionen mit Preisspanne anhand der Maße aus deinem 3D-Modell."
+            saved={p.ai?.costs}
+            run={(signal) => aiCosts(p, data, { signal })}
+            onSave={(rec) => set({ ai: { ...(p.ai || {}), costs: rec } })}
+            render={(r) => <CostsResult r={r} p={p} />}
+          />
+        </>
+      ) : null}
 
-      <Section n={2} title="Zeitplan" aside={p.start && p.end ? `${Math.max(1, Math.round((diffDays(p.start, p.end) + 1) / 7))} Wochen` : null}>
-        <div className="grid2">
-          <Field label="Start">
-            <DateInput id={'p-start-' + p.id} value={p.start} onChange={(v) => set({ start: v, end: p.end && v && p.end < v ? addDays(v, diffDays(p.start || v, p.end)) : p.end })} />
-          </Field>
-          <Field label="Ende">
-            <DateInput id={'p-end-' + p.id} value={p.end} onChange={(v) => set({ end: v })} />
-          </Field>
-        </div>
-        <Milestones p={p} set={set} data={data} />
-        <AiRunner
-          title="Zeitplan & Abhängigkeiten"
-          icon="calendar"
-          desc="Prüft Jahreszeit, Vorlaufzeiten, Reihenfolge der Gewerke und Abhängigkeiten zu deinen anderen Projekten."
-          saved={p.ai?.timing}
-          run={(signal) => aiTiming(p, data, { signal })}
-          onSave={(rec) => set({ ai: { ...(p.ai || {}), timing: rec } })}
-          render={(r) => <TimingResult r={r} p={p} data={data} set={set} />}
-        />
-      </Section>
+      {tab === 'foerderung' ? (
+        <>
+          {statusOf(p.status).step < 3 ? (
+            <div className="callout callout-info">
+              <Icon name="info" size={16} />
+              <span>
+                <b>Antrag vor Auftrag:</b> KfW- und BAFA-Zuschüsse musst du in der Regel vor der Auftragsvergabe beantragen.
+              </span>
+            </div>
+          ) : null}
+          {warns.filter((w) => w.kind === 'funding').length ? (
+            <div className="callout callout-warn">
+              <Icon name="alert" size={16} />
+              <div>
+                {warns
+                  .filter((w) => w.kind === 'funding')
+                  .map((i, k) => (
+                    <div key={k}>{i.text}</div>
+                  ))}
+              </div>
+            </div>
+          ) : null}
+          <Section title="Erfasste Förderung" aside={cost.funding ? fmtEuro(cost.funding) : null}>
+            <FundingList p={p} set={set} />
+          </Section>
+          <AiRunner
+            title="Fördermöglichkeiten & bester Antragszeitpunkt"
+            icon="sparkles"
+            desc="Sucht passende Zuschüsse, Kredite, Steuerboni und Vergütungen, schätzt Beträge und sagt dir, wann du was beantragen solltest."
+            saved={p.ai?.funding}
+            run={(signal) => aiFunding(p, data, { signal })}
+            onSave={(rec) => set({ ai: { ...(p.ai || {}), funding: rec } })}
+            render={(r) => <FundingResult r={r} p={p} />}
+            cta="Förderung prüfen"
+            autoRun={autoRun}
+          />
+        </>
+      ) : null}
 
-      <Section n={3} title="Abhängigkeiten">
-        <Dependencies p={p} data={data} set={set} />
-      </Section>
+      {tab === 'aufgaben' ? (
+        <>
+          <Section title="Rahmenbedingungen & Aufgaben" aside={`${cons.filter((c) => c.done).length}/${cons.length} erledigt`}>
+            <Constraints p={p} set={set} />
+          </Section>
+          <AiRunner
+            title="Rahmenbedingungen & Risiken"
+            icon="shield"
+            desc="Genehmigungen, gesetzliche Pflichten, Statik, Schadstoffe, Netzbetreiber, Witterung."
+            saved={p.ai?.risks}
+            run={(signal) => aiRisks(p, data, { signal })}
+            onSave={(rec) => set({ ai: { ...(p.ai || {}), risks: rec } })}
+            render={(r) => <RisksResult r={r} p={p} />}
+          />
+        </>
+      ) : null}
 
-      <Section n={4} title="Rahmenbedingungen" aside={`${(p.constraints || []).filter((c) => c.done).length}/${(p.constraints || []).length} erledigt`}>
-        <Constraints p={p} set={set} />
-        <AiRunner
-          title="Rahmenbedingungen & Risiken"
-          icon="shield"
-          desc="Genehmigungen, gesetzliche Pflichten, Statik, Schadstoffe, Netzbetreiber, Witterung."
-          saved={p.ai?.risks}
-          run={(signal) => aiRisks(p, data, { signal })}
-          onSave={(rec) => set({ ai: { ...(p.ai || {}), risks: rec } })}
-          render={(r) => <RisksResult r={r} p={p} />}
-        />
-      </Section>
-
-      <Section n={5} title="Kosten" aside={fmtEuro(cost.best)}>
-        <Costs p={p} set={set} />
-        <OfferCompare p={p} data={data} set={set} />
-        <div className="grid2">
-          <Field label="Davon Eigenleistung" hint="Wert deiner eigenen Arbeit (für Finanzierung)">
-            <NumInput id={'p-own-' + p.id} value={p.ownWork} onChange={(v) => set({ ownWork: v })} unit="€" digits={0} />
-          </Field>
-        </div>
-        <div className="sum-strip">
-          <div>
-            <span>Kosten</span>
-            <b>{fmtEuro(cost.best)}</b>
-          </div>
-          <div>
-            <span>Förderung</span>
-            <b style={{ color: 'var(--accent-ink)' }}>− {fmtEuro(cost.funding)}</b>
-          </div>
-          <div>
-            <span>Eigenanteil</span>
-            <b>{fmtEuro(cost.net)}</b>
-          </div>
-        </div>
-        <AiRunner
-          title="Kostenschätzung"
-          icon="euro"
-          desc="Schätzt Positionen mit Preisspanne anhand der Maße aus deinem 3D-Modell."
-          saved={p.ai?.costs}
-          run={(signal) => aiCosts(p, data, { signal })}
-          onSave={(rec) => set({ ai: { ...(p.ai || {}), costs: rec } })}
-          render={(r) => <CostsResult r={r} p={p} />}
-        />
-      </Section>
-
-      <div ref={fundRef} />
-      <Section n={6} title="Förderung" aside={cost.funding ? fmtEuro(cost.funding) : null}>
-        {statusOf(p.status).step < 3 ? (
-          <div className="callout callout-info">
-            <Icon name="info" size={16} />
-            <span>
-              <b>Antrag vor Auftrag:</b> KfW- und BAFA-Zuschüsse musst du in der Regel vor der Auftragsvergabe beantragen.
-            </span>
-          </div>
-        ) : null}
-        <FundingList p={p} set={set} />
-        <AiRunner
-          title="Fördermöglichkeiten & bester Antragszeitpunkt"
-          icon="sparkles"
-          desc="Sucht passende Zuschüsse, Kredite, Steuerboni und Vergütungen, schätzt Beträge und sagt dir, wann du was beantragen solltest."
-          saved={p.ai?.funding}
-          run={(signal) => aiFunding(p, data, { signal })}
-          onSave={(rec) => set({ ai: { ...(p.ai || {}), funding: rec } })}
-          render={(r) => <FundingResult r={r} p={p} />}
-          cta="Förderung prüfen"
-          autoRun={autoRun}
-        />
-      </Section>
-
-      <Section n={7} title="Dokumente" aside={<UploadButton projectId={p.id} small />}>
-        <DocList data={data} filter={(d) => d.projectId === p.id} projectId={p.id} compact />
-      </Section>
+      {tab === 'dokumente' ? (
+        <Section title="Dokumente" aside={<UploadButton projectId={p.id} small />}>
+          <DocList data={data} filter={(d) => d.projectId === p.id} projectId={p.id} compact />
+        </Section>
+      ) : null}
     </Drawer>
   );
 }
@@ -585,14 +673,15 @@ function ComponentLinks({ p, data, set }) {
   );
 }
 
-function Milestones({ p, set, data }) {
+function Milestones({ p, set, data, noLabel }) {
   const [open, setOpen] = useState(null);
   const ms = [...(p.milestones || [])].sort((a, b) => ((a.date || '9') < (b.date || '9') ? -1 : 1));
   const upd = (id, patch) => set({ milestones: p.milestones.map((m) => (m.id === id ? { ...m, ...patch } : m)) });
   const all = Object.values(data.projects);
   return (
     <div className="stack" style={{ gap: 6 }}>
-      <span className="field-label">Meilensteine</span>
+      {noLabel ? null : <span className="field-label">Meilensteine</span>}
+      {!ms.length ? <p className="small muted">Noch keine Meilensteine – z. B. Förderzusage, Auftragsvergabe, Abnahme.</p> : null}
       <div className="rows">
         {ms.map((m) => {
           const deps = m.dependsOn || [];

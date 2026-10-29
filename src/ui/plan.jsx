@@ -99,6 +99,93 @@ function hitPoint(p, points, tol) {
   }
   return best?.pt || null;
 }
+// point in the wall axis behind a wall-mounted fixture (lamps: the fixture itself)
+function fixtureAnchor(pt, walls) {
+  if (pt.rot == null) return [pt.x, pt.y];
+  let best = null;
+  for (const w of walls) {
+    const r = distToSeg([pt.x, pt.y], w.a, w.b);
+    const e = Math.abs(r.d - w.t / 2);
+    if (e < 0.03 && (!best || e < best.e)) best = { e, q: r.q };
+  }
+  return best ? P3(best.q) : [pt.x, pt.y];
+}
+// nearest point of a line in plan, with its height (risers: clamped to the wanted height)
+function nearestOnLine(p, l, zWant) {
+  const pts = l.pts || [];
+  let best = null;
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1],
+      b = pts[i];
+    if (same(a, b, 0.002)) continue;
+    const r = distToSeg(p, a, b);
+    if (!best || r.d < best.d) best = { d: r.d, q: [r.q[0], r.q[1], (a[2] ?? 0) + ((b[2] ?? 0) - (a[2] ?? 0)) * r.t] };
+  }
+  if (!best && pts.length) {
+    const zs = pts.map((q) => q[2] ?? 0);
+    best = { d: dist(p, pts[0]), q: [pts[0][0], pts[0][1], Math.max(Math.min(...zs), Math.min(Math.max(...zs), zWant))] };
+  }
+  return best;
+}
+const dedup3 = (pts) => pts.filter((q, i, a) => i === 0 || Math.abs(q[0] - a[i - 1][0]) + Math.abs(q[1] - a[i - 1][1]) + Math.abs(q[2] - a[i - 1][2]) > 0.004);
+// Connects every fixture to a matching line nearby with a short piece: along the wall axis, up or down, out to the wall face.
+// These pieces are regenerated on every change; once edited by hand they stay.
+export function relink(f) {
+  const lines = f.lines || [];
+  const keep = lines.filter((l) => !(l.auto && l.stubFor));
+  const points = f.points || [];
+  const stubs = [];
+  for (const pt of points) {
+    const kinds = fixtureKind(pt.kind).lines || [];
+    const cand = keep.filter((l) => kinds.includes(l.kind) && (l.pts || []).length >= 2);
+    if (!cand.length) continue;
+    const P = [pt.x, pt.y];
+    if (cand.some((l) => l.pts.some((q) => dist(q, P) < 0.03))) continue;
+    const A = fixtureAnchor(pt, f.walls || []);
+    const zf = pt.z ?? 0.3;
+    // a line running right through the fixture only needs a vertical piece (if at all)
+    const through = cand.map((l) => ({ l, r: nearestOnLine(P, l, zf) })).filter((x) => x.r && x.r.d < 0.03);
+    if (through.length) {
+      if (through.some((x) => Math.abs(x.r.q[2] - zf) < 0.01)) continue;
+      const t = through[0];
+      stubs.push({ id: 'ls-' + pt.id, kind: t.l.kind, status: t.l.status || 'bestand', pts: [[P[0], P[1], r3(t.r.q[2])], [P[0], P[1], r3(zf)]], label: '', notes: '', stubFor: pt.id, auto: true });
+      continue;
+    }
+    let best = null;
+    for (const l of cand) {
+      const r = nearestOnLine(A, l, zf);
+      if (r && (!best || r.d < best.d)) best = { ...r, l };
+    }
+    if (!best || best.d > (pt.kind === 'lampe' ? 0.8 : 0.4)) continue;
+    const zq = best.q[2];
+    // wall fixtures: along the wall axis, then up/down; ceiling lamps: up into the ceiling, then across
+    const raw = pt.rot == null ? [[best.q[0], best.q[1], zq], [best.q[0], best.q[1], zf], [P[0], P[1], zf]] : [[best.q[0], best.q[1], zq], [A[0], A[1], zq], [A[0], A[1], zf], [P[0], P[1], zf]];
+    const pts = dedup3(raw.map((q) => q.map(r3)));
+    if (pts.length < 2) continue;
+    stubs.push({ id: 'ls-' + pt.id, kind: best.l.kind, status: pt.status === 'geplant' || best.l.status === 'geplant' ? 'geplant' : best.l.status || 'bestand', pts, label: '', notes: '', stubFor: pt.id, auto: true });
+  }
+  if (!stubs.length && keep.length === lines.length) return f;
+  return { ...f, lines: [...keep, ...stubs] };
+}
+// a drawn line that ends on a fixture goes into the wall axis, to the fixture height and out to the face
+function wireEnds(pts, points, walls) {
+  let out = pts.map((q) => [...q]);
+  const fix = (q) => points.find((x) => dist([x.x, x.y], q) < 0.02);
+  const seq = (q) => {
+    const pt = fix(q);
+    if (!pt) return null;
+    const A = fixtureAnchor(pt, walls);
+    const zl = q[2] ?? 0,
+      zf = pt.z ?? 0.3;
+    return [[A[0], A[1], zl], [A[0], A[1], zf], [pt.x, pt.y, zf]].map((v) => v.map(r3));
+  };
+  const e = seq(out[out.length - 1]);
+  if (e) out = [...out.slice(0, -1), ...e];
+  const b = seq(out[0]);
+  if (b) out = [...b.reverse(), ...out.slice(1)];
+  return dedup3(out.map((q) => [q[0], q[1], q[2] ?? 0]));
+}
+
 // room a point belongs to (wall points are nudged into the room they face)
 export function roomOfPoint(floor, pt) {
   const a = ((pt.rot ?? 0) * Math.PI) / 180;
@@ -251,10 +338,13 @@ export function PlanEditor({ data }) {
   const floors = sortFloors(Object.values(data.floors));
   const isRoof = ui.floorId === 'roof';
   const isSite = ui.floorId === 'site';
-  const floor = isRoof || isSite ? null : data.floors[ui.floorId] || floors.find((f) => f.short === 'EG') || floors[0];
+  const ctxId = String(ui.floorId || '').startsWith('ctx:') ? ui.floorId.slice(4) : null;
+  const ctxB = ctxId ? (data.house?.model?.context || []).find((b) => b.id === ctxId) : null;
+  const floor = isRoof || isSite || ctxId ? null : data.floors[ui.floorId] || floors.find((f) => f.short === 'EG') || floors[0];
   useEffect(() => {
     if (!isRoof && floor && ui.floorId !== floor.id) setUI({ floorId: floor.id });
-  }, [floor?.id, isRoof]);
+    if (ctxId && !ctxB) setUI({ floorId: 'site' });
+  }, [floor?.id, isRoof, ctxId, !!ctxB]);
 
   const addFloor = (above) => {
     const ref = above ? floors[floors.length - 1] : floors[0];
@@ -270,13 +360,13 @@ export function PlanEditor({ data }) {
 
   return (
     <Sheet
-      className="plan-sheet"
+      className={`plan-sheet ${ui.planFull ? 'is-full' : ''}`}
       title="Grundriss"
       icon="plan"
-      eyebrow={isRoof ? 'Dach' : isSite ? 'Grundstück' : floor ? `${floor.short} · ${floor.name}` : 'Etagen'}
+      eyebrow={isRoof ? 'Dach' : isSite ? 'Grundstück' : ctxB ? `Nebengebäude · ${ctxB.name || ''}` : floor ? `${floor.short} · ${floor.name}` : 'Etagen'}
       onClose={() => go('modell')}
       actions={
-        <Btn small kind="ghost" icon="cube" onClick={() => { setUI({ mode: isRoof || isSite ? 'all' : 'floor', floorId: isRoof || isSite ? null : floor?.id }); go('modell'); }}>
+        <Btn small kind="ghost" icon="cube" onClick={() => { setUI({ mode: isRoof || isSite || ctxId ? 'all' : 'floor', floorId: isRoof || isSite || ctxId ? null : floor?.id }); go('modell'); }}>
           Im 3D-Modell
         </Btn>
       }
@@ -292,6 +382,19 @@ export function PlanEditor({ data }) {
               <span>{(data.house?.model?.context || []).filter((b) => b.kind !== 'neighbor').length} Nebengebäude</span>
             </span>
           </button>
+          {(data.house?.model?.context || [])
+            .filter((b) => b.kind !== 'neighbor' && ((b.walls || []).length || b.id === ctxId))
+            .map((b) => (
+              <button key={b.id} className={`fp-row fp-sub ${ctxId === b.id ? 'is-on' : ''}`} onClick={() => setUI({ floorId: 'ctx:' + b.id })}>
+                <span className="fp-short">
+                  <Icon name="home" size={13} />
+                </span>
+                <span className="fp-name">
+                  <b>{b.name || 'Nebengebäude'}</b>
+                  <span>{(b.rooms || []).length} Räume</span>
+                </span>
+              </button>
+            ))}
           <button className={`fp-row ${isRoof ? 'is-on' : ''}`} onClick={() => setUI({ floorId: 'roof' })}>
             <span className="fp-short">
               <Icon name="roof" size={15} />
@@ -302,7 +405,7 @@ export function PlanEditor({ data }) {
             </span>
           </button>
           {[...floors].reverse().map((f) => (
-            <button key={f.id} className={`fp-row ${!isRoof && !isSite && floor?.id === f.id ? 'is-on' : ''}`} onClick={() => setUI({ floorId: f.id })}>
+            <button key={f.id} className={`fp-row ${floor?.id === f.id ? 'is-on' : ''}`} onClick={() => setUI({ floorId: f.id })}>
               <span className="fp-short">{f.short}</span>
               <span className="fp-name">
                 <b>{f.name}</b>
@@ -317,10 +420,29 @@ export function PlanEditor({ data }) {
             Etage unten
           </Btn>
         </div>
-        {isSite ? <SiteEditor data={data} floors={floors} /> : isRoof ? <RoofEditor data={data} floors={floors} /> : floor ? <FloorEditor key={floor.id} data={data} floor={floor} floors={floors} /> : <Empty title="Keine Etage" />}
+        {ctxB ? <CtxFloorEditor key={ctxB.id} data={data} b={ctxB} /> : isSite ? <SiteEditor data={data} floors={floors} /> : isRoof ? <RoofEditor data={data} floors={floors} /> : floor ? <FloorEditor key={floor.id} data={data} floor={floor} floors={floors} /> : <Empty title="Keine Etage" />}
       </div>
     </Sheet>
   );
+}
+
+// Properties column; on phones a bottom panel over the plan that opens when something is selected.
+function PropsPanel({ title, openKey, children }) {
+  const [open, setOpen] = useState(!!openKey);
+  useEffect(() => setOpen(!!openKey), [openKey]);
+  return (
+    <div className={`plan-props ${open ? 'is-open' : ''}`}>
+      <button type="button" className="props-handle" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <span>{title}</span>
+        <Icon name={open ? 'chevD' : 'chevU'} size={16} />
+      </button>
+      <div className="props-body">{children}</div>
+    </div>
+  );
+}
+function FullBtn() {
+  const ui = useUI();
+  return <IconBtn icon={ui.planFull ? 'collapse' : 'expand'} label={ui.planFull ? 'Vollbild beenden' : 'Vollbild'} size={16} onClick={() => setUI({ planFull: !ui.planFull })} />;
 }
 
 // =====================================================================
@@ -398,7 +520,7 @@ function usePanZoom(svgRef, view, setView) {
 }
 
 // =====================================================================
-function FloorEditor({ data, floor, floors }) {
+function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
   const boxRef = useRef(null);
   const svgRef = useRef(null);
   const [tool, setTool] = useState('select');
@@ -422,42 +544,51 @@ function FloorEditor({ data, floor, floors }) {
   const walls = floor.walls || [];
   const lines = floor.lines || [];
   const points = floor.points || [];
-  const fitPts = useCallback(() => walls.flatMap((w) => [w.a, w.b]).concat(floor.underlay ? [[floor.underlay.x, floor.underlay.y], [floor.underlay.x + floor.underlay.w, floor.underlay.y + floor.underlay.w * (floor.underlay.aspect || 0.7)]] : []), [floor.id]);
+  const fitPts = useCallback(() => walls.flatMap((w) => [w.a, w.b]).concat(guide ? [[guide.x - 1, guide.y - 1], [guide.x + guide.w + 1, guide.y + guide.d + 1]] : []).concat(floor.underlay ? [[floor.underlay.x, floor.underlay.y], [floor.underlay.x + floor.underlay.w, floor.underlay.y + floor.underlay.w * (floor.underlay.aspect || 0.7)]] : []), [floor.id]);
   const { size, view, setView, fit } = useViewport(boxRef, fitPts, floor.id);
   const { pointers, pinch } = usePanZoom(svgRef, view, setView);
   const below = floors[floors.findIndex((f) => f.id === floor.id) - 1];
 
+  // floors are documents; an outbuilding plan is stored inside its site entry
+  const write = (n, delay) => (persist ? persist(n, delay) : putDoc('floors', n.id, n, delay));
   const save = (next, { undo = true, refresh = true, from } = {}) => {
     const cur = floorRef.current;
-    const n = refresh ? refreshRooms(next) : next;
+    const n = relink(refresh ? refreshRooms(next) : next);
     if (undo) {
       hist.current.undo.push(JSON.stringify(from || cur));
       if (hist.current.undo.length > 60) hist.current.undo.shift();
       hist.current.redo = [];
     }
-    putDoc('floors', n.id, { ...n, example: false }, 350);
+    write({ ...n, example: false }, 350);
   };
   const mutate = (fn, opts) => save(fn(deepClone(floorRef.current)), opts);
   const undo = () => {
     const h = hist.current;
     if (!h.undo.length) return;
     h.redo.push(JSON.stringify(floorRef.current));
-    putDoc('floors', floor.id, JSON.parse(h.undo.pop()), 200);
+    write(JSON.parse(h.undo.pop()), 200);
     setSel(null);
   };
   const redo = () => {
     const h = hist.current;
     if (!h.redo.length) return;
     h.undo.push(JSON.stringify(floorRef.current));
-    putDoc('floors', floor.id, JSON.parse(h.redo.pop()), 200);
+    write(JSON.parse(h.redo.pop()), 200);
     setSel(null);
   };
+
+  // connect fixtures drawn before the automatic connection pieces existed
+  useEffect(() => {
+    const n = relink(floor);
+    if (JSON.stringify(n.lines || []) !== JSON.stringify(floor.lines || [])) write(n, 600);
+  }, [floor.id]);
 
   const toWorld = (e) => {
     const r = svgRef.current.getBoundingClientRect();
     return [(e.clientX - r.left - view.tx) / view.s, (e.clientY - r.top - view.ty) / view.s];
   };
-  const snapOpts = (from) => ({ from, walls, s: view.s, grid, ortho, extra: chain?.pts || [] });
+  const wiring = tool === 'line' || tool === 'riser' || tool === 'select';
+  const snapOpts = (from) => ({ from, walls, s: view.s, grid, ortho, extra: [...(chain?.pts || []), ...(wiring ? [...points.map((q) => [q.x, q.y]), ...lines.filter((l) => !l.auto).flatMap((l) => linePlanPts(l))] : [])] });
 
   const deleteSelection = () => {
     if (!sel) return;
@@ -466,7 +597,7 @@ function FloorEditor({ data, floor, floors }) {
     if (sel.kind === 'room') mutate((f) => ({ ...f, rooms: f.rooms.filter((r) => r.id !== sel.id) }), { refresh: false });
     if (sel.kind === 'item') mutate((f) => ({ ...f, items: f.items.filter((r) => r.id !== sel.id) }), { refresh: false });
     if (sel.kind === 'line') mutate((f) => ({ ...f, lines: (f.lines || []).filter((l) => l.id !== sel.id) }), { refresh: false });
-    if (sel.kind === 'point') mutate((f) => ({ ...f, points: (f.points || []).filter((q) => q.id !== sel.id) }), { refresh: false });
+    if (sel.kind === 'point') mutate((f) => ({ ...f, points: (f.points || []).filter((q) => q.id !== sel.id), lines: (f.lines || []).filter((l) => l.stubFor !== sel.id) }), { refresh: false });
     setSel(null);
   };
 
@@ -490,7 +621,7 @@ function FloorEditor({ data, floor, floors }) {
   const finishChain = () => {
     if (tool === 'line' && chain && linePlanPts({ pts: chain.pts }).length >= 2) {
       const id = uid('l');
-      const pts = chain.pts;
+      const pts = wireEnds(chain.pts, points, walls);
       mutate((f) => ({ ...f, lines: [...(f.lines || []), { id, kind: lineOpts.kind, status: lineOpts.status, pts, label: '', notes: '' }] }), { refresh: false });
       toast(`${lineKind(lineOpts.kind).name}: ${fmtFixed(lineLength({ pts }), 2)} m eingezeichnet`);
     }
@@ -803,8 +934,9 @@ function FloorEditor({ data, floor, floors }) {
     }
     if (drag.kind === 'linePt') {
       const l = f.lines.find((x) => x.id === drag.id);
-      const sp = snapPoint(p, { ...snapOpts(), extra: [] }).p;
+      const sp = snapPoint(p, snapOpts()).p;
       for (const i of drag.idx) l.pts[i] = [r3(sp[0]), r3(sp[1]), l.pts[i][2] ?? 0];
+      l.auto = false;
       save(f, { undo: false, refresh: false });
       drag.moved = true;
       return;
@@ -824,6 +956,7 @@ function FloorEditor({ data, floor, floors }) {
         dy = Math.round((p[1] - drag.p0[1]) / grid) * grid;
       if (!dx && !dy && !drag.moved) return;
       l.pts = drag.pts0.map((q) => [r3(q[0] + dx), r3(q[1] + dy), q[2] ?? 0]);
+      l.auto = false;
       save(f, { undo: false, refresh: false });
       drag.moved = true;
       return;
@@ -980,6 +1113,7 @@ function FloorEditor({ data, floor, floors }) {
             value={tool}
             onChange={(t) => {
               setTool(t);
+              if (t !== 'select') setSel(null);
               setChain(null);
               setMeasure(null);
               setCalib(null);
@@ -1000,14 +1134,16 @@ function FloorEditor({ data, floor, floors }) {
               { value: 'roomPoly', icon: 'edit', title: 'Raum als Polygon' },
               { value: 'measure', icon: 'ruler', title: 'Messen' },
               { value: 'underlay', icon: 'image', title: 'Plan-Unterlage' },
-            ]}
+            ].filter((o) => !ctx || o.value !== 'underlay')}
           />
-          <span style={{ flex: 1 }} />
-          <IconBtn icon={showLines ? 'eye' : 'eyeOff'} label={showLines ? 'Leitungen und Anschlüsse ausblenden' : 'Leitungen und Anschlüsse einblenden'} active={showLines && lines.length + points.length > 0} onClick={() => setUI({ planLines: !showLines })} />
-          <IconBtn icon="undo" label="Rückgängig (Strg+Z)" onClick={undo} disabled={!hist.current.undo.length} />
-          <IconBtn icon="redo" label="Wiederholen (Strg+Y)" onClick={redo} disabled={!hist.current.redo.length} />
         </div>
         <div className="plan-canvas" ref={boxRef}>
+          <div className="plan-quick">
+            <IconBtn icon={showLines ? 'eye' : 'eyeOff'} label={showLines ? 'Leitungen und Anschlüsse ausblenden' : 'Leitungen und Anschlüsse einblenden'} active={showLines && lines.length + points.length > 0} onClick={() => setUI({ planLines: !showLines })} />
+            <IconBtn icon="undo" label="Rückgängig (Strg+Z)" onClick={undo} disabled={!hist.current.undo.length} />
+            <IconBtn icon="redo" label="Wiederholen (Strg+Y)" onClick={redo} disabled={!hist.current.redo.length} />
+            <FullBtn />
+          </div>
           <svg
             ref={svgRef}
             width={size.w}
@@ -1037,6 +1173,7 @@ function FloorEditor({ data, floor, floors }) {
                   style={{ pointerEvents: 'none' }}
                 />
               ) : null}
+              {guide ? <rect x={guide.x} y={guide.y} width={guide.w} height={guide.d} fill="none" stroke="var(--ink-3)" strokeWidth={px(1.2)} strokeDasharray={`${px(6)} ${px(4)}`} /> : null}
               {below
                 ? (below.walls || []).map((w) => <line key={'g' + w.id} x1={w.a[0]} y1={w.a[1]} x2={w.b[0]} y2={w.b[1]} className="svg-ghost" strokeWidth={w.t} opacity="0.35" />)
                 : null}
@@ -1195,23 +1332,28 @@ function FloorEditor({ data, floor, floors }) {
           </div>
         </div>
       </div>
-      <div className="plan-props">
+      <PropsPanel
+        title={selWall ? 'Wand' : selOpening ? OPENING_NAMES[selOpening.type] : selRoom ? `Raum: ${selRoom.name}` : selItem ? 'Treppe' : selPoint ? fixtureKind(selPoint.kind).name : selLine ? 'Leitung' : tool === 'line' || tool === 'riser' ? 'Neue Leitung' : tool === 'fixture' ? 'Anschluss' : ctx ? 'Nebengebäude' : 'Etage & Einstellungen'}
+        openKey={sel ? sel.kind + sel.id : ['line', 'riser', 'fixture', 'wall'].includes(tool) ? tool : null}
+      >
         {selWall ? (
           <WallProps w={selWall} mutate={mutate} onDelete={deleteSelection} onSelectOpening={(o) => setSel({ kind: 'opening', id: o.id, wallId: selWall.id })} />
         ) : selOpening ? (
           <OpeningProps o={selOpening} w={walls.find((w) => w.id === sel.wallId)} mutate={mutate} onDelete={deleteSelection} />
         ) : selRoom ? (
-          <RoomProps r={selRoom} floor={floor} mutate={mutate} onDelete={deleteSelection} focus={sel.focus} />
+          <RoomProps r={selRoom} floor={floor} mutate={mutate} onDelete={deleteSelection} focus={sel.focus} noDetails={ctx} />
         ) : selItem ? (
           <StairProps it={selItem} mutate={mutate} onDelete={deleteSelection} />
-        ) : selPoint ? (
-          <FixtureProps pt={selPoint} floor={floor} data={data} mutate={mutate} onDelete={deleteSelection} onOpts={tool === 'fixture' ? (patch) => setFixOpts((o) => ({ ...o, ...patch })) : null} />
         ) : tool === 'fixture' ? (
-          <FixtureToolProps opts={fixOpts} setOpts={setFixOpts} floor={floor} />
+          <FixtureToolProps opts={fixOpts} setOpts={setFixOpts} floor={floor} selected={selPoint} mutate={mutate} onDelete={deleteSelection} onDetails={() => setTool('select')} />
+        ) : selPoint ? (
+          <FixtureProps pt={selPoint} floor={floor} data={data} mutate={mutate} onDelete={deleteSelection} />
         ) : selLine ? (
           <LineProps l={selLine} floor={floor} floors={floors} data={data} mutate={mutate} onDelete={deleteSelection} />
         ) : tool === 'line' || tool === 'riser' ? (
           <LineToolProps opts={lineOpts} setOpts={changeLineOpts} floor={floor} floors={floors} riser={tool === 'riser'} />
+        ) : ctx ? (
+          <CtxProps b={guide} floor={floor} grid={grid} setGrid={setGrid} ortho={ortho} setOrtho={setOrtho} mutate={mutate} lines={lines} points={points} />
         ) : (
           <FloorProps
             floor={floor}
@@ -1231,7 +1373,7 @@ function FloorEditor({ data, floor, floors }) {
           />
         )}
         <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => { const f = e.target.files[0]; e.target.value = ''; if (f) uploadUnderlay(f); }} />
-      </div>
+      </PropsPanel>
     </>
   );
 }
@@ -1343,11 +1485,29 @@ function FixtureHeight({ kind, z, floor, onChange }) {
   );
 }
 
-function FixtureToolProps({ opts, setOpts, floor }) {
+function FixtureToolProps({ opts, setOpts, floor, selected, mutate, onDelete, onDetails }) {
   const k = fixtureKind(opts.kind);
+  const sk = selected ? fixtureKind(selected.kind) : null;
   return (
     <div className="stack">
-      <h4>Neuer Anschluss</h4>
+      {selected ? (
+        <div className="panel fixture-last">
+          <div className="spread">
+            <span className="hstack" style={{ gap: 6 }}>
+              <span style={{ color: sk.color, display: 'inline-flex' }}>
+                <Icon name={sk.icon} size={16} />
+              </span>
+              <b className="small">{sk.name} gesetzt</b>
+            </span>
+            <ConfirmBtn onConfirm={onDelete}>{''}</ConfirmBtn>
+          </div>
+          <TextInput id={'ptq-label-' + selected.id} value={selected.label} onChange={(v) => mutate((f) => ({ ...f, points: (f.points || []).map((x) => (x.id === selected.id ? { ...x, label: v } : x)) }), { refresh: false })} placeholder="Bezeichnung (optional)" />
+          <button className="link small" onClick={onDetails}>
+            Alle Details bearbeiten →
+          </button>
+        </div>
+      ) : null}
+      <h4>Nächster Anschluss</h4>
       <FixtureKindSelect value={opts.kind} onChange={(kind) => setOpts({ ...opts, kind, z: null })} />
       <FixtureHeight kind={opts.kind} z={opts.z ?? fixtureZ(opts.kind, floor)} floor={floor} onChange={(z) => setOpts({ ...opts, z })} />
       {k.multi ? (
@@ -1358,16 +1518,13 @@ function FixtureToolProps({ opts, setOpts, floor }) {
       <Field label="Zustand">
         <Seg small value={opts.status} onChange={(v) => setOpts({ ...opts, status: v })} options={LINE_STATUS} />
       </Field>
-      <p className="small muted">{k.wall ? 'Wandanschlüsse rasten auf der Wandseite ein, auf der du klickst – innen oder außen.' : 'Deckenlampen setzt du frei in den Raum.'} Im 3D-Modell erscheinen Anschlüsse zusammen mit den Leitungen im Röntgenblick.</p>
+      <p className="small muted">{k.wall ? 'Wandanschlüsse rasten auf der Wandseite ein, auf der du klickst – innen oder außen.' : 'Deckenlampen setzt du frei in den Raum.'} Liegt eine passende Leitung in der Nähe (z. B. Strom bei Steckdosen), wird automatisch ein kurzes Anschlussstück bis zum Anschluss ergänzt. Im 3D-Modell erscheinen Anschlüsse zusammen mit den Leitungen im Röntgenblick.</p>
     </div>
   );
 }
 
-function FixtureProps({ pt, floor, data, mutate, onDelete, onOpts }) {
-  const set = (patch) => {
-    mutate((f) => ({ ...f, points: (f.points || []).map((x) => (x.id === pt.id ? { ...x, ...patch } : x)) }), { refresh: false });
-    if (onOpts) onOpts(Object.fromEntries(Object.entries(patch).filter(([k]) => ['kind', 'z', 'status', 'count'].includes(k))));
-  };
+function FixtureProps({ pt, floor, data, mutate, onDelete }) {
+  const set = (patch) => mutate((f) => ({ ...f, points: (f.points || []).map((x) => (x.id === pt.id ? { ...x, ...patch } : x)) }), { refresh: false });
   const k = fixtureKind(pt.kind);
   const room = roomOfPoint(floor, pt);
   const photos = Object.values(data.documents || {}).filter((d) => d.lineId === pt.id);
@@ -1382,7 +1539,6 @@ function FixtureProps({ pt, floor, data, mutate, onDelete, onOpts }) {
         </h4>
         <ConfirmBtn onConfirm={onDelete}>{''}</ConfirmBtn>
       </div>
-      {onOpts ? <p className="small muted">Weitere Klicks in den Plan setzen weitere Anschlüsse mit diesen Einstellungen.</p> : null}
       <FixtureKindSelect value={pt.kind} onChange={(kind) => set({ kind, z: r3(fixtureZ(kind, floor)), count: fixtureKind(kind).multi ? pt.count || 1 : 1 })} />
       <Field label="Bezeichnung">
         <TextInput id={'pt-label-' + pt.id} value={pt.label} onChange={(v) => set({ label: v })} placeholder={{ steckdose: 'z. B. Herd, Waschmaschine, Außensteckdose', schalter: 'z. B. Serienschalter Flur', lampe: 'z. B. Esstisch', netzwerk: 'z. B. LAN 2× Cat7', wasser: 'z. B. Waschtisch, Außenhahn', gas: 'z. B. Herd, Therme' }[pt.kind]} />
@@ -1536,7 +1692,7 @@ function LineToolProps({ opts, setOpts, floor, floors, riser }) {
 }
 
 function LineProps({ l, floor, floors, data, mutate, onDelete }) {
-  const set = (patch) => mutate((f) => ({ ...f, lines: (f.lines || []).map((x) => (x.id === l.id ? { ...x, ...patch } : x)) }), { refresh: false });
+  const set = (patch) => mutate((f) => ({ ...f, lines: (f.lines || []).map((x) => (x.id === l.id ? { ...x, ...patch, auto: false } : x)) }), { refresh: false });
   const k = lineKind(l.kind);
   const zs = (l.pts || []).map((q) => q[2] ?? 0);
   const zMin = Math.min(...zs),
@@ -1553,10 +1709,11 @@ function LineProps({ l, floor, floors, data, mutate, onDelete }) {
       <div className="spread">
         <h4>
           <span className="dot" style={{ background: k.color, marginRight: 6 }} />
-          {l.riser ? 'Steigleitung' : 'Leitung'}
+          {l.riser ? 'Steigleitung' : l.stubFor ? 'Anschlussleitung' : 'Leitung'}
         </h4>
         <ConfirmBtn onConfirm={onDelete}>{''}</ConfirmBtn>
       </div>
+      {l.auto ? <p className="small muted">Automatisch erzeugt: verbindet die Leitung in der Wand mit dem Anschluss. Sie passt sich an, wenn du den Anschluss verschiebst – sobald du sie hier änderst, bleibt sie so.</p> : null}
       <KindSelect value={l.kind} onChange={(kind) => set({ kind })} />
       <Field label="Bezeichnung">
         <TextInput id={'ln-label-' + l.id} value={l.label} onChange={(v) => set({ label: v })} placeholder={l.riser ? 'z. B. Fallrohr Bad' : 'z. B. Zuleitung Küche, NYM 5×2,5'} />
@@ -1827,7 +1984,7 @@ function OpeningProps({ o, w, mutate, onDelete }) {
   );
 }
 
-function RoomProps({ r, floor, mutate, onDelete, focus }) {
+function RoomProps({ r, floor, mutate, onDelete, focus, noDetails }) {
   const set = (patch) => mutate((f) => ({ ...f, rooms: f.rooms.map((x) => (x.id === r.id ? { ...x, ...patch } : x)) }), { refresh: false });
   const ref = useRef(null);
   useEffect(() => {
@@ -1850,9 +2007,11 @@ function RoomProps({ r, floor, mutate, onDelete, focus }) {
         <b className="mono">{fmtFixed(Math.abs(polyArea(r.poly || [])), 2)} m²</b>
       </div>
       {r.manual ? <p className="small muted">Als Polygon gezeichnet – folgt Wandänderungen nicht automatisch.</p> : <p className="small muted">Folgt automatisch den umgebenden Wänden.</p>}
-      <Btn small icon="edit" onClick={() => openDrawer({ type: 'room', floorId: floor.id, roomId: r.id })}>
-        Ausstattung & Details
-      </Btn>
+      {noDetails ? null : (
+        <Btn small icon="edit" onClick={() => openDrawer({ type: 'room', floorId: floor.id, roomId: r.id })}>
+          Ausstattung & Details
+        </Btn>
+      )}
     </div>
   );
 }
@@ -2106,11 +2265,13 @@ function RoofEditor({ data, floors }) {
           <Btn small kind="ghost" icon="magic" onClick={fromOutline} disabled={!outline}>
             Aus Außenwänden
           </Btn>
-          <span style={{ flex: 1 }} />
-          <IconBtn icon="undo" label="Rückgängig" onClick={undo} disabled={!hist.current.undo.length} />
-          <IconBtn icon="redo" label="Wiederholen" onClick={redo} disabled={!hist.current.redo.length} />
         </div>
         <div className="plan-canvas" ref={boxRef}>
+          <div className="plan-quick">
+            <IconBtn icon="undo" label="Rückgängig" onClick={undo} disabled={!hist.current.undo.length} />
+            <IconBtn icon="redo" label="Wiederholen" onClick={redo} disabled={!hist.current.redo.length} />
+            <FullBtn />
+          </div>
           <svg ref={svgRef} width={size.w} height={size.h} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} style={{ cursor: tool === 'rect' ? 'crosshair' : 'default' }} role="application" aria-label="Dachflächen">
             <g transform={`translate(${tx},${ty}) scale(${sc})`}>
               <Grid view={view} size={size} />
@@ -2147,7 +2308,7 @@ function RoofEditor({ data, floors }) {
           </div>
         </div>
       </div>
-      <div className="plan-props">
+      <PropsPanel title={s ? 'Dachfläche' : 'Dach'} openKey={s?.id || (tool === 'rect' ? 'rect' : null)}>
         {s ? (
           <div className="stack">
             <div className="spread">
@@ -2201,7 +2362,7 @@ function RoofEditor({ data, floors }) {
             ) : null}
           </div>
         )}
-      </div>
+      </PropsPanel>
     </>
   );
 }
@@ -2317,11 +2478,13 @@ function SiteEditor({ data, floors }) {
       <div className="plan-main">
         <div className="plan-tools">
           <Seg small value={tool} onChange={setTool} options={[{ value: 'select', icon: 'cursor', label: 'Auswählen' }, { value: 'rect', icon: 'plus', label: 'Nebengebäude zeichnen' }]} />
-          <span style={{ flex: 1 }} />
-          <IconBtn icon="undo" label="Rückgängig" onClick={undo} disabled={!hist.current.undo.length} />
-          <IconBtn icon="redo" label="Wiederholen" onClick={redo} disabled={!hist.current.redo.length} />
         </div>
         <div className="plan-canvas" ref={boxRef}>
+          <div className="plan-quick">
+            <IconBtn icon="undo" label="Rückgängig" onClick={undo} disabled={!hist.current.undo.length} />
+            <IconBtn icon="redo" label="Wiederholen" onClick={redo} disabled={!hist.current.redo.length} />
+            <FullBtn />
+          </div>
           <svg ref={svgRef} width={size.w} height={size.h} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} style={{ cursor: tool === 'rect' ? 'crosshair' : 'default' }} role="application" aria-label="Grundstück">
             <g transform={`translate(${tx},${ty}) scale(${sc})`}>
               <Grid view={view} size={size} />
@@ -2376,7 +2539,7 @@ function SiteEditor({ data, floors }) {
           </div>
         </div>
       </div>
-      <div className="plan-props">
+      <PropsPanel title={b ? b.name || 'Nebengebäude' : 'Grundstück'} openKey={b?.id || null}>
         {b ? (
           <div className="stack">
             <div className="spread">
@@ -2389,6 +2552,11 @@ function SiteEditor({ data, floors }) {
             <Field label="Art">
               <Seg small value={b.kind === 'neighbor' ? 'neighbor' : 'outbuilding'} onChange={(v) => setB({ kind: v })} options={CTX_KINDS} />
             </Field>
+            {b.kind !== 'neighbor' ? (
+              <Btn small kind="primary" icon="plan" onClick={() => setUI({ floorId: 'ctx:' + b.id })}>
+                {(b.walls || []).length ? 'Grundriss bearbeiten' : 'Wände, Räume & Leitungen zeichnen'}
+              </Btn>
+            ) : null}
             {b.kind !== 'neighbor' ? <Toggle checked={!!b.open} onChange={(v) => setB({ open: v })} label="Offen (Carport, Überdachung)" /> : null}
             <div className="grid2">
               <Field label="Breite (x)">
@@ -2450,7 +2618,76 @@ function SiteEditor({ data, floors }) {
             </div>
           </div>
         )}
-      </div>
+      </PropsPanel>
     </>
+  );
+}
+
+// =====================================================================
+// Floor plan of an outbuilding: the regular editor, stored inside the site entry.
+function CtxFloorEditor({ data, b }) {
+  const ground = data.house?.model?.groundLevel ?? 0;
+  const floor = { id: b.id, name: b.name || 'Nebengebäude', short: 'NG', elevation: r3(ground + (b.z ?? 0)), height: b.h ?? 2.4, slab: 0, walls: b.walls || [], rooms: b.rooms || [], items: b.items || [], lines: b.lines || [], points: b.points || [] };
+  const persist = (n, delay) =>
+    updateHouse(
+      (h) => ({
+        ...h,
+        model: { ...h.model, context: (h.model?.context || []).map((x) => (x.id === b.id ? { ...x, walls: n.walls || [], rooms: n.rooms || [], items: n.items || [], lines: n.lines || [], points: n.points || [] } : x)) },
+      }),
+      delay,
+    );
+  return <FloorEditor data={data} floor={floor} floors={[floor]} persist={persist} guide={b} ctx />;
+}
+
+function CtxProps({ b, floor, grid, setGrid, ortho, setOrtho, mutate, lines, points }) {
+  const [t, setT] = useState(0.24);
+  const setB = (patch) => updateHouse((h) => ({ ...h, model: { ...h.model, context: (h.model?.context || []).map((x) => (x.id === b.id ? { ...x, ...patch } : x)) } }), 300);
+  const outlineWalls = () => {
+    const h = t / 2;
+    const c = [[b.x + h, b.y + h], [b.x + b.w - h, b.y + h], [b.x + b.w - h, b.y + b.d - h], [b.x + h, b.y + b.d - h]].map(P3);
+    mutate((f) => ({ ...f, walls: [...(f.walls || []), ...c.map((a, i) => ({ id: uid('w'), a, b: c[(i + 1) % 4], t, ext: true, openings: [] }))] }));
+    toast('Außenwände erzeugt – setze jetzt Türen und Fenster und klicke mit „Raum“ in die Fläche.');
+  };
+  return (
+    <div className="stack">
+      <div className="spread">
+        <h4>{b.name || 'Nebengebäude'}</h4>
+        <Btn small kind="ghost" icon="chevL" onClick={() => setUI({ floorId: 'site' })}>
+          Grundstück
+        </Btn>
+      </div>
+      <Field label="Name">
+        <TextInput id={'ctxp-name-' + b.id} value={b.name} onChange={(v) => setB({ name: v })} />
+      </Field>
+      <div className="grid2">
+        <Field label="Wandhöhe">
+          <NumInput value={b.h} onChange={(v) => v > 0.5 && setB({ h: v })} unit="m" digits={2} />
+        </Field>
+        <Field label="Grundfläche">
+          <div className="input" style={{ display: 'flex', alignItems: 'center', background: 'var(--surface-2)' }}>
+            {fmtFixed(b.w * b.d, 1)} m²
+          </div>
+        </Field>
+      </div>
+      {!(floor.walls || []).length ? (
+        <div className="panel" style={{ padding: 10 }}>
+          <span className="field-label">Außenwände aus dem Umriss</span>
+          <div className="stack" style={{ gap: 8, marginTop: 6 }}>
+            <Select value={String(t)} onChange={(v) => setT(Number(v))} options={THICKNESS.map((x) => ({ value: String(x.value), label: x.label }))} />
+            <Btn small icon="magic" onClick={outlineWalls}>
+              Außenwände erzeugen
+            </Btn>
+          </div>
+        </div>
+      ) : null}
+      <p className="small muted">Der gestrichelte Rahmen ist der Umriss aus dem Lageplan. Wände, Räume, Türen, Leitungen und Anschlüsse zeichnest du wie im Wohnhaus. Lage und Größe änderst du unter „Grundstück“.</p>
+      <LineSummary lines={lines} points={points} />
+      <div className="divider" />
+      <h4>Raster & Fang</h4>
+      <Field label="Raster">
+        <Select value={String(grid)} onChange={(v) => setGrid(Number(v))} options={[{ value: '0.01', label: '1 cm' }, { value: '0.05', label: '5 cm' }, { value: '0.1', label: '10 cm' }, { value: '0.25', label: '25 cm' }, { value: '0.5', label: '50 cm' }]} />
+      </Field>
+      <Toggle checked={ortho} onChange={setOrtho} label="Rechte Winkel bevorzugen" />
+    </div>
   );
 }

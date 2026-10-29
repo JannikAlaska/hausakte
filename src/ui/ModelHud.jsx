@@ -89,8 +89,9 @@ export function SceneToolbar({ sceneRef }) {
 export function FloorPanel({ data, compact }) {
   const ui = useUI();
   const floors = sortFloors(Object.values(data.floors)).reverse();
-  const lineCount = floors.reduce((n, f) => n + (f.lines || []).length, 0);
-  const pointCount = floors.reduce((n, f) => n + (f.points || []).length, 0);
+  const storeys = [...floors, ...(data.house?.model?.context || [])];
+  const lineCount = storeys.reduce((n, f) => n + (f.lines || []).filter((l) => !l.auto).length, 0);
+  const pointCount = storeys.reduce((n, f) => n + (f.points || []).length, 0);
   return (
     <div className={`floorpanel ${compact ? 'is-compact' : ''}`}>
       <div className="fp-head">

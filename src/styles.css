@@ -791,3 +791,60 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
   .ms-row { grid-template-columns: 20px 1fr 118px 30px 26px; gap: 6px; }
   .ms-deps, .ms-dep-sum { margin-left: 12px; }
 }
+
+/* outbuildings listed below the site entry */
+.fp-row.fp-sub { padding-left: 22px; }
+.fp-row.fp-sub .fp-short { width: 24px; height: 24px; }
+.fixture-last { padding: 10px; display: flex; flex-direction: column; gap: 8px; background: var(--accent-soft); border-color: transparent; }
+
+/* plan properties: column on desktop, bottom panel over the plan on phones */
+.props-handle { display: none; align-items: center; justify-content: space-between; gap: 8px; width: 100%; border: 0; background: none; padding: 11px 14px; font-weight: 600; font-size: 13.5px; color: var(--ink); text-align: left; }
+.props-handle span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.props-body { display: flex; flex-direction: column; gap: 12px; }
+.sheet.plan-sheet.is-full { top: 0; left: 0; right: 0; bottom: 0; width: auto; z-index: 48; border-radius: 0; border-width: 0; animation: none; }
+.plan-sheet.is-full .sheet-head { display: none; }
+@media (max-width: 760px) {
+  .plan-layout { position: relative; grid-template-rows: auto minmax(0, 1fr); }
+  .plan-props { position: absolute; left: 0; right: 0; bottom: 0; z-index: 6; max-height: 46%; padding: 0; gap: 0; background: var(--surface); border: 1px solid var(--line); border-bottom: 0; border-radius: 16px 16px 0 0; box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.14); }
+  .plan-props .props-handle { display: flex; }
+  .plan-props .props-body { display: none; overflow: auto; padding: 2px 12px 14px; min-height: 0; }
+  .plan-props.is-open .props-body { display: flex; }
+  .plan-canvas { padding-bottom: 0; }
+  .plan-zoom { bottom: 54px; }
+  .plan-sheet.is-full .plan-floors { display: none; }
+  .plan-sheet.is-full .plan-layout { grid-template-rows: minmax(0, 1fr); }
+  .plan-sheet .sheet-head { padding-bottom: 4px; }
+}
+.plan-quick { position: absolute; top: 8px; right: 8px; z-index: 3; display: flex; gap: 2px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 3px; box-shadow: var(--shadow); }
+.plan-quick .icon-btn { width: 32px; height: 32px; }
+@media (max-width: 760px) {
+  .plan-sheet .sheet-actions { order: 0; flex: none; }
+  .plan-sheet .sheet-title { flex: 1 1 0; }
+  .plan-sheet .sheet-head .eyebrow { display: none; }
+  .plan-quick .icon-btn { width: 38px; height: 38px; }
+}
+
+/* drawer tabs and clearer sections */
+.drawer-tabs { padding: 0 10px; background: var(--surface); }
+.drawer-tabs { gap: 0; }
+.drawer-tabs .tab { padding: 10px 6px 11px; font-size: 12.5px; flex: 1 0 auto; justify-content: center; gap: 4px; }
+.tab .tab-warn { color: var(--warn); }
+.project-drawer .drawer-body { padding-top: 12px; display: flex; flex-direction: column; gap: 12px; }
+.project-drawer .drawer-body > .callout { margin: 0; }
+.dsec { padding: 16px 0 14px; }
+.dsec-head { margin-bottom: 12px; }
+.dsec-head h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
+.project-drawer .dsec { padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.project-drawer .dsec:last-child { border-bottom: 1px solid var(--line); }
+.project-drawer .dsec-head { padding-bottom: 10px; margin-bottom: 12px; border-bottom: 1px solid var(--line); }
+.p-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.p-sum { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; border: 1px solid var(--line); background: var(--surface-2); border-radius: 12px; padding: 10px 11px; min-width: 0; color: var(--ink); }
+.p-sum:hover { border-color: var(--line-2); }
+.p-sum span { font-size: 11.5px; color: var(--ink-3); font-weight: 600; }
+.p-sum b { font-size: 15.5px; font-family: var(--font-display); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.p-sum small { font-size: 11.5px; color: var(--ink-2); line-height: 1.3; }
+@media (max-width: 760px) {
+  .p-sum { padding: 8px 9px; }
+  .p-sum b { font-size: 14px; }
+  .p-sum small { display: none; }
+}

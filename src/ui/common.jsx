@@ -122,7 +122,11 @@ export function Section({ n, title, aside, children, className = '' }) {
   );
 }
 
-export function Drawer({ eyebrow, title, subtitle, icon, onClose, children, footer, className = '' }) {
+export function Drawer({ eyebrow, title, subtitle, icon, onClose, children, footer, className = '', tabs, tab, onTab }) {
+  const body = useRef(null);
+  useEffect(() => {
+    if (body.current) body.current.scrollTop = 0;
+  }, [tab]);
   return (
     <aside className={`drawer ${className}`} aria-label={title}>
       <header className="drawer-head">
@@ -138,7 +142,20 @@ export function Drawer({ eyebrow, title, subtitle, icon, onClose, children, foot
         </div>
         <IconBtn icon="x" label="Schließen" onClick={onClose} />
       </header>
-      <div className="drawer-body">{children}</div>
+      {tabs ? (
+        <nav className="tabs drawer-tabs" role="tablist">
+          {tabs.map((t) => (
+            <button key={t.key} type="button" role="tab" aria-selected={tab === t.key} className={`tab ${tab === t.key ? 'is-on' : ''}`} onClick={() => onTab(t.key)}>
+              {t.warn ? <Icon name="alert" size={14} className="tab-warn" /> : null}
+              {t.label}
+              {t.count != null ? <span className="tab-count">{t.count}</span> : null}
+            </button>
+          ))}
+        </nav>
+      ) : null}
+      <div className="drawer-body" ref={body}>
+        {children}
+      </div>
       {footer ? <footer className="drawer-foot">{footer}</footer> : null}
     </aside>
   );

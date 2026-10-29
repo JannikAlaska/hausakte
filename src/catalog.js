@@ -375,12 +375,12 @@ export const LINE_KINDS = [
 export const lineKind = (k) => LINE_KINDS.find((x) => x.key === k) || LINE_KINDS[0];
 // Connection points (outlets, switches, taps …); wall: sits on a wall face, z: default height above the floor.
 export const FIXTURE_KINDS = [
-  { key: 'steckdose', name: 'Steckdose', icon: 'socket', color: '#d49b00', wall: true, z: 0.3, multi: true },
-  { key: 'schalter', name: 'Lichtschalter', icon: 'switch', color: '#d49b00', wall: true, z: 1.05, multi: true },
-  { key: 'lampe', name: 'Deckenlampe', icon: 'lamp', color: '#c98a00', wall: false, z: null },
-  { key: 'netzwerk', name: 'Netzwerkdose', icon: 'network', color: '#8e5cd9', wall: true, z: 0.3, multi: true },
-  { key: 'wasser', name: 'Wasserhahn', icon: 'tap', color: '#2f80ed', wall: true, z: 0.9 },
-  { key: 'gas', name: 'Gashahn', icon: 'valve', color: '#a3712a', wall: true, z: 0.5 },
+  { key: 'steckdose', name: 'Steckdose', icon: 'socket', color: '#d49b00', wall: true, z: 0.3, multi: true, lines: ['strom'] },
+  { key: 'schalter', name: 'Lichtschalter', icon: 'switch', color: '#d49b00', wall: true, z: 1.05, multi: true, lines: ['strom'] },
+  { key: 'lampe', name: 'Deckenlampe', icon: 'lamp', color: '#c98a00', wall: false, z: null, lines: ['strom'] },
+  { key: 'netzwerk', name: 'Netzwerkdose', icon: 'network', color: '#8e5cd9', wall: true, z: 0.3, multi: true, lines: ['netzwerk'] },
+  { key: 'wasser', name: 'Wasserhahn', icon: 'tap', color: '#2f80ed', wall: true, z: 0.9, lines: ['wasser', 'warmwasser'] },
+  { key: 'gas', name: 'Gashahn', icon: 'valve', color: '#a3712a', wall: true, z: 0.5, lines: ['gas'] },
 ];
 export const fixtureKind = (k) => FIXTURE_KINDS.find((x) => x.key === k) || FIXTURE_KINDS[0];
 // lamps sit on the ceiling

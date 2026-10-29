@@ -459,234 +459,8 @@ export class HouseScene {
     const reveal = C('#e9e8e4');
 
     floors.forEach((f, i) => {
-      const below = floors[i - 1];
-      const group = new THREE.Group();
-      group.userData.floorId = f.id;
-      const entry = { floor: f, group, offset: 0, target: 0, visible: true, wantVisible: true, wallMats: [], labelObjs: [], roomLabels: [], index: i };
-      const outline = outlineFromWalls(f.walls || []);
-      const outer = outerOutline(f.walls || []);
-      const wallTop = f.height - (f.slab ?? 0.2);
-      const ridgeTop = roofs.length ? Math.max(...roofs.map((r) => r.geo.ridgeZ)) - f.elevation : wallTop;
-
-      // slab under this floor (with stair openings from the floor below)
-      if (outer) {
-        const holes = (below?.items || []).filter((it) => it.type === 'stairs').map((it) => stairHole(it, below.height));
-        const slab = new THREE.Mesh(slabGeometry(outer, f.slab ?? 0.2, holes), [this.mats.slabCap, this.mats.slabSide]);
-        slab.position.y = f.elevation;
-        slab.castShadow = slab.receiveShadow = true;
-        slab.userData.pick = { type: 'floor', floorId: f.id };
-        group.add(slab);
-        this.pickables.push(slab);
-      }
-
-      // extra slabs (balconies, porches) with their top at floor level
-      for (const it of f.items || []) {
-        if (it.type !== 'slab' || !it.poly || it.poly.length < 3) continue;
-        const sl = new THREE.Mesh(slabGeometry(it.poly, it.t ?? 0.2), [this.mats.slabCap, this.mats.slabSide]);
-        sl.position.y = f.elevation;
-        sl.castShadow = sl.receiveShadow = true;
-        group.add(sl);
-      }
-
-      const extWalls = (f.walls || []).filter((w) => w.ext);
-      const extFaces = extWalls.length ? planarFaces(wallSegs(extWalls)) : [];
-      const insideExt = (q) => (extFaces.length ? extFaces.some((fc) => pointInPoly(q, fc.poly)) : outline && pointInPoly(q, outline));
-
-      // walls, grouped by the roof section that clips them
-      const clip = !!f.underRoof && roofs.length > 0;
-      const buckets = new Map();
-      const frames = [],
-        glass = [],
-        doors = [];
-      for (const w of f.walls || []) {
-        const L = Math.hypot(w.b[0] - w.a[0], w.b[1] - w.a[1]);
-        if (L < 0.01) continue;
-        const ext = !!w.ext;
-        const e = ext ? w.t / 2 : 0;
-        let H = w.h ?? wallTop;
-        if (clip) H = ext ? Math.max(H, ridgeTop) : Math.max(H, Math.min(ridgeTop, w.h ?? wallTop));
-        let pz = interior,
-          nz = interior;
-        if (ext && (outline || extFaces.length)) {
-          const dir = norm(sub(w.b, w.a));
-          const nrm = perp(dir);
-          const mid = [(w.a[0] + w.b[0]) / 2, (w.a[1] + w.b[1]) / 2];
-          const test = [mid[0] + nrm[0] * (w.t / 2 + 0.05), mid[1] + nrm[1] * (w.t / 2 + 0.05)];
-          const plusInside = insideExt(test);
-          const outside = w.color ? C(w.color) : facade;
-          pz = plusInside ? interior : outside;
-          nz = plusInside ? outside : interior;
-        } else if (w.color) {
-          pz = nz = C(w.color);
-        }
-        const cols = { top, bottom: top, end: reveal, pz, nz };
-        let sec = 0;
-        if (clip && roofs.length > 1) {
-          const mid = [(w.a[0] + w.b[0]) / 2, (w.a[1] + w.b[1]) / 2];
-          const k = roofs.findIndex((r) => mid[0] >= r.sec.x - 0.5 && mid[0] <= r.sec.x + r.sec.w + 0.5 && mid[1] >= r.sec.y - 0.5 && mid[1] <= r.sec.y + r.sec.d + 0.5);
-          sec = k < 0 ? 0 : k;
-        }
-        if (!buckets.has(sec)) buckets.set(sec, []);
-        const geos = buckets.get(sec);
-        const ops = [...(w.openings || [])].sort((a, b) => a.pos - b.pos);
-        let cur = -e;
-        for (const o of ops) {
-          const o0 = Math.max(0, o.pos - o.w / 2),
-            o1 = Math.min(L, o.pos + o.w / 2);
-          if (o1 <= o0) continue;
-          if (o0 > cur) geos.push(wallBox(w, cur, o0, 0, H, w.t, cols));
-          const sill = o.type === 'window' ? o.sill ?? 0.9 : 0;
-          const oh = Math.min(o.h ?? 2.0, H - sill);
-          if (sill > 0) geos.push(wallBox(w, o0, o1, 0, sill, w.t, cols));
-          if (sill + oh < H) geos.push(wallBox(w, o0, o1, sill + oh, H, w.t, cols));
-          const sc = (o0 + o1) / 2,
-            ow = o1 - o0;
-          if (o.type === 'window') {
-            glass.push(openingBox(w, sc, ow - 0.1, sill + 0.05, oh - 0.1, 0.04));
-            frames.push(openingBox(w, sc, ow, sill, 0.06, Math.min(w.t, 0.12)));
-            frames.push(openingBox(w, sc, ow, sill + oh - 0.06, 0.06, Math.min(w.t, 0.12)));
-            frames.push(openingBox(w, o0 + 0.03, 0.06, sill, oh, Math.min(w.t, 0.12)));
-            frames.push(openingBox(w, o1 - 0.03, 0.06, sill, oh, Math.min(w.t, 0.12)));
-            if (ow > 1.3) frames.push(openingBox(w, sc, 0.06, sill, oh, Math.min(w.t, 0.1)));
-          } else if (o.type === 'door' && ext) {
-            doors.push(openingBox(w, sc, ow - 0.08, 0, oh - 0.04, 0.06));
-          }
-          cur = o1;
-        }
-        if (L + e > cur) geos.push(wallBox(w, cur, L + e, 0, H, w.t, cols));
-      }
-      for (const [secIdx, geos] of buckets) {
-        const list = geos.filter(Boolean);
-        if (!list.length) continue;
-        const merged = mergeGeometries(list);
-        list.forEach((g) => g.dispose());
-        const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, metalness: 0, emissive: '#000000' });
-        if (clip) {
-          const planes = sectionClipPlanes(roofs[secIdx].geo).map((p) => ({ base: p, plane: new THREE.Plane() }));
-          mat.clippingPlanes = planes.map((p) => p.plane);
-          mat.clipShadows = true;
-          entry.clipPlanes = (entry.clipPlanes || []).concat(planes);
-        }
-        const mesh = new THREE.Mesh(merged, mat);
-        mesh.position.y = f.elevation;
-        mesh.castShadow = mesh.receiveShadow = true;
-        mesh.userData.pick = { type: 'floor', floorId: f.id };
-        group.add(mesh);
-        entry.wallMats.push(mat);
-        this.pickables.push(mesh);
-      }
-      const addMerged = (geos, mat) => {
-        if (!geos.length) return;
-        const m = new THREE.Mesh(mergeGeometries(geos), mat);
-        geos.forEach((g) => g.dispose());
-        m.position.y = f.elevation;
-        m.castShadow = true;
-        group.add(m);
-      };
-      addMerged(glass, this.mats.glass);
-      addMerged(frames, this.mats.frame);
-      addMerged(doors, this.mats.door);
-
-      // rooms
-      for (const room of f.rooms || []) {
-        if (!room.poly || room.poly.length < 3) continue;
-        const g = new THREE.ShapeGeometry(shapeFromPoly(room.poly));
-        g.rotateX(Math.PI / 2);
-        const mat = new THREE.MeshStandardMaterial({
-          color: ROOM_COLORS[room.type] || ROOM_COLORS.sonstiges, roughness: 1, side: THREE.DoubleSide,
-          polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, emissive: '#000000',
-        });
-        const mesh = new THREE.Mesh(g, mat);
-        mesh.position.y = f.elevation + 0.012;
-        mesh.receiveShadow = true;
-        mesh.userData.pick = { type: 'room', floorId: f.id, roomId: room.id };
-        group.add(mesh);
-        this.pickables.push(mesh);
-        this.roomMeshes.set(room.id, { mesh, mat, base: mat.color.clone(), floorId: f.id });
-        const lp = labelPoint(room.poly);
-        const lbl = makeLabel(
-          `<b>${escapeHtml(room.name || roomType(room.type).name)}</b><span>${fmtFixed(roomArea(room), 1)} m²</span>`,
-          'room',
-          () => this.opts.onPick?.({ type: 'room', floorId: f.id, roomId: room.id }),
-        );
-        lbl.position.set(lp[0], f.elevation + 0.3, lp[1]);
-        group.add(lbl);
-        entry.roomLabels.push(lbl);
-      }
-
-      // stairs
-      for (const it of f.items || []) {
-        if (it.type !== 'stairs') continue;
-        const steps = Math.max(3, Math.round(f.height / 0.18));
-        const rise = f.height / steps;
-        const run = it.l / steps;
-        const geos = [];
-        for (let k = 0; k < steps; k++) {
-          const h = rise * (k + 1);
-          let gx, gz, sx, sz;
-          if (it.dir === 'n') [gx, gz, sx, sz] = [it.x + it.w / 2, it.y + it.l - run * (k + 0.5), it.w, run];
-          else if (it.dir === 's') [gx, gz, sx, sz] = [it.x + it.w / 2, it.y + run * (k + 0.5), it.w, run];
-          else if (it.dir === 'e') [gx, gz, sx, sz] = [it.x + run * (k + 0.5), it.y + it.w / 2, run, it.w];
-          else [gx, gz, sx, sz] = [it.x + it.l - run * (k + 0.5), it.y + it.w / 2, run, it.w];
-          const tread = new THREE.BoxGeometry(sx, 0.05, sz);
-          tread.translate(gx, h - 0.025, gz);
-          const riser = new THREE.BoxGeometry(sx * 0.96, rise, sz);
-          riser.translate(gx, h - rise / 2 - 0.05, gz);
-          geos.push(tread, riser);
-        }
-        const m = new THREE.Mesh(mergeGeometries(geos), this.mats.stairs);
-        geos.forEach((g) => g.dispose());
-        m.position.y = f.elevation;
-        m.castShadow = m.receiveShadow = true;
-        group.add(m);
-      }
-
-      // installation lines and connection points (only shown in the x-ray view)
-      const lines = (f.lines || []).filter((l) => (l.pts || []).length >= 2);
-      const points = f.points || [];
-      if (lines.length || points.length) {
-        const lg = new THREE.Group();
-        for (const l of lines) {
-          const k = lineKind(l.kind);
-          const g = lineGeometry(l.pts, k.r * 1.6);
-          if (!g) continue;
-          const planned = l.status === 'geplant',
-            off = l.status === 'stillgelegt';
-          const mat = new THREE.MeshStandardMaterial({
-            color: off ? '#9aa0a8' : k.color, emissive: off ? '#000000' : k.color, emissiveIntensity: 0.55, roughness: 0.45, metalness: 0.1,
-            transparent: planned || off, opacity: planned ? 0.6 : off ? 0.5 : 1,
-          });
-          const m = new THREE.Mesh(g, mat);
-          m.position.y = f.elevation;
-          m.renderOrder = 4;
-          lg.add(m);
-        }
-        for (const q of points) {
-          const m = fixtureMesh(q);
-          m.position.set(q.x, f.elevation + (q.z ?? 0.3), q.y);
-          lg.add(m);
-        }
-        lg.visible = !!this.view.showLines;
-        lg.userData.noShade = true;
-        group.add(lg);
-        entry.lineGroup = lg;
-      }
-
-      // floor label (explode view)
-      const ol = outer || outline;
-      if (ol) {
-        const bb = bbox(ol);
-        const lbl = makeLabel(
-          `<i>${escapeHtml(f.short || '')}</i><b>${escapeHtml(f.name || '')}</b><span>${(f.rooms || []).length} Räume</span>`,
-          'floor',
-          () => this.opts.onPick?.({ type: 'floor', floorId: f.id }),
-        );
-        lbl.position.set(bb.minX - 0.4, f.elevation + 0.2, bb.maxY + 0.4);
-        group.add(lbl);
-        entry.floorLabel = lbl;
-      }
-
-      this.houseGroup.add(group);
+      const entry = this.buildStorey(f, { below: floors[i - 1], index: i, roofs, facade, interior, top, reveal });
+      this.houseGroup.add(entry.group);
       this.floorEntries.push(entry);
     });
 
@@ -702,6 +476,243 @@ export class HouseScene {
       this.resetView(true);
       if (this.view.mode !== 'all') this.frameView();
     }
+  }
+
+  // One storey (or an outbuilding drawn with walls): slab, walls with openings, rooms, stairs, lines and connection points.
+  buildStorey(f, { below = null, index = 0, roofs = [], facade, interior, top, reveal, ctx = false }) {
+    const group = new THREE.Group();
+    group.userData.floorId = f.id;
+    const pick = (m) => !ctx && this.pickables.push(m);
+    const entry = { floor: f, group, offset: 0, target: 0, visible: true, wantVisible: true, wallMats: [], labelObjs: [], roomLabels: [], index };
+    const outline = outlineFromWalls(f.walls || []);
+    const outer = outerOutline(f.walls || []);
+    const wallTop = f.height - (f.slab ?? 0.2);
+    const ridgeTop = roofs.length ? Math.max(...roofs.map((r) => r.geo.ridgeZ)) - f.elevation : wallTop;
+
+    // slab under this floor (with stair openings from the floor below)
+    if (outer) {
+      const holes = (below?.items || []).filter((it) => it.type === 'stairs').map((it) => stairHole(it, below.height));
+      const slab = new THREE.Mesh(slabGeometry(outer, f.slab ?? 0.2, holes), [this.mats.slabCap, this.mats.slabSide]);
+      slab.position.y = f.elevation;
+      slab.castShadow = slab.receiveShadow = true;
+      slab.userData.pick = { type: 'floor', floorId: f.id };
+      group.add(slab);
+      pick(slab);
+    }
+
+    // extra slabs (balconies, porches) with their top at floor level
+    for (const it of f.items || []) {
+      if (it.type !== 'slab' || !it.poly || it.poly.length < 3) continue;
+      const sl = new THREE.Mesh(slabGeometry(it.poly, it.t ?? 0.2), [this.mats.slabCap, this.mats.slabSide]);
+      sl.position.y = f.elevation;
+      sl.castShadow = sl.receiveShadow = true;
+      group.add(sl);
+    }
+
+    const extWalls = (f.walls || []).filter((w) => w.ext);
+    const extFaces = extWalls.length ? planarFaces(wallSegs(extWalls)) : [];
+    const insideExt = (q) => (extFaces.length ? extFaces.some((fc) => pointInPoly(q, fc.poly)) : outline && pointInPoly(q, outline));
+
+    // walls, grouped by the roof section that clips them
+    const clip = !!f.underRoof && roofs.length > 0;
+    const buckets = new Map();
+    const frames = [],
+      glass = [],
+      doors = [];
+    for (const w of f.walls || []) {
+      const L = Math.hypot(w.b[0] - w.a[0], w.b[1] - w.a[1]);
+      if (L < 0.01) continue;
+      const ext = !!w.ext;
+      const e = ext ? w.t / 2 : 0;
+      let H = w.h ?? wallTop;
+      if (clip) H = ext ? Math.max(H, ridgeTop) : Math.max(H, Math.min(ridgeTop, w.h ?? wallTop));
+      let pz = interior,
+        nz = interior;
+      if (ext && (outline || extFaces.length)) {
+        const dir = norm(sub(w.b, w.a));
+        const nrm = perp(dir);
+        const mid = [(w.a[0] + w.b[0]) / 2, (w.a[1] + w.b[1]) / 2];
+        const test = [mid[0] + nrm[0] * (w.t / 2 + 0.05), mid[1] + nrm[1] * (w.t / 2 + 0.05)];
+        const plusInside = insideExt(test);
+        const outside = w.color ? C(w.color) : facade;
+        pz = plusInside ? interior : outside;
+        nz = plusInside ? outside : interior;
+      } else if (w.color) {
+        pz = nz = C(w.color);
+      }
+      const cols = { top, bottom: top, end: reveal, pz, nz };
+      let sec = 0;
+      if (clip && roofs.length > 1) {
+        const mid = [(w.a[0] + w.b[0]) / 2, (w.a[1] + w.b[1]) / 2];
+        const k = roofs.findIndex((r) => mid[0] >= r.sec.x - 0.5 && mid[0] <= r.sec.x + r.sec.w + 0.5 && mid[1] >= r.sec.y - 0.5 && mid[1] <= r.sec.y + r.sec.d + 0.5);
+        sec = k < 0 ? 0 : k;
+      }
+      if (!buckets.has(sec)) buckets.set(sec, []);
+      const geos = buckets.get(sec);
+      const ops = [...(w.openings || [])].sort((a, b) => a.pos - b.pos);
+      let cur = -e;
+      for (const o of ops) {
+        const o0 = Math.max(0, o.pos - o.w / 2),
+          o1 = Math.min(L, o.pos + o.w / 2);
+        if (o1 <= o0) continue;
+        if (o0 > cur) geos.push(wallBox(w, cur, o0, 0, H, w.t, cols));
+        const sill = o.type === 'window' ? o.sill ?? 0.9 : 0;
+        const oh = Math.min(o.h ?? 2.0, H - sill);
+        if (sill > 0) geos.push(wallBox(w, o0, o1, 0, sill, w.t, cols));
+        if (sill + oh < H) geos.push(wallBox(w, o0, o1, sill + oh, H, w.t, cols));
+        const sc = (o0 + o1) / 2,
+          ow = o1 - o0;
+        if (o.type === 'window') {
+          glass.push(openingBox(w, sc, ow - 0.1, sill + 0.05, oh - 0.1, 0.04));
+          frames.push(openingBox(w, sc, ow, sill, 0.06, Math.min(w.t, 0.12)));
+          frames.push(openingBox(w, sc, ow, sill + oh - 0.06, 0.06, Math.min(w.t, 0.12)));
+          frames.push(openingBox(w, o0 + 0.03, 0.06, sill, oh, Math.min(w.t, 0.12)));
+          frames.push(openingBox(w, o1 - 0.03, 0.06, sill, oh, Math.min(w.t, 0.12)));
+          if (ow > 1.3) frames.push(openingBox(w, sc, 0.06, sill, oh, Math.min(w.t, 0.1)));
+        } else if (o.type === 'door' && ext) {
+          doors.push(openingBox(w, sc, ow - 0.08, 0, oh - 0.04, 0.06));
+        }
+        cur = o1;
+      }
+      if (L + e > cur) geos.push(wallBox(w, cur, L + e, 0, H, w.t, cols));
+    }
+    for (const [secIdx, geos] of buckets) {
+      const list = geos.filter(Boolean);
+      if (!list.length) continue;
+      const merged = mergeGeometries(list);
+      list.forEach((g) => g.dispose());
+      const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, metalness: 0, emissive: '#000000' });
+      if (clip) {
+        const planes = sectionClipPlanes(roofs[secIdx].geo).map((p) => ({ base: p, plane: new THREE.Plane() }));
+        mat.clippingPlanes = planes.map((p) => p.plane);
+        mat.clipShadows = true;
+        entry.clipPlanes = (entry.clipPlanes || []).concat(planes);
+      }
+      const mesh = new THREE.Mesh(merged, mat);
+      mesh.position.y = f.elevation;
+      mesh.castShadow = mesh.receiveShadow = true;
+      mesh.userData.pick = { type: 'floor', floorId: f.id };
+      group.add(mesh);
+      entry.wallMats.push(mat);
+      pick(mesh);
+    }
+    const addMerged = (geos, mat) => {
+      if (!geos.length) return;
+      const m = new THREE.Mesh(mergeGeometries(geos), mat);
+      geos.forEach((g) => g.dispose());
+      m.position.y = f.elevation;
+      m.castShadow = true;
+      group.add(m);
+    };
+    addMerged(glass, this.mats.glass);
+    addMerged(frames, this.mats.frame);
+    addMerged(doors, this.mats.door);
+
+    // rooms
+    for (const room of f.rooms || []) {
+      if (!room.poly || room.poly.length < 3) continue;
+      const g = new THREE.ShapeGeometry(shapeFromPoly(room.poly));
+      g.rotateX(Math.PI / 2);
+      const mat = new THREE.MeshStandardMaterial({
+        color: ROOM_COLORS[room.type] || ROOM_COLORS.sonstiges, roughness: 1, side: THREE.DoubleSide,
+        polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, emissive: '#000000',
+      });
+      const mesh = new THREE.Mesh(g, mat);
+      mesh.position.y = f.elevation + 0.012;
+      mesh.receiveShadow = true;
+      mesh.userData.pick = { type: 'room', floorId: f.id, roomId: room.id };
+      group.add(mesh);
+      pick(mesh);
+      if (ctx) {
+        entry.wallMats.push(mat);
+        continue;
+      }
+      this.roomMeshes.set(room.id, { mesh, mat, base: mat.color.clone(), floorId: f.id });
+      const lp = labelPoint(room.poly);
+      const lbl = makeLabel(
+        `<b>${escapeHtml(room.name || roomType(room.type).name)}</b><span>${fmtFixed(roomArea(room), 1)} m²</span>`,
+        'room',
+        () => this.opts.onPick?.({ type: 'room', floorId: f.id, roomId: room.id }),
+      );
+      lbl.position.set(lp[0], f.elevation + 0.3, lp[1]);
+      group.add(lbl);
+      entry.roomLabels.push(lbl);
+    }
+
+    // stairs
+    for (const it of f.items || []) {
+      if (it.type !== 'stairs') continue;
+      const steps = Math.max(3, Math.round(f.height / 0.18));
+      const rise = f.height / steps;
+      const run = it.l / steps;
+      const geos = [];
+      for (let k = 0; k < steps; k++) {
+        const h = rise * (k + 1);
+        let gx, gz, sx, sz;
+        if (it.dir === 'n') [gx, gz, sx, sz] = [it.x + it.w / 2, it.y + it.l - run * (k + 0.5), it.w, run];
+        else if (it.dir === 's') [gx, gz, sx, sz] = [it.x + it.w / 2, it.y + run * (k + 0.5), it.w, run];
+        else if (it.dir === 'e') [gx, gz, sx, sz] = [it.x + run * (k + 0.5), it.y + it.w / 2, run, it.w];
+        else [gx, gz, sx, sz] = [it.x + it.l - run * (k + 0.5), it.y + it.w / 2, run, it.w];
+        const tread = new THREE.BoxGeometry(sx, 0.05, sz);
+        tread.translate(gx, h - 0.025, gz);
+        const riser = new THREE.BoxGeometry(sx * 0.96, rise, sz);
+        riser.translate(gx, h - rise / 2 - 0.05, gz);
+        geos.push(tread, riser);
+      }
+      const m = new THREE.Mesh(mergeGeometries(geos), this.mats.stairs);
+      geos.forEach((g) => g.dispose());
+      m.position.y = f.elevation;
+      m.castShadow = m.receiveShadow = true;
+      group.add(m);
+    }
+
+    // installation lines and connection points (only shown in the x-ray view)
+    const lines = (f.lines || []).filter((l) => (l.pts || []).length >= 2);
+    const points = f.points || [];
+    if (lines.length || points.length) {
+      const lg = new THREE.Group();
+      for (const l of lines) {
+        const k = lineKind(l.kind);
+        const g = lineGeometry(l.pts, k.r * 1.6);
+        if (!g) continue;
+        const planned = l.status === 'geplant',
+          off = l.status === 'stillgelegt';
+        const mat = new THREE.MeshStandardMaterial({
+          color: off ? '#9aa0a8' : k.color, emissive: off ? '#000000' : k.color, emissiveIntensity: 0.55, roughness: 0.45, metalness: 0.1,
+          transparent: planned || off, opacity: planned ? 0.6 : off ? 0.5 : 1,
+        });
+        const m = new THREE.Mesh(g, mat);
+        m.position.y = f.elevation;
+        m.renderOrder = 4;
+        lg.add(m);
+      }
+      for (const q of points) {
+        const m = fixtureMesh(q);
+        m.position.set(q.x, f.elevation + (q.z ?? 0.3), q.y);
+        lg.add(m);
+      }
+      lg.visible = !!this.view.showLines;
+      lg.userData.noShade = true;
+      lg.userData.noXray = true;
+      group.add(lg);
+      entry.lineGroup = lg;
+    }
+
+    // floor label (explode view)
+    const ol = outer || outline;
+    if (ol && !ctx) {
+      const bb = bbox(ol);
+      const lbl = makeLabel(
+        `<i>${escapeHtml(f.short || '')}</i><b>${escapeHtml(f.name || '')}</b><span>${(f.rooms || []).length} Räume</span>`,
+        'floor',
+        () => this.opts.onPick?.({ type: 'floor', floorId: f.id }),
+      );
+      lbl.position.set(bb.minX - 0.4, f.elevation + 0.2, bb.maxY + 0.4);
+      group.add(lbl);
+      entry.floorLabel = lbl;
+    }
+
+    return entry;
   }
 
   buildRoof(floors, roofs, facade) {
@@ -1468,6 +1479,7 @@ export class HouseScene {
   // Neighbouring houses and outbuildings as simple massing.
   buildContext(gl) {
     this.contextLabels = [];
+    this.ctxEntries = [];
     const list = this.data.house?.model?.context || [];
     const north = this.data.house?.northAngle || 0;
     for (const b of list) {
@@ -1477,7 +1489,16 @@ export class HouseScene {
       const base = gl + (b.z ?? 0);
       const hgt = b.h ?? 2.6;
       const grp = new THREE.Group();
-      if (b.open) {
+      const drawn = !neighbor && (b.walls || []).length > 0;
+      if (drawn) {
+        // outbuilding with its own floor plan: walls, rooms, lines like a storey
+        const pseudo = { id: b.id, name: b.name, elevation: base, height: hgt + 0.1, slab: 0.1, walls: b.walls, rooms: b.rooms || [], items: b.items || [], lines: b.lines || [], points: b.points || [] };
+        const shade = C(b.color || '#d8cbb6');
+        const entry = this.buildStorey(pseudo, { facade: shade, interior: C('#f3f1ec'), top: C('#cfd0d6'), reveal: C('#e9e8e4'), ctx: true });
+        entry.group.position.y = 0;
+        grp.add(entry.group);
+        this.ctxEntries.push(entry);
+      } else if (b.open) {
         for (const [px, py] of [[b.x + 0.1, b.y + 0.1], [b.x + b.w - 0.1, b.y + 0.1], [b.x + b.w - 0.1, b.y + b.d - 0.1], [b.x + 0.1, b.y + b.d - 0.1]]) {
           const g = new THREE.BoxGeometry(0.12, hgt, 0.12);
           g.translate(px, base + hgt / 2, py);
@@ -1504,7 +1525,7 @@ export class HouseScene {
         grp.add(new THREE.Mesh(g, roofMat));
       }
       grp.traverse((o) => {
-        if (o.isMesh) {
+        if (o.isMesh && !o.parent?.userData.noShade) {
           o.castShadow = true;
           o.receiveShadow = true;
         }
@@ -1572,12 +1593,17 @@ export class HouseScene {
   // x-ray: walls, slabs and roof turn see-through so the installation lines inside are visible
   applyXray() {
     const on = !!this.view.showLines;
-    for (const e of this.floorEntries) if (e.lineGroup) e.lineGroup.visible = on;
+    for (const e of [...this.floorEntries, ...(this.ctxEntries || [])]) if (e.lineGroup) e.lineGroup.visible = on;
     const mats = [...this.floorEntries.flatMap((e) => e.wallMats), this.mats.slabCap, this.mats.slabSide, this.mats.glass, this.mats.frame, this.mats.door, this.mats.stairs];
     if (this.roofTopMat) mats.push(this.roofTopMat, this.mats.roofSide);
     if (this.roofEntry?.gableMat) mats.push(this.roofEntry.gableMat);
     if (this.roofEntry?.group) this.roofEntry.group.traverse((o) => o.isMesh && [].concat(o.material).forEach((m) => !mats.includes(m) && mats.push(m)));
-    for (const g of this.envGroup.children) if (g.userData.ctx) g.traverse((o) => o.isMesh && [].concat(o.material).forEach((m) => !mats.includes(m) && mats.push(m)));
+    const collect = (o) => {
+      if (o.userData.noXray) return;
+      if (o.isMesh) [].concat(o.material).forEach((m) => !mats.includes(m) && mats.push(m));
+      o.children.forEach(collect);
+    };
+    for (const g of this.envGroup.children) if (g.userData.ctx) collect(g);
     const roomMats = [...(this.roomMeshes?.values() || [])].map((r) => r.mat);
     for (const m of [...mats, ...roomMats]) {
       if (!m) continue;
