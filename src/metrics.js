@@ -95,16 +95,54 @@ export function projectCost(p) {
 export const isDone = (p) => p.status === 'abgeschlossen';
 export const isActive = (p) => ['planung', 'angebote', 'beauftragt', 'umsetzung'].includes(p.status);
 
+// ---------- dependencies between projects and milestones ----------
+// A reference is a project id (after its end) or "projectId#milestoneId" (after that milestone).
+export const msRef = (pid, mid) => `${pid}#${mid}`;
+export function parseRef(ref) {
+  const s = String(ref || '');
+  const i = s.indexOf('#');
+  return i < 0 ? { pid: s, mid: null } : { pid: s.slice(0, i), mid: s.slice(i + 1) };
+}
+export function resolveRef(byId, ref) {
+  const { pid, mid } = parseRef(ref);
+  const p = byId[pid];
+  if (!p) return null;
+  if (!mid) return { ref, kind: 'project', project: p, title: p.title, date: p.end || null, done: isDone(p) };
+  const m = (p.milestones || []).find((x) => x.id === mid);
+  if (!m) return null;
+  return { ref, kind: 'milestone', project: p, milestone: m, title: m.title, date: m.date || null, done: !!m.done };
+}
+export const refLabel = (r) => (r.kind === 'milestone' ? `Meilenstein „${r.title}“ (${r.project.title})` : `„${r.title}“`);
+const depsOf = (byId, ref) => {
+  const r = resolveRef(byId, ref);
+  return (r ? (r.kind === 'milestone' ? r.milestone.dependsOn : r.project.dependsOn) : null) || [];
+};
+// all nodes that wait for ref (directly)
+export function dependentsOf(projects, ref) {
+  const out = [];
+  for (const p of projects) {
+    if ((p.dependsOn || []).includes(ref)) out.push({ kind: 'project', project: p, ref: p.id, title: p.title });
+    for (const m of p.milestones || []) if ((m.dependsOn || []).includes(ref)) out.push({ kind: 'milestone', project: p, milestone: m, ref: msRef(p.id, m.id), title: m.title });
+  }
+  return out;
+}
+const dmy = (iso) => iso.split('-').reverse().join('.');
+
 export function projectIssues(p, all, today = todayISO()) {
   const issues = [];
   const byId = Object.fromEntries(all.map((x) => [x.id, x]));
-  for (const depId of p.dependsOn || []) {
-    const d = byId[depId];
-    if (!d) continue;
-    if (d.end && p.start && p.start < d.end && !isDone(d))
-      issues.push({ kind: 'dependency', level: 'warn', text: `Startet vor Ende von „${d.title}“ (${d.end.split('-').reverse().join('.')})`, depId });
-    else if (d.end && p.start && p.start < d.end)
-      issues.push({ kind: 'dependency', level: 'info', text: `Überschneidet sich mit „${d.title}“`, depId });
+  for (const ref of p.dependsOn || []) {
+    const d = resolveRef(byId, ref);
+    if (!d || !d.date || !p.start || p.start >= d.date) continue;
+    if (!d.done) issues.push({ kind: 'dependency', level: 'warn', text: d.kind === 'milestone' ? `Startet vor Meilenstein „${d.title}“ von „${d.project.title}“ (${dmy(d.date)})` : `Startet vor Ende von „${d.title}“ (${dmy(d.date)})`, depId: ref });
+    else if (d.kind === 'project') issues.push({ kind: 'dependency', level: 'info', text: `Überschneidet sich mit „${d.title}“`, depId: ref });
+  }
+  for (const m of p.milestones || []) {
+    for (const ref of m.dependsOn || []) {
+      const d = resolveRef(byId, ref);
+      if (!d || !d.date || !m.date || m.date >= d.date || d.done || m.done) continue;
+      issues.push({ kind: 'dependency', level: 'warn', text: `Meilenstein „${m.title}“ liegt vor ${d.kind === 'milestone' ? `Meilenstein „${d.title}“${d.project.id !== p.id ? ` von „${d.project.title}“` : ''}` : `dem Ende von „${d.title}“`} (${dmy(d.date)})`, depId: ref, msId: m.id });
+    }
   }
   if (p.end && p.end < today && !isDone(p) && p.status !== 'pausiert') issues.push({ kind: 'overdue', level: 'warn', text: 'Endtermin überschritten' });
   if (p.start && p.end && p.end < p.start) issues.push({ kind: 'dates', level: 'warn', text: 'Ende liegt vor dem Start' });
@@ -117,17 +155,17 @@ export function projectIssues(p, all, today = todayISO()) {
   return issues;
 }
 
-// Would adding dependency dep -> p create a cycle?
-export function createsCycle(projects, pId, depId) {
+// Would letting `ref` wait for `depRef` create a cycle? (refs are project ids or milestone refs)
+export function createsCycle(projects, ref, depRef) {
   const byId = Object.fromEntries(projects.map((x) => [x.id, x]));
   const seen = new Set();
-  const stack = [depId];
+  const stack = [depRef];
   while (stack.length) {
     const cur = stack.pop();
-    if (cur === pId) return true;
+    if (cur === ref) return true;
     if (seen.has(cur)) continue;
     seen.add(cur);
-    for (const d of byId[cur]?.dependsOn || []) stack.push(d);
+    for (const d of depsOf(byId, cur)) stack.push(d);
   }
   return false;
 }

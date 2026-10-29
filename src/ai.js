@@ -1,8 +1,9 @@
 // AI features via the viewer's Claude (the artifact `sample` capability).
 // Every call sends the instruction, the relevant house data and the expected JSON shape.
 
-import { FUNDING_KNOWLEDGE, gewerk, projectKind, status as statusOf, PROJECT_KINDS, medium, CONSTRAINT_KINDS, lineKind } from './catalog.js';
-import { buildingStats, componentWear, projectCost, sortFloors, consumptionByYear, heatingIndex, roomArea } from './metrics.js';
+import { FUNDING_KNOWLEDGE, gewerk, projectKind, status as statusOf, PROJECT_KINDS, medium, CONSTRAINT_KINDS, lineKind, fixtureKind } from './catalog.js';
+import { pointInPoly } from './geometry.js';
+import { buildingStats, componentWear, projectCost, sortFloors, consumptionByYear, heatingIndex, roomArea, resolveRef } from './metrics.js';
 import { bearingName } from './roof.js';
 import { todayISO, fmtNum } from './util.js';
 import { isSupabaseMode, makeSupaSample } from './supa.js';
@@ -104,6 +105,26 @@ export function houseContext(d, { withProjects = true, withComponents = true, wi
     L.push('EINGEZEICHNETE LEITUNGEN');
     L.push(...lineInfo.slice(0, 40));
   }
+  const fixInfo = [];
+  for (const f of floors) {
+    const by = new Map();
+    for (const q of f.points || []) {
+      const rm = (f.rooms || []).find((r) => {
+        const a = ((q.rot ?? 0) * Math.PI) / 180;
+        const pt = q.rot == null ? [q.x, q.y] : [q.x + Math.cos(a) * 0.08, q.y + Math.sin(a) * 0.08];
+        return r.poly?.length && pointInPoly(pt, r.poly);
+      });
+      const key = rm?.name || 'ohne Raum';
+      if (!by.has(key)) by.set(key, []);
+      by.get(key).push(`${q.count > 1 ? q.count + '× ' : ''}${fixtureKind(q.kind).name}${q.label ? ` „${q.label}“` : ''}${q.status && q.status !== 'bestand' ? ` (${q.status})` : ''}`);
+    }
+    for (const [room, items] of by) fixInfo.push(`- ${f.short || f.name} ${room}: ${items.join(', ')}`);
+  }
+  if (fixInfo.length) {
+    L.push('');
+    L.push('ANSCHLÜSSE (Steckdosen, Schalter, Lampen, Netzwerk, Wasser, Gas)');
+    L.push(...fixInfo.slice(0, 50));
+  }
   if (withComponents) {
     L.push('');
     L.push('BAUTEILE');
@@ -140,13 +161,22 @@ export function houseContext(d, { withProjects = true, withComponents = true, wi
     for (const p of projects) {
       const c = projectCost(p);
       L.push(
-        `- [${p.id}] ${p.title} (${projectKind(p.kind).name}), Status ${statusOf(p.status).name}, ${p.start || '?'} bis ${p.end || '?'}, Kosten ca. ${fmtNum(c.best, 0)} €${(p.dependsOn || []).length ? `, abhängig von ${p.dependsOn.join(', ')}` : ''}${(p.funding || []).length ? `, Förderung: ${p.funding.map((f) => `${f.program} (${f.status})`).join('; ')}` : ''}`,
+        `- [${p.id}] ${p.title} (${projectKind(p.kind).name}), Status ${statusOf(p.status).name}, ${p.start || '?'} bis ${p.end || '?'}, Kosten ca. ${fmtNum(c.best, 0)} €${(p.dependsOn || []).length ? `, startet erst nach ${p.dependsOn.join(', ')}` : ''}${(p.funding || []).length ? `, Förderung: ${p.funding.map((f) => `${f.program} (${f.status})`).join('; ')}` : ''}`,
       );
+      if (p.hints?.trim()) L.push(`  Hinweise: ${String(p.hints).replace(/\s+/g, ' ').slice(0, 300)}`);
+      for (const m of p.milestones || [])
+        L.push(`  Meilenstein [${p.id}#${m.id}] ${m.title}: ${m.date || 'ohne Datum'}${m.done ? ', erledigt' : ''}${(m.dependsOn || []).length ? `, erst nach ${m.dependsOn.join(', ')}` : ''}`);
     }
+    if (projects.length) L.push('Abhängigkeiten verweisen auf eine Projekt-ID (= nach Projektende) oder auf „Projekt-ID#Meilenstein-ID“ (= nach diesem Meilenstein).');
   }
   L.push('');
   L.push(`HEUTE: ${todayISO()}`);
   return L.join('\n');
+}
+
+function depName(d, ref) {
+  const r = resolveRef(d.projects || {}, ref);
+  return r ? (r.kind === 'milestone' ? `Meilenstein „${r.title}“ von „${r.project.title}“ (${r.date || 'ohne Datum'})` : `Ende von „${r.title}“ (${r.date || 'offen'})`) : ref;
 }
 
 function projectBlock(p, d) {
@@ -161,7 +191,9 @@ function projectBlock(p, d) {
     `Summe ca. ${fmtNum(c.best, 0)} €`,
     `Rahmenbedingungen: ${(p.constraints || []).map((k) => k.text).join('; ') || 'keine'}`,
     `Bereits erfasste Förderung: ${(p.funding || []).map((f) => `${f.program} (${f.provider}, ${f.status})`).join('; ') || 'keine'}`,
-    `Abhängigkeiten: ${(p.dependsOn || []).map((id) => d.projects?.[id]?.title || id).join('; ') || 'keine'}`,
+    `Startet erst nach: ${(p.dependsOn || []).map((r) => depName(d, r)).join('; ') || 'keine Abhängigkeit'}`,
+    `Meilensteine: ${(p.milestones || []).map((m) => `${m.title} ${m.date || 'ohne Datum'}${m.done ? ' (erledigt)' : ''}${(m.dependsOn || []).length ? ` – erst nach ${m.dependsOn.map((r) => depName(d, r)).join(', ')}` : ''}`).join('; ') || 'keine'}`,
+    `Hinweise: ${p.hints?.trim() || '–'}`,
     `Verknüpfte Bauteile: ${(p.components || []).map((id) => d.components?.[id]?.name).filter(Boolean).join('; ') || 'keine'}`,
     `Notizen: ${p.notes || '–'}`,
   ];
@@ -206,7 +238,7 @@ Format:
 export async function aiTiming(p, d, opts) {
   const others = Object.values(d.projects || {})
     .filter((x) => x.id !== p.id)
-    .map((x) => `- [${x.id}] ${x.title} (${projectKind(x.kind).name}, ${statusOf(x.status).name}, ${x.start || '?'} bis ${x.end || '?'})`)
+    .map((x) => `- [${x.id}] ${x.title} (${projectKind(x.kind).name}, ${statusOf(x.status).name}, ${x.start || '?'} bis ${x.end || '?'})${(x.milestones || []).length ? `; Meilensteine: ${x.milestones.map((m) => `${m.title} ${m.date || 'ohne Datum'}`).join(', ')}` : ''}`)
     .join('\n');
   const prompt = `Du bist Bauleiter und planst Modernisierungen an einem bewohnten Einfamilienhaus in Deutschland.
 Aufgabe: Schlage für die Maßnahme einen realistischen Zeitraum vor und prüfe Abhängigkeiten zu den anderen Projekten.
@@ -224,7 +256,7 @@ ${houseContext(d, { withProjects: false, withConsumption: false, withComponents:
 
 ${JSON_RULES}
 Format:
-{"summary":"Fazit in 2 Sätzen","start":"YYYY-MM-DD","end":"YYYY-MM-DD","season":"Begründung Jahreszeit","leadTimeWeeks":8,"reasons":["Grund"],"dependencies":[{"projectId":"ID","type":"vorher|nachher|gleichzeitig","reason":"Warum"}],"milestones":[{"title":"Meilenstein","date":"YYYY-MM-DD"}],"warnings":["Hinweis"]}`;
+{"summary":"Fazit in 2 Sätzen","start":"YYYY-MM-DD","end":"YYYY-MM-DD","season":"Begründung Jahreszeit","leadTimeWeeks":8,"reasons":["Grund"],"dependencies":[{"projectId":"ID","type":"vorher|nachher|gleichzeitig","reason":"Warum"}],"milestones":[{"title":"Meilenstein","date":"YYYY-MM-DD"}],"hints":"Wichtige Hinweise zu Abhängigkeiten und Fristen für das Feld Hinweise (1–3 kurze Sätze)","warnings":["Hinweis"]}`;
   return askJSON(prompt, opts);
 }
 
@@ -418,7 +450,8 @@ export function chatRules(d) {
   return `Du bist der Haus-Assistent in der App „Hausakte“. Du hilfst dem Eigentümer, sein gerade gekauftes Haus zu verstehen, zu renovieren und zu modernisieren.
 Antworte auf Deutsch, konkret und knapp (höchstens ca. 200 Wörter, wenn nicht anders gewünscht). Nutze kurze Absätze oder Aufzählungen mit "- ". Fett mit **…** sparsam.
 Beziehe dich auf die Hausdaten unten. Bei Förderungen nutze die Wissensbasis und weise auf Prüfung bei KfW/BAFA hin. Erfinde keine Daten zum Haus; frage nach, wenn etwas fehlt.
-Wenn der Nutzer etwas anlegen oder ändern möchte (Projekt, Förderung, Kostenposition, Rahmenbedingung, Meilenstein), nutze die verfügbaren Werkzeuge und sage danach kurz, was du angelegt hast.
+Wenn der Nutzer etwas anlegen oder ändern möchte (Projekt, Termine, Status, Hinweise, Abhängigkeiten, Förderung, Kostenposition, Rahmenbedingung, Meilenstein), nutze die verfügbaren Werkzeuge und sage danach kurz, was du geändert hast. Hole dir vor dem Ändern einzelner Positionen die IDs mit get_project. Ganze Projekte löschst du nicht – bitte den Nutzer, das selbst in der App zu tun.
+Das Feld „Hinweise“ eines Projekts ist für Abhängigkeiten, Fristen und Besonderheiten gedacht, die man beim Planen beachten muss. Abhängigkeiten können auf ein Projekt (nach dessen Ende) oder auf einen Meilenstein („Projekt-ID#Meilenstein-ID“) zeigen – für Projekte und für Meilensteine.
 
 WISSENSBASIS
 ${FUNDING_KNOWLEDGE}

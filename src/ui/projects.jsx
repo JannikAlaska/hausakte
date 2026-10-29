@@ -8,8 +8,8 @@ import { AiRunner, useAiAvailable, AiUnavailable } from './ai-ui.jsx';
 import { useUI, setUI, openDrawer, closeDrawer, toast, go } from './state.js';
 import { DocList, UploadButton } from './documents.jsx';
 import { PROJECT_KINDS, projectKind, STATUS, status as statusOf, CONSTRAINT_KINDS, FUNDING_TYPES, FUNDING_STATUS, gewerk } from '../catalog.js';
-import { projectCost, projectIssues, createsCycle, isDone, costValue } from '../metrics.js';
-import { createProject, patchProject, deleteProject, addFunding, addCost, addConstraint, addMilestone, alignToDependencies } from '../actions.js';
+import { projectCost, projectIssues, createsCycle, isDone, costValue, resolveRef, dependentsOf, msRef } from '../metrics.js';
+import { createProject, patchProject, deleteProject, addFunding, addCost, addConstraint, addMilestone, deleteMilestone, alignMilestone, alignToDependencies } from '../actions.js';
 import { aiFunding, aiTiming, aiCosts, aiRisks, aiRoadmap } from '../ai.js';
 import { updateHouse } from '../store.js';
 import { uid, fmtEuro, fmtDate, fmtDayMonth, fmtMonth, todayISO, addDays, diffDays, parseISO, toISO, isISO, MONTHS, fmtNum } from '../util.js';
@@ -136,7 +136,12 @@ function ProjectRow({ p, data }) {
           <span>{projectKind(p.kind).name}</span>
           {issues.length ? (
             <Pill tone="warn" icon="alert">
-              {issues.length} Hinweis{issues.length > 1 ? 'e' : ''}
+              {issues.length} Konflikt{issues.length > 1 ? 'e' : ''}
+            </Pill>
+          ) : null}
+          {p.hints?.trim() ? (
+            <Pill tone="info" icon="info" title={p.hints}>
+              Hinweise
             </Pill>
           ) : null}
           {p.example ? <Pill className="pill-example">Beispiel</Pill> : null}
@@ -217,19 +222,24 @@ function Gantt({ data }) {
     if (wrapRef.current) wrapRef.current.scrollLeft = Math.max(0, X(today) - 140);
   }, [zoom]);
 
+  // dependency arrows: from the end of a project (or a milestone) to the start of a project (or a milestone)
   const arrows = [];
-  view.forEach((p) => {
-    for (const depId of p.dependsOn || []) {
-      const d = byId[depId];
-      if (!d || !d.end || !p.start) continue;
-      const x1 = X(d.end) + ppd,
-        y1 = rowIndex[d.id] * ROW + ROW / 2;
-      const x2 = X(p.start),
-        y2 = rowIndex[p.id] * ROW + ROW / 2;
-      const bad = p.start < d.end && !isDone(d);
-      const mx = Math.max(x1 + 8, Math.min(x2 - 8, x1 + 14));
-      arrows.push({ key: d.id + p.id, d: `M${x1},${y1} H${mx} V${y2} H${x2 - 4}`, bad });
+  const srcPos = (d) => (d.kind === 'milestone' ? (isISO(d.date) ? { x: X(d.date) + 6, row: rowIndex[d.project.id] } : null) : d.project.end ? { x: X(d.project.end) + ppd, row: rowIndex[d.project.id] } : null);
+  const addArrow = (refs, x2, row2, key) => {
+    for (const ref of refs || []) {
+      const d = resolveRef(byId, ref);
+      const a = d && srcPos(d);
+      if (!a || a.row == null) continue;
+      const y1 = a.row * ROW + ROW / 2,
+        y2 = row2 * ROW + ROW / 2;
+      const bad = !d.done && d.date && d.date > (key.date || '');
+      const mx = Math.max(a.x + 8, Math.min(x2 - 8, a.x + 14));
+      arrows.push({ key: ref + key.id, d: y1 === y2 ? `M${a.x},${y1} H${x2 - 4}` : `M${a.x},${y1} H${mx} V${y2} H${x2 - 4}`, bad });
     }
+  };
+  view.forEach((p) => {
+    if (p.start) addArrow(p.dependsOn, X(p.start), rowIndex[p.id], { id: p.id, date: p.start });
+    for (const m of p.milestones || []) if (isISO(m.date) && !m.done) addArrow(m.dependsOn, X(m.date) - 6, rowIndex[p.id], { id: m.id, date: m.date });
   });
 
   return (
@@ -270,9 +280,10 @@ function Gantt({ data }) {
               const conflict = projectIssues(p, view).some((i) => i.kind === 'dependency' && i.level === 'warn');
               return (
                 <div className="g-row" key={p.id}>
-                  <button className="g-name" onClick={() => openDrawer({ type: 'project', id: p.id })}>
+                  <button className="g-name" onClick={() => openDrawer({ type: 'project', id: p.id })} title={p.hints?.trim() ? `Hinweise: ${p.hints}` : p.title}>
                     <Icon name={projectKind(p.kind).icon} size={16} />
                     <b>{p.title}</b>
+                    {p.hints?.trim() ? <Icon name="info" size={13} className="g-hint" /> : null}
                   </button>
                   <div className="g-track" style={{ width: W }}>
                     {months.map((mo) => (
@@ -392,6 +403,16 @@ export function ProjectDrawer({ data, drawer }) {
         </div>
       ) : null}
 
+      {p.hints?.trim() ? (
+        <div className="callout callout-info hints-callout" style={{ marginTop: 10 }}>
+          <Icon name="info" size={16} />
+          <div>
+            <b>Hinweise</b>
+            <div className="pre-wrap">{p.hints}</div>
+          </div>
+        </div>
+      ) : null}
+
       {p.kind === 'heizung' ? <HeatHint data={data} /> : null}
       {p.kind === 'pv' ? <PvHint data={data} /> : null}
 
@@ -417,6 +438,9 @@ export function ProjectDrawer({ data, drawer }) {
           </div>
         </Field>
         <ComponentLinks p={p} data={data} set={set} />
+        <Field label="Hinweise" hint="Wird oben im Projekt hervorgehoben – z. B. Abhängigkeiten, Fristen, Auflagen">
+          <TextInput id={'p-hints-' + p.id} multiline rows={3} value={p.hints || ''} onChange={(v) => set({ hints: v })} placeholder="z. B. Erst nach Zählerschrank-Tausch · Antrag KfW vor Auftrag · Gerüst mit Dach teilen" />
+        </Field>
         <Field label="Notizen">
           <TextInput id={'p-notes-' + p.id} multiline value={p.notes} onChange={(v) => set({ notes: v })} placeholder="Ziele, Wünsche, Gespräche mit Handwerkern …" />
         </Field>
@@ -431,7 +455,7 @@ export function ProjectDrawer({ data, drawer }) {
             <DateInput id={'p-end-' + p.id} value={p.end} onChange={(v) => set({ end: v })} />
           </Field>
         </div>
-        <Milestones p={p} set={set} />
+        <Milestones p={p} set={set} data={data} />
         <AiRunner
           title="Zeitplan & Abhängigkeiten"
           icon="calendar"
@@ -561,24 +585,59 @@ function ComponentLinks({ p, data, set }) {
   );
 }
 
-function Milestones({ p, set }) {
+function Milestones({ p, set, data }) {
+  const [open, setOpen] = useState(null);
   const ms = [...(p.milestones || [])].sort((a, b) => ((a.date || '9') < (b.date || '9') ? -1 : 1));
   const upd = (id, patch) => set({ milestones: p.milestones.map((m) => (m.id === id ? { ...m, ...patch } : m)) });
+  const all = Object.values(data.projects);
   return (
     <div className="stack" style={{ gap: 6 }}>
       <span className="field-label">Meilensteine</span>
       <div className="rows">
-        {ms.map((m) => (
-          <div key={m.id} className={`row row-check ${m.done ? 'is-done' : ''}`} style={{ gridTemplateColumns: '22px 1fr 140px 30px' }}>
-            <input type="checkbox" checked={!!m.done} onChange={(e) => upd(m.id, { done: e.target.checked })} aria-label="Erledigt" />
-            <input className="input" value={m.title} onChange={(e) => upd(m.id, { title: e.target.value })} aria-label="Meilenstein" />
-            <input className="input" type="date" value={m.date || ''} onChange={(e) => upd(m.id, { date: e.target.value || null })} aria-label="Datum" />
-            <IconBtn icon="trash" label="Meilenstein löschen" size={15} onClick={() => set({ milestones: p.milestones.filter((x) => x.id !== m.id) })} />
-          </div>
-        ))}
+        {ms.map((m) => {
+          const deps = m.dependsOn || [];
+          const conflict = projectIssues(p, all).some((i) => i.msId === m.id);
+          return (
+            <div key={m.id} className="ms-block">
+              <div className={`row row-check ms-row ${m.done ? 'is-done' : ''}`}>
+                <input type="checkbox" checked={!!m.done} onChange={(e) => upd(m.id, { done: e.target.checked })} aria-label="Erledigt" />
+                <input className="input" value={m.title} onChange={(e) => upd(m.id, { title: e.target.value })} aria-label="Meilenstein" />
+                <input className="input" type="date" value={m.date || ''} onChange={(e) => upd(m.id, { date: e.target.value || null })} aria-label="Datum" />
+                <button type="button" className={`icon-btn ms-dep-btn ${deps.length ? 'has' : ''} ${conflict ? 'warn' : ''}`} aria-label="Abhängigkeiten des Meilensteins" aria-expanded={open === m.id} title={deps.length ? `Wartet auf ${deps.length}` : 'Abhängigkeit festlegen'} onClick={() => setOpen(open === m.id ? null : m.id)}>
+                  <Icon name={conflict ? 'alert' : 'link'} size={15} />
+                  {deps.length ? <span className="ms-dep-n">{deps.length}</span> : null}
+                </button>
+                <IconBtn icon="trash" label="Meilenstein löschen" size={15} onClick={() => deleteMilestone(p.id, m.id)} />
+              </div>
+              {open === m.id ? (
+                <div className="ms-deps">
+                  <DepEditor
+                    data={data}
+                    refs={deps}
+                    self={{ ref: msRef(p.id, m.id), pid: p.id, kind: 'milestone' }}
+                    ownDate={m.date}
+                    label="Erst nach"
+                    onChange={(next) => upd(m.id, { dependsOn: next })}
+                  />
+                  {deps.length && m.date !== null ? (
+                    <div>
+                      <Btn small kind="ghost" icon="calendar" onClick={() => alignMilestone(p.id, m.id) && toast('Datum auf den Tag nach dem Vorgänger gelegt')}>
+                        Datum nach Vorgänger legen
+                      </Btn>
+                    </div>
+                  ) : null}
+                </div>
+              ) : deps.length ? (
+                <div className="ms-dep-sum small muted">
+                  <Icon name="link" size={12} /> nach {deps.map((r) => resolveRef(data.projects, r)).filter(Boolean).map((d) => (d.kind === 'milestone' ? d.title : `Ende „${d.title}“`)).join(', ')}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
       </div>
       <div>
-        <Btn small kind="ghost" icon="plus" onClick={() => set({ milestones: [...(p.milestones || []), { id: uid('m'), title: 'Neuer Meilenstein', date: p.start || null, done: false }] })}>
+        <Btn small kind="ghost" icon="plus" onClick={() => set({ milestones: [...(p.milestones || []), { id: uid('m'), title: 'Neuer Meilenstein', date: p.start || null, done: false, dependsOn: [] }] })}>
           Meilenstein
         </Btn>
       </div>
@@ -586,34 +645,73 @@ function Milestones({ p, set }) {
   );
 }
 
-function Dependencies({ p, data, set }) {
-  const all = Object.values(data.projects).filter((x) => x.id !== p.id);
-  const dependents = all.filter((x) => (x.dependsOn || []).includes(p.id));
-  const toggle = (id) => {
-    const has = (p.dependsOn || []).includes(id);
-    if (!has && createsCycle(Object.values(data.projects), p.id, id)) {
-      toast('Das würde eine Schleife erzeugen – das andere Projekt hängt schon von diesem ab.', 'warn');
-      return;
-    }
-    set({ dependsOn: has ? p.dependsOn.filter((x) => x !== id) : [...(p.dependsOn || []), id] });
+// Chosen dependencies as chips plus a picker for projects and milestones of all projects.
+function DepEditor({ data, refs, self, ownDate, onChange, label }) {
+  const all = Object.values(data.projects).sort((a, b) => ((a.start || '9') < (b.start || '9') ? -1 : 1));
+  const resolved = refs.map((r) => resolveRef(data.projects, r)).filter(Boolean);
+  const add = (ref) => {
+    if (!ref || refs.includes(ref)) return;
+    if (createsCycle(all, self.ref, ref)) return toast('Das würde eine Schleife erzeugen – das Ziel wartet schon (indirekt) hierauf.', 'warn');
+    onChange([...refs, ref]);
   };
-  if (!all.length) return <p className="small muted">Lege weitere Projekte an, um Abhängigkeiten festzulegen.</p>;
+  const groups = all
+    .map((x) => {
+      const opts = [];
+      // a project cannot wait for its own milestones, a milestone not for its own project
+      if (!(self.kind === 'project' && x.id === self.pid) && !(self.kind === 'milestone' && x.id === self.pid)) {
+        if (!refs.includes(x.id)) opts.push({ value: x.id, label: `Ende des Projekts${x.end ? ` (${fmtDate(x.end)})` : ''}` });
+      }
+      if (!(self.kind === 'project' && x.id === self.pid))
+        for (const m of [...(x.milestones || [])].sort((a, b) => ((a.date || '9') < (b.date || '9') ? -1 : 1))) {
+          const r = msRef(x.id, m.id);
+          if (r !== self.ref && !refs.includes(r)) opts.push({ value: r, label: `◆ ${m.title}${m.date ? ` (${fmtDate(m.date)})` : ''}` });
+        }
+      return { p: x, opts };
+    })
+    .filter((g) => g.opts.length);
+  return (
+    <Field label={label}>
+      <div className="chips">
+        {resolved.map((d) => {
+          const bad = !d.done && d.date && ownDate && ownDate < d.date;
+          return (
+            <span key={d.ref} className={`chip is-on ${bad ? 'is-warn' : ''}`} title={d.date ? `${d.kind === 'milestone' ? 'Termin' : 'endet'} ${fmtDate(d.date)}` : ''}>
+              <Icon name={bad ? 'alert' : d.kind === 'milestone' ? 'flag' : 'link'} size={13} />
+              <button type="button" className="link" onClick={() => openDrawer({ type: 'project', id: d.project.id })}>
+                {d.kind === 'milestone' ? `${d.title} · ${d.project.title}` : d.title}
+              </button>
+              <button type="button" className="link" aria-label={`Abhängigkeit ${d.title} entfernen`} onClick={() => onChange(refs.filter((r) => r !== d.ref))}>
+                <Icon name="x" size={12} />
+              </button>
+            </span>
+          );
+        })}
+        {groups.length ? (
+          <select className="input select dep-select" value="" onChange={(e) => add(e.target.value)} aria-label="Abhängigkeit hinzufügen">
+            <option value="">+ Projekt oder Meilenstein</option>
+            {groups.map((g) => (
+              <optgroup key={g.p.id} label={g.p.title}>
+                {g.opts.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+        ) : null}
+      </div>
+    </Field>
+  );
+}
+
+function Dependencies({ p, data, set }) {
+  const all = Object.values(data.projects);
+  const waiting = [...dependentsOf(all, p.id), ...(p.milestones || []).flatMap((m) => dependentsOf(all, msRef(p.id, m.id)).map((x) => ({ ...x, on: m })))].filter((x) => x.project.id !== p.id || x.kind === 'milestone');
+  if (all.length < 2 && !(p.milestones || []).length) return <p className="small muted">Lege weitere Projekte oder Meilensteine an, um Abhängigkeiten festzulegen.</p>;
   return (
     <>
-      <Field label="Startet erst nach Abschluss von">
-        <div className="chips">
-          {all.map((x) => {
-            const on = (p.dependsOn || []).includes(x.id);
-            const bad = on && x.end && p.start && p.start < x.end && !isDone(x);
-            return (
-              <button key={x.id} type="button" className={`chip ${on ? 'is-on' : ''} ${bad ? 'is-warn' : ''}`} onClick={() => toggle(x.id)} title={x.end ? `endet ${fmtDate(x.end)}` : ''}>
-                <Icon name={on ? (bad ? 'alert' : 'link') : projectKind(x.kind).icon} size={13} />
-                {x.title}
-              </button>
-            );
-          })}
-        </div>
-      </Field>
+      <DepEditor data={data} refs={p.dependsOn || []} self={{ ref: p.id, pid: p.id, kind: 'project' }} ownDate={p.start} label="Startet erst nach" onChange={(next) => set({ dependsOn: next })} />
       {(p.dependsOn || []).length ? (
         <div>
           <Btn small icon="calendar" onClick={() => alignToDependencies(p.id) && toast('Start auf das Ende der Vorgänger gelegt')}>
@@ -621,11 +719,19 @@ function Dependencies({ p, data, set }) {
           </Btn>
         </div>
       ) : null}
-      {dependents.length ? (
+      {waiting.length ? (
         <p className="small muted">
-          Wird benötigt von: {dependents.map((x) => x.title).join(', ')}
+          Darauf warten:{' '}
+          {waiting.map((x, i) => (
+            <span key={i}>
+              {i ? ', ' : ''}
+              {x.kind === 'milestone' ? `Meilenstein „${x.title}“${x.project.id !== p.id ? ` (${x.project.title})` : ''}` : `„${x.title}“`}
+              {x.on ? ` – nach „${x.on.title}“` : ''}
+            </span>
+          ))}
         </p>
       ) : null}
+      <p className="small muted">Abhängigkeiten gehen auf das Ende eines Projekts oder auf einen Meilenstein. Meilensteine können selbst auf andere Projekte oder Meilensteine warten (Link-Symbol neben dem Meilenstein).</p>
     </>
   );
 }
@@ -920,6 +1026,21 @@ function TimingResult({ r, p, data, set }) {
             <li key={i}>{x}</li>
           ))}
         </ul>
+      ) : null}
+      {r.hints ? (
+        <div className="callout callout-info">
+          <Icon name="info" size={16} />
+          <div style={{ flex: 1 }}>{r.hints}</div>
+          {(p.hints || '').includes(r.hints) ? (
+            <span className="adopted">
+              <Icon name="check" size={14} /> übernommen
+            </span>
+          ) : (
+            <Btn small icon="plus" onClick={() => { set({ hints: [p.hints?.trim(), r.hints].filter(Boolean).join('\n') }); toast('In die Hinweise übernommen'); }}>
+              In Hinweise
+            </Btn>
+          )}
+        </div>
       ) : null}
       {(r.dependencies || []).filter((d) => data.projects[d.projectId]).length ? (
         <ul className="ai-list">

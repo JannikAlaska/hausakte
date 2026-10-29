@@ -7,7 +7,7 @@ import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { outerOutline, outlineFromWalls, pointInPoly, labelPoint, polyCentroid, polyArea, norm, sub, perp, offsetPolygon, bbox, planarFaces, wallSegs, distToPolyEdges } from './geometry.js';
 import { roofModel, sectionClipPlanes, pvPotential, sectionGeometry } from './roof.js';
-import { roomType, projectKind, status as statusOf, ROOM_COLORS, lineKind } from './catalog.js';
+import { roomType, projectKind, status as statusOf, ROOM_COLORS, lineKind, fixtureKind } from './catalog.js';
 import { sortFloors, roomArea, isDone } from './metrics.js';
 import { sunPosition, sunVector, yearSteps, poa, houseGeo, shadeColor } from './solar.js';
 import { fmtFixed, fmtDayMonth, todayISO, escapeHtml } from './util.js';
@@ -183,6 +183,46 @@ function prismGeometry(pts3, dir, thickness, uvAxes) {
   for (const [s, c, m] of groups) g.addGroup(s, c, m);
   g.computeVertexNormals();
   return g;
+}
+
+// Outlet, switch, tap … as a small plate on the wall face (rot = direction the face points to), lamps as a ceiling disc.
+function fixtureMesh(q) {
+  const k = fixtureKind(q.kind);
+  const off = q.status === 'stillgelegt',
+    planned = q.status === 'geplant';
+  const mat = new THREE.MeshStandardMaterial({
+    color: off ? '#9aa0a8' : k.color, emissive: off ? '#000000' : k.color, emissiveIntensity: 0.5, roughness: 0.5,
+    transparent: planned || off, opacity: planned ? 0.6 : off ? 0.5 : 1,
+  });
+  const grp = new THREE.Group();
+  if (q.kind === 'lampe') {
+    const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.13, 0.07, 20), mat);
+    disc.position.y = -0.04;
+    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.09, 14, 10), new THREE.MeshStandardMaterial({ color: '#fff6d8', emissive: '#ffd36b', emissiveIntensity: 0.9 }));
+    bulb.position.y = -0.1;
+    grp.add(disc, bulb);
+  } else {
+    const n = Math.max(1, Math.min(6, q.count || 1));
+    // drawn a bit larger than real (8 cm) so they stay visible in the house view
+    const w = 0.12 * n - 0.015 * (n - 1);
+    const plate = new THREE.Mesh(new THREE.BoxGeometry(w, 0.12, 0.03), mat);
+    plate.position.z = 0.015;
+    grp.add(plate);
+    if (q.kind === 'wasser' || q.kind === 'gas') {
+      const spout = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.16, 8), mat);
+      spout.rotation.x = Math.PI / 2;
+      spout.position.z = 0.1;
+      grp.add(spout);
+    }
+    if (q.rot != null) {
+      const a = (q.rot * Math.PI) / 180;
+      grp.rotation.y = Math.atan2(Math.cos(a), Math.sin(a));
+    }
+  }
+  grp.traverse((o) => {
+    if (o.isMesh) o.renderOrder = 5;
+  });
+  return grp;
 }
 
 // Round pipe along a polyline of [x, y, z] plan points (y = plan y, z = height above the floor).
@@ -601,9 +641,10 @@ export class HouseScene {
         group.add(m);
       }
 
-      // installation lines (only shown in the x-ray view)
+      // installation lines and connection points (only shown in the x-ray view)
       const lines = (f.lines || []).filter((l) => (l.pts || []).length >= 2);
-      if (lines.length) {
+      const points = f.points || [];
+      if (lines.length || points.length) {
         const lg = new THREE.Group();
         for (const l of lines) {
           const k = lineKind(l.kind);
@@ -618,6 +659,11 @@ export class HouseScene {
           const m = new THREE.Mesh(g, mat);
           m.position.y = f.elevation;
           m.renderOrder = 4;
+          lg.add(m);
+        }
+        for (const q of points) {
+          const m = fixtureMesh(q);
+          m.position.set(q.x, f.elevation + (q.z ?? 0.3), q.y);
           lg.add(m);
         }
         lg.visible = !!this.view.showLines;

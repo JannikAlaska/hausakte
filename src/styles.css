@@ -773,3 +773,21 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 @media (max-width: 760px) {
   .measure-row { flex-direction: column; align-items: stretch; }
 }
+
+/* project hints and dependencies */
+.pre-wrap { white-space: pre-wrap; }
+.hints-callout b { display: block; margin-bottom: 2px; }
+.g-name .g-hint { color: var(--info); flex: none; }
+.dep-select { width: auto; min-height: 30px; padding: 3px 28px 3px 9px; font-size: 12.5px; max-width: 100%; }
+.ms-block { display: flex; flex-direction: column; gap: 4px; }
+.ms-deps { margin: 0 0 6px 30px; padding: 8px 10px; border-left: 2px solid var(--line-2); background: var(--surface-2); border-radius: 0 8px 8px 0; display: flex; flex-direction: column; gap: 6px; }
+.ms-dep-sum { margin: -2px 0 4px 30px; display: flex; align-items: center; gap: 4px; }
+.ms-dep-btn { position: relative; }
+.ms-dep-btn.has { color: var(--accent-ink); }
+.ms-dep-btn.warn { color: var(--warn); }
+.ms-dep-n { position: absolute; top: -2px; right: -3px; min-width: 15px; height: 15px; border-radius: 99px; background: var(--accent); color: #fff; font-size: 9.5px; font-weight: 700; display: grid; place-items: center; padding: 0 3px; }
+.ms-row { grid-template-columns: 22px 1fr 140px 30px 30px; }
+@media (max-width: 760px) {
+  .ms-row { grid-template-columns: 20px 1fr 118px 30px 26px; gap: 6px; }
+  .ms-deps, .ms-dep-sum { margin-left: 12px; }
+}

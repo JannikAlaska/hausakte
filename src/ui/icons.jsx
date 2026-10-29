@@ -1,5 +1,5 @@
 // Stroke icons drawn on a 24px grid.
-const P = {
+export const ICON_PATHS = {
   home: 'M3 10.5 12 3l9 7.5M5.5 9v11h13V9M10 20v-6h4v6',
   cube: 'M12 2.8 20 7.3v9.4l-8 4.5-8-4.5V7.3zM4 7.3l8 4.5 8-4.5M12 11.8v9.4',
   plan: 'M3.5 3.5h17v17h-17zM3.5 12H10M14 3.5V9M14 13v7.5M10 12v3',
@@ -10,6 +10,12 @@ const P = {
   gantt: 'M3 5h8M6 10h10M9 15h9M5 20h6',
   bolt: 'M13 2 4.5 13.5H11L10 22l8.5-11.5H12z',
   pipe: 'M3 7h8a3 3 0 0 1 3 3v4a3 3 0 0 0 3 3h4M3 4v6M21 14v6',
+  socket: 'M12 4.5a7.5 7.5 0 1 0 0 15 7.5 7.5 0 0 0 0-15zM9.3 12h.01M14.7 12h.01M5 12h1.5M17.5 12H19',
+  switch: 'M7 3.5h10v17H7zM10 8.5h4v7h-4zM10 12h4',
+  lamp: 'M12 3v4M6.5 13.5a5.5 5.5 0 0 1 11 0zM9 17l-1 2.5M12 17.5V20M15 17l1 2.5',
+  network: 'M4.5 5h15v14h-15zM8 15.5h8V11h-2V8.5h-4V11H8z',
+  tap: 'M3 9.5h10a4 4 0 0 1 4 4V15M8.5 9.5V6M6 6h5M17 18.5v1.5',
+  valve: 'M3 12h3.5M17.5 12H21M6.5 8l11 8V8l-11 8zM12 12V5.5M9.5 5.5h5',
   riser: 'M12 3v18M8 7l4-4 4 4M8 17l4 4 4-4M4 12h3M17 12h3',
   xray: 'M4 4h16v16H4zM4 12h16M12 4v16M8 8l8 8',
   scale: 'M12 4v16M5 20h14M4 8h16M4 8l-2 6a3 3 0 0 0 4 0zM20 8l-2 6a3 3 0 0 0 4 0z',
@@ -82,7 +88,7 @@ const P = {
 };
 
 export function Icon({ name, size = 18, stroke = 1.7, className = '', title }) {
-  const d = P[name] || P.info;
+  const d = ICON_PATHS[name] || ICON_PATHS.info;
   return (
     <svg
       className={'ico ' + className}

@@ -90,6 +90,7 @@ export function FloorPanel({ data, compact }) {
   const ui = useUI();
   const floors = sortFloors(Object.values(data.floors)).reverse();
   const lineCount = floors.reduce((n, f) => n + (f.lines || []).length, 0);
+  const pointCount = floors.reduce((n, f) => n + (f.points || []).length, 0);
   return (
     <div className={`floorpanel ${compact ? 'is-compact' : ''}`}>
       <div className="fp-head">
@@ -122,13 +123,13 @@ export function FloorPanel({ data, compact }) {
           </button>
         </li>
         <li>
-          <button className={`fp-row ${ui.showLines === true ? 'is-on' : 'is-dim'}`} aria-pressed={ui.showLines === true} onClick={() => setUI({ showLines: ui.showLines !== true })} title="Röntgenblick: Wände durchsichtig, Kabel und Rohre sichtbar">
+          <button className={`fp-row ${ui.showLines === true ? 'is-on' : 'is-dim'}`} aria-pressed={ui.showLines === true} onClick={() => setUI({ showLines: ui.showLines !== true })} title="Röntgenblick: Wände durchsichtig, Kabel, Rohre und Anschlüsse sichtbar">
             <span className="fp-short">
               <Icon name="pipe" size={15} />
             </span>
             <span className="fp-name">
-              <b>Leitungen</b>
-              <span>{lineCount ? (ui.showLines === true ? 'Röntgenblick an' : `${lineCount} eingezeichnet`) : 'im Grundriss einzeichnen'}</span>
+              <b>Leitungen & Anschlüsse</b>
+              <span>{lineCount + pointCount ? (ui.showLines === true ? 'Röntgenblick an' : [lineCount ? `${lineCount} Leitungen` : '', pointCount ? `${pointCount} Anschlüsse` : ''].filter(Boolean).join(' · ')) : 'im Grundriss einzeichnen'}</span>
             </span>
             <span className="fp-aside">
               <Icon name={ui.showLines === true ? 'eye' : 'eyeOff'} size={15} />

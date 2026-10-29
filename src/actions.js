@@ -2,6 +2,7 @@
 import { putDoc, updateDoc, getState, deleteDoc } from './store.js';
 import { uid, todayISO, addDays, parseISO, toISO, diffDays } from './util.js';
 import { projectKind, PROJECT_KINDS, CONSTRAINT_KINDS, FUNDING_TYPES } from './catalog.js';
+import { resolveRef } from './metrics.js';
 
 export function nextMonday(iso, minDays = 0) {
   const d = parseISO(addDays(iso, minDays));
@@ -28,6 +29,7 @@ export function createProject(preset = {}) {
     funding: preset.funding || [],
     components: preset.components || [],
     notes: preset.notes || '',
+    hints: preset.hints || '',
     ai: {},
     createdAt: Date.now(),
   };
@@ -37,10 +39,23 @@ export function createProject(preset = {}) {
 
 export const patchProject = (id, fn) => updateDoc('projects', id, fn);
 
+// removes references matching `drop` (project dependencies and milestone dependencies) from all projects
+function dropRefs(drop, exceptId) {
+  for (const p of Object.values(getState().projects)) {
+    if (p.id === exceptId) continue;
+    const hit = (p.dependsOn || []).some(drop) || (p.milestones || []).some((m) => (m.dependsOn || []).some(drop));
+    if (hit)
+      updateDoc('projects', p.id, (x) => ({
+        ...x,
+        dependsOn: (x.dependsOn || []).filter((r) => !drop(r)),
+        milestones: (x.milestones || []).map((m) => (m.dependsOn?.some(drop) ? { ...m, dependsOn: m.dependsOn.filter((r) => !drop(r)) } : m)),
+      }), 50);
+  }
+}
+
 export function deleteProject(id) {
   const s = getState();
-  for (const p of Object.values(s.projects))
-    if ((p.dependsOn || []).includes(id)) updateDoc('projects', p.id, (x) => ({ ...x, dependsOn: x.dependsOn.filter((d) => d !== id) }), 50);
+  dropRefs((r) => r === id || String(r).startsWith(id + '#'), id);
   for (const d of Object.values(s.documents)) if (d.projectId === id) updateDoc('documents', d.id, (x) => ({ ...x, projectId: null }), 50);
   deleteDoc('projects', id);
 }
@@ -73,8 +88,31 @@ export function addConstraint(projectId, text, kind = 'organisatorisch') {
   patchProject(projectId, (p) => ({ ...p, constraints: [...(p.constraints || []), { id: uid('b'), text, kind: k, done: false }] }));
 }
 
-export function addMilestone(projectId, title, date) {
-  patchProject(projectId, (p) => ({ ...p, milestones: [...(p.milestones || []), { id: uid('m'), title, date: date || null, done: false }] }));
+export function addMilestone(projectId, title, date, dependsOn = []) {
+  const id = uid('m');
+  patchProject(projectId, (p) => ({ ...p, milestones: [...(p.milestones || []), { id, title, date: date || null, done: false, dependsOn }] }));
+  return id;
+}
+
+export function deleteMilestone(projectId, mid) {
+  const ref = `${projectId}#${mid}`;
+  patchProject(projectId, (p) => ({
+    ...p,
+    dependsOn: (p.dependsOn || []).filter((r) => r !== ref),
+    milestones: (p.milestones || []).filter((m) => m.id !== mid).map((m) => (m.dependsOn?.includes(ref) ? { ...m, dependsOn: m.dependsOn.filter((r) => r !== ref) } : m)),
+  }));
+  dropRefs((r) => r === ref, projectId);
+}
+
+// Moves a milestone to the day after its latest dependency.
+export function alignMilestone(projectId, mid) {
+  const s = getState();
+  const m = (s.projects[projectId]?.milestones || []).find((x) => x.id === mid);
+  const dates = (m?.dependsOn || []).map((r) => resolveRef(s.projects, r)?.date).filter(Boolean).sort();
+  if (!dates.length) return false;
+  const date = addDays(dates[dates.length - 1], 1);
+  patchProject(projectId, (p) => ({ ...p, milestones: p.milestones.map((x) => (x.id === mid ? { ...x, date } : x)) }));
+  return true;
 }
 
 // Shifts a project to start right after its latest dependency, keeping its duration.
@@ -82,7 +120,7 @@ export function alignToDependencies(id) {
   const s = getState();
   const p = s.projects[id];
   if (!p) return false;
-  const ends = (p.dependsOn || []).map((d) => s.projects[d]?.end).filter(Boolean).sort();
+  const ends = (p.dependsOn || []).map((r) => resolveRef(s.projects, r)?.date).filter(Boolean).sort();
   if (!ends.length) return false;
   const dur = p.start && p.end ? diffDays(p.start, p.end) : 14;
   const start = nextMonday(ends[ends.length - 1], 1);
