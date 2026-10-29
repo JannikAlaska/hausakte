@@ -7,8 +7,9 @@ import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { outerOutline, outlineFromWalls, pointInPoly, labelPoint, polyCentroid, polyArea, norm, sub, perp, offsetPolygon, bbox, planarFaces, wallSegs, distToPolyEdges } from './geometry.js';
 import { roofModel, sectionClipPlanes, pvPotential, sectionGeometry } from './roof.js';
-import { roomType, projectKind, status as statusOf, ROOM_COLORS } from './catalog.js';
+import { roomType, projectKind, status as statusOf, ROOM_COLORS, lineKind } from './catalog.js';
 import { sortFloors, roomArea, isDone } from './metrics.js';
+import { sunPosition, sunVector, yearSteps, poa, houseGeo, shadeColor } from './solar.js';
 import { fmtFixed, fmtDayMonth, todayISO, escapeHtml } from './util.js';
 
 
@@ -184,6 +185,35 @@ function prismGeometry(pts3, dir, thickness, uvAxes) {
   return g;
 }
 
+// Round pipe along a polyline of [x, y, z] plan points (y = plan y, z = height above the floor).
+const UP = new THREE.Vector3(0, 1, 0);
+function lineGeometry(pts, r) {
+  const geos = [];
+  const V = pts.map((q) => new THREE.Vector3(q[0], q[2] ?? 0, q[1]));
+  for (let i = 1; i < V.length; i++) {
+    const a = V[i - 1],
+      b = V[i];
+    const L = a.distanceTo(b);
+    if (L < 0.005) continue;
+    const g = new THREE.CylinderGeometry(r, r, L, 10, 1, true);
+    const q = new THREE.Quaternion().setFromUnitVectors(UP, b.clone().sub(a).normalize());
+    g.applyQuaternion(q);
+    g.translate((a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2);
+    geos.push(g);
+  }
+  // joints and end caps
+  V.forEach((v, i) => {
+    if (i > 0 && v.distanceTo(V[i - 1]) < 0.005) return;
+    const g = new THREE.SphereGeometry(r * 1.08, 10, 6);
+    g.translate(v.x, v.y, v.z);
+    geos.push(g);
+  });
+  if (!geos.length) return null;
+  const m = mergeGeometries(geos.map((g) => (g.index ? g.toNonIndexed() : g)));
+  geos.forEach((g) => g.dispose());
+  return m;
+}
+
 function tileTexture() {
   const cv = document.createElement('canvas');
   cv.width = cv.height = 128;
@@ -251,7 +281,7 @@ export class HouseScene {
   constructor(container, opts = {}) {
     this.el = container;
     this.opts = opts;
-    this.view = { mode: 'all', floorId: null, showRoof: true, showLabels: true };
+    this.view = { mode: 'all', floorId: null, showRoof: true, showLabels: true, showLines: false };
     this.selection = null;
     this.highlight = null;
     this.insets = { left: 0, right: 0, top: 0, bottom: 0 };
@@ -352,8 +382,9 @@ export class HouseScene {
     this.roadColor = cssVar('--scene-road', '#cfd3ea');
     this.accent = cssVar('--accent', '#17936a');
     const dark = cssVar('--scene-dark', '0') === '1';
-    this.hemi.intensity = dark ? 1.0 : 1.55;
-    this.sun.intensity = dark ? 1.5 : 2.1;
+    this.hemiBase = dark ? 1.0 : 1.55;
+    this.sunBase = dark ? 1.5 : 2.1;
+    this.applySun();
     if (this.data) this.buildEnvironment();
   }
 
@@ -570,6 +601,31 @@ export class HouseScene {
         group.add(m);
       }
 
+      // installation lines (only shown in the x-ray view)
+      const lines = (f.lines || []).filter((l) => (l.pts || []).length >= 2);
+      if (lines.length) {
+        const lg = new THREE.Group();
+        for (const l of lines) {
+          const k = lineKind(l.kind);
+          const g = lineGeometry(l.pts, k.r * 1.6);
+          if (!g) continue;
+          const planned = l.status === 'geplant',
+            off = l.status === 'stillgelegt';
+          const mat = new THREE.MeshStandardMaterial({
+            color: off ? '#9aa0a8' : k.color, emissive: off ? '#000000' : k.color, emissiveIntensity: 0.55, roughness: 0.45, metalness: 0.1,
+            transparent: planned || off, opacity: planned ? 0.6 : off ? 0.5 : 1,
+          });
+          const m = new THREE.Mesh(g, mat);
+          m.position.y = f.elevation;
+          m.renderOrder = 4;
+          lg.add(m);
+        }
+        lg.visible = !!this.view.showLines;
+        lg.userData.noShade = true;
+        group.add(lg);
+        entry.lineGroup = lg;
+      }
+
       // floor label (explode view)
       const ol = outer || outline;
       if (ol) {
@@ -716,6 +772,7 @@ export class HouseScene {
         m.material.side = THREE.DoubleSide;
         m.castShadow = done;
         m.userData.pick = { type: 'project', projectId: pvProjects[0].id };
+        m.userData.noShade = true;
         group.add(m);
         this.pickables.push(m);
       }
@@ -723,6 +780,10 @@ export class HouseScene {
 
     this.houseGroup.add(group);
     this.roofEntry = entry;
+    if (this.pvHeatResult) {
+      this.pvHeatMesh = null;
+      this.setPvHeat(this.pvHeatResult);
+    }
   }
 
   buildScaffold(floors, roofs) {
@@ -783,6 +844,7 @@ export class HouseScene {
     poles.forEach((g) => g.dispose());
     decks.forEach((g) => g && g.dispose());
     group.userData.pick = { type: 'project', projectId: target[0].id };
+    group.userData.noShade = true;
     this.houseGroup.add(group);
     this.scaffold = group;
   }
@@ -870,21 +932,168 @@ export class HouseScene {
     this.center = c;
     const size = box.getSize(new THREE.Vector3());
     this.radius = Math.max(6, size.length() / 2);
-    // sun placement
-    const north = ((this.data?.house?.northAngle || 0) * Math.PI) / 180;
-    const az = Math.PI + 0.35 + north;
-    const dir = new THREE.Vector3(Math.sin(az), 1.25, -Math.cos(az)).normalize();
-    this.sun.position.copy(c).addScaledVector(dir, 60);
+    this.applySun();
+  }
+
+  // ---------- sun ----------
+  // state: null for a pleasant fixed light, or { date } (UTC) for the real sun at the house location
+  setSun(state) {
+    this.sunState = state;
+    this.applySun();
+  }
+
+  applySun() {
+    if (!this.sun) return;
+    const c = this.center || new THREE.Vector3();
+    const north = this.data?.house?.northAngle || 0;
+    const geo = houseGeo(this.data?.house);
+    const pos = this.sunState ? sunPosition(this.sunState.date, geo.lat, geo.lon) : { azimuth: 205, altitude: 42 };
+    this.sunPos = pos;
+    const v = sunVector(pos, north);
+    const dir = new THREE.Vector3(v[0], Math.max(v[1], 0.02), v[2]).normalize();
+    const day = pos.altitude > 0;
+    const k = day ? Math.min(1, 0.25 + Math.sin((pos.altitude * Math.PI) / 180) * 1.2) : 0;
+    this.sun.intensity = (this.sunBase ?? 2.1) * k;
+    this.hemi.intensity = (this.hemiBase ?? 1.55) * (day ? 1 : 0.55);
+    this.sun.position.copy(c).addScaledVector(dir, 80);
     this.sun.target.position.copy(c);
     const sc = this.sun.shadow.camera;
-    const R = this.radius + 14;
+    const R = (this.radius || 10) + 14 + (pos.altitude < 25 ? 18 : 0);
     sc.left = -R;
     sc.right = R;
     sc.top = R;
     sc.bottom = -R;
     sc.near = 1;
-    sc.far = 160;
+    sc.far = 200;
     sc.updateProjectionMatrix();
+  }
+
+  // ---------- PV shading analysis ----------
+  pvPanels() {
+    const pot = pvPotential(this.data?.house, this.floors || []).filter((p) => p.factor >= 0.8 && p.modules > 0);
+    const out = [];
+    for (const p of pot)
+      for (const q of p.layout.panels) {
+        const c = q.reduce((a, v) => [a[0] + v[0] / q.length, a[1] + v[1] / q.length, a[2] + v[2] / q.length], [0, 0, 0]);
+        const n = p.slope.normal;
+        out.push({ slopeKey: p.key, slope: p, corners: q, center: new THREE.Vector3(c[0], c[2], c[1]), normal: [n[0], n[2], n[1]] });
+      }
+    return out;
+  }
+
+  // runs fn with every floor and the roof at rest position (explode/floor views move them)
+  atRest(fn) {
+    const groups = [...this.floorEntries.map((e) => e.group), this.roofEntry?.group].filter(Boolean);
+    const saved = groups.map((g) => g.position.y);
+    groups.forEach((g) => (g.position.y = 0));
+    this.scene.updateMatrixWorld(true);
+    try {
+      return fn();
+    } finally {
+      groups.forEach((g, i) => (g.position.y = saved[i]));
+      this.scene.updateMatrixWorld(true);
+    }
+  }
+
+  async analyzePv({ onProgress, signal } = {}) {
+    const house = this.data?.house;
+    const panels = this.pvPanels();
+    if (!panels.length) return null;
+    const months = yearSteps(houseGeo(house), house?.northAngle || 0);
+    const rc = new THREE.Raycaster();
+    rc.far = 250;
+    const targets = [this.houseGroup, this.envGroup];
+    // walls of attic floors are taller than drawn and only cut by the roof through clipping planes,
+    // which raycasting ignores - they are under the roof anyway
+    const noShade = (o) => {
+      if ([].concat(o.material || []).some((m) => m?.clippingPlanes?.length)) return true;
+      for (let x = o; x; x = x.parent) if (x.userData?.noShade) return true;
+      return false;
+    };
+    const KWP = 0.43,
+      PR = 0.86;
+    const hourly = months.map(() => new Array(24).fill(0));
+    const monthly = new Array(12).fill(0);
+    const mods = panels.map((p) => ({ slopeKey: p.slopeKey, free: 0, real: 0 }));
+    const org = new THREE.Vector3(),
+      dir = new THREE.Vector3();
+    for (let i = 0; i < panels.length; i++) {
+      if (signal?.aborted) throw { code: 'cancelled' };
+      const pn = panels[i];
+      this.atRest(() => {
+        org.copy(pn.center).add(new THREE.Vector3(...pn.normal).multiplyScalar(0.08));
+        for (const m of months)
+          for (const st of m.steps) {
+            const cosI = pn.normal[0] * st.vec[0] + pn.normal[1] * st.vec[1] + pn.normal[2] * st.vec[2];
+            let shaded = false;
+            if (cosI > 0) {
+              dir.set(st.vec[0], st.vec[1], st.vec[2]);
+              rc.set(org, dir);
+              shaded = rc.intersectObjects(targets, true).some((h) => !noShade(h.object));
+            }
+            const free = poa(st, pn.normal, false);
+            const real = shaded ? poa(st, pn.normal, true) : free;
+            mods[i].free += (free * m.hours * m.days) / 1000;
+            mods[i].real += (real * m.hours * m.days) / 1000;
+            const kwhDay = (real * m.hours * KWP * PR) / 1000;
+            hourly[m.month][Math.floor(st.min / 60)] += kwhDay;
+            monthly[m.month] += kwhDay * m.days;
+          }
+      });
+      onProgress?.((i + 1) / panels.length);
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    for (const m of mods) {
+      m.loss = m.free ? 1 - m.real / m.free : 0;
+      m.kwh = m.real * KWP * PR;
+    }
+    const slopes = [];
+    for (const p of panels) if (!slopes.some((x) => x.key === p.slopeKey)) slopes.push({ key: p.slopeKey, label: p.slope.label, azimuth: p.slope.azimuth, tilt: p.slope.tilt });
+    for (const sl of slopes) {
+      const ms = mods.filter((m) => m.slopeKey === sl.key);
+      sl.modules = ms.length;
+      sl.kwp = ms.length * KWP;
+      sl.kwh = ms.reduce((a, m) => a + m.kwh, 0);
+      sl.loss = 1 - ms.reduce((a, m) => a + m.real, 0) / Math.max(1e-6, ms.reduce((a, m) => a + m.free, 0));
+    }
+    const free = mods.reduce((a, m) => a + m.free * KWP * PR, 0);
+    const total = mods.reduce((a, m) => a + m.kwh, 0);
+    return { at: Date.now(), modules: mods.map((m) => ({ s: m.slopeKey, loss: Math.round(m.loss * 1000) / 1000, kwh: Math.round(m.kwh) })), slopes, kwp: panels.length * KWP, total, free, loss: free ? 1 - total / free : 0, monthly, hourly };
+  }
+
+  // colours every module by its shading loss (sequential ramp); null hides it
+  setPvHeat(result) {
+    this.pvHeatResult = result;
+    if (this.pvHeatMesh) {
+      this.pvHeatMesh.parent?.remove(this.pvHeatMesh);
+      this.pvHeatMesh.geometry.dispose();
+      this.pvHeatMesh.material.dispose();
+      this.pvHeatMesh = null;
+    }
+    if (!result || !this.roofEntry) return;
+    const panels = this.pvPanels();
+    if (panels.length !== result.modules.length) return;
+    const pos = [],
+      col = [];
+    const c = new THREE.Color();
+    panels.forEach((p, i) => {
+      c.set(shadeColor(result.modules[i].loss));
+      const n = p.normal;
+      const V = p.corners.map(([x, y, z]) => [x + n[0] * 0.03, z + n[1] * 0.03, y + n[2] * 0.03]);
+      for (const k of [0, 1, 2, 0, 2, 3]) {
+        pos.push(...V[k]);
+        col.push(c.r, c.g, c.b);
+      }
+    });
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    g.computeVertexNormals();
+    const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }));
+    m.userData.noShade = true;
+    m.renderOrder = 3;
+    this.roofEntry.group.add(m);
+    this.pvHeatMesh = m;
   }
 
   buildEnvironment() {
@@ -1199,11 +1408,12 @@ export class HouseScene {
     const ag = new THREE.ShapeGeometry(arrow);
     ag.rotateX(Math.PI / 2);
     const am = new THREE.Mesh(ag, new THREE.MeshBasicMaterial({ color: this.accent, side: THREE.DoubleSide }));
-    am.rotation.y = -north;
+    // north in plan coordinates is (-sin N, -cos N), matching bearing() in roof.js
+    am.rotation.y = north;
     am.position.set(at[0], gl + 0.03, at[1]);
     this.envGroup.add(am);
     const nl = makeLabel('<b>N</b>', 'compass');
-    nl.position.set(at[0] + Math.sin(north) * 1.6, gl + 0.1, at[1] - Math.cos(north) * 1.6);
+    nl.position.set(at[0] - Math.sin(north) * 1.6, gl + 0.1, at[1] - Math.cos(north) * 1.6);
     this.envGroup.add(nl);
   }
 
@@ -1251,6 +1461,7 @@ export class HouseScene {
           o.receiveShadow = true;
         }
       });
+      grp.userData.ctx = true;
       this.envGroup.add(grp);
       if (b.name && b.label !== false) {
         const lbl = makeLabel(`<b>${escapeHtml(b.name)}</b>`, neighbor ? 'ctx neighbor' : 'ctx');
@@ -1306,7 +1517,39 @@ export class HouseScene {
       this.plotMat.opacity = below ? 0.25 : 1;
       this.plotMat.depthWrite = !below;
     }
-    if (this.scaffold) this.scaffold.visible = mode === 'all';
+    if (this.scaffold) this.scaffold.visible = mode === 'all' && !this.view.showLines;
+    this.applyXray();
+  }
+
+  // x-ray: walls, slabs and roof turn see-through so the installation lines inside are visible
+  applyXray() {
+    const on = !!this.view.showLines;
+    for (const e of this.floorEntries) if (e.lineGroup) e.lineGroup.visible = on;
+    const mats = [...this.floorEntries.flatMap((e) => e.wallMats), this.mats.slabCap, this.mats.slabSide, this.mats.glass, this.mats.frame, this.mats.door, this.mats.stairs];
+    if (this.roofTopMat) mats.push(this.roofTopMat, this.mats.roofSide);
+    if (this.roofEntry?.gableMat) mats.push(this.roofEntry.gableMat);
+    if (this.roofEntry?.group) this.roofEntry.group.traverse((o) => o.isMesh && [].concat(o.material).forEach((m) => !mats.includes(m) && mats.push(m)));
+    for (const g of this.envGroup.children) if (g.userData.ctx) g.traverse((o) => o.isMesh && [].concat(o.material).forEach((m) => !mats.includes(m) && mats.push(m)));
+    const roomMats = [...(this.roomMeshes?.values() || [])].map((r) => r.mat);
+    for (const m of [...mats, ...roomMats]) {
+      if (!m) continue;
+      if (m.userData.xray === on) continue;
+      if (on) {
+        m.userData.pre = { transparent: m.transparent, opacity: m.opacity, depthWrite: m.depthWrite };
+        m.transparent = true;
+        m.opacity = Math.min(m.opacity, roomMats.includes(m) ? 0.35 : 0.09);
+        m.depthWrite = false;
+      } else if (m.userData.pre) {
+        Object.assign(m, m.userData.pre);
+      }
+      m.userData.xray = on;
+      m.needsUpdate = true;
+    }
+    if (this.groundMat && on) {
+      this.groundMat.opacity = 0.35;
+      this.groundMat.depthWrite = false;
+    }
+    this.sun.castShadow = !on;
   }
 
   // >1 when sheets or drawers cover part of the canvas, so the model still fits the free area
@@ -1500,14 +1743,15 @@ export class HouseScene {
       for (const l of e.roomLabels) l.visible = roomsOn;
       if (e.floorLabel) e.floorLabel.visible = showLabels && mode === 'explode';
     });
-    for (const l of this.contextLabels || []) l.visible = showLabels && mode === 'all' && !this.compact;
+    const xr = !!this.view.showLines;
+    for (const l of this.contextLabels || []) l.visible = showLabels && mode === 'all' && !this.compact && !xr;
     for (const l of this.projectLabels || []) {
       const a = l.userData.anchor || '';
       let on = showLabels && mode === 'all' && (!this.compact || l.userData.urgent);
       if (a === 'roof' && !showRoof) on = false;
       if (a.startsWith('floor:') && showRoof) on = showLabels && mode === 'all';
       if (mode === 'floor' && a === 'floor:' + floorId) on = showLabels;
-      l.visible = on;
+      l.visible = on && !xr;
     }
   }
 

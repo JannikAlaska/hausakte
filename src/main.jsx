@@ -1,7 +1,9 @@
 import { HouseScene } from './scene.js';
 import { initStore, loadDataset, clearAll, exportData, getState } from './store.js';
 import { createTemplate, createEmptyHouse } from './template.js';
-import { useUI, useData, setUI, go, openDrawer, closeDrawer, toast, getUI } from './ui/state.js';
+import { useUI, useData, setUI, go, openDrawer, closeDrawer, toast, getUI, sceneHandle } from './ui/state.js';
+import { SunPanel, solarResult } from './ui/solar.jsx';
+import { localToUtc, doyOf } from './solar.js';
 import { Icon } from './ui/icons.jsx';
 import { Btn, IconBtn, ConfirmBtn } from './ui/common.jsx';
 import { KpiRow, SceneToolbar, FloorPanel, Timeline, SelectionCard } from './ui/ModelHud.jsx';
@@ -45,6 +47,7 @@ function SceneView({ data, sceneRef }) {
       },
     });
     sceneRef.current = scene;
+    sceneHandle.current = scene;
     const mo = new MutationObserver(() => scene.setTheme());
     mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class'] });
     const mq = window.matchMedia('(prefers-color-scheme: dark)');
@@ -55,6 +58,7 @@ function SceneView({ data, sceneRef }) {
       mq.removeEventListener?.('change', onMq);
       scene.dispose();
       sceneRef.current = null;
+      sceneHandle.current = null;
     };
   }, []);
 
@@ -74,14 +78,31 @@ function SceneView({ data, sceneRef }) {
     if (!s) return;
     if (ui.view === 'grundriss') {
       const fid = ui.floorId && ui.floorId !== 'roof' ? ui.floorId : null;
-      if (fid) s.setView({ mode: 'floor', floorId: fid, showRoof: ui.showRoof, showLabels: ui.showLabels });
-      else s.setView({ mode: 'all', floorId: null, showRoof: true, showLabels: ui.showLabels });
-    } else s.setView({ mode: ui.mode, floorId: ui.floorId, showRoof: ui.showRoof, showLabels: ui.showLabels });
-  }, [ui.view, ui.mode, ui.floorId, ui.showRoof, ui.showLabels, data.house]);
+      const showLines = ui.showLines !== false;
+      if (fid) s.setView({ mode: 'floor', floorId: fid, showRoof: ui.showRoof, showLabels: ui.showLabels, showLines });
+      else s.setView({ mode: 'all', floorId: null, showRoof: true, showLabels: ui.showLabels, showLines });
+    } else s.setView({ mode: ui.mode, floorId: ui.floorId, showRoof: ui.showRoof, showLabels: ui.showLabels, showLines: ui.showLines === true });
+  }, [ui.view, ui.mode, ui.floorId, ui.showRoof, ui.showLabels, ui.showLines, data.house]);
 
   useEffect(() => {
     sceneRef.current?.setSelection(ui.selection);
   }, [ui.selection, data.floors]);
+
+  // real sun position for the sun study
+  useEffect(() => {
+    const s = sceneRef.current;
+    if (!s) return;
+    const year = new Date().getFullYear();
+    s.setSun(ui.sunOn && ui.view === 'modell' ? { date: localToUtc(year, ui.sunDoy ?? doyOf(new Date()), ui.sunMin ?? 780) } : null);
+  }, [ui.sunOn, ui.sunDoy, ui.sunMin, ui.view, data.house]);
+
+  // PV shading colours on the roof
+  useEffect(() => {
+    const s = sceneRef.current;
+    if (!s) return;
+    const id = requestAnimationFrame(() => s.setPvHeat(ui.pvHeat ? solarResult(data) : null));
+    return () => cancelAnimationFrame(id);
+  }, [ui.pvHeat, data.house, data.floors]);
 
   useEffect(() => {
     sceneRef.current?.setCompact(ui.mobile);
@@ -217,9 +238,9 @@ function TopBar({ data }) {
       </nav>
       <span className="top-spacer" />
       <SearchBox data={data} />
-      <span className="sync" title={data.mode === 'local' ? 'Daten liegen nur in diesem Browser' : 'Gespeichert in der Hausakte'}>
+      <span className="sync" title={data.mode === 'local' ? 'Daten liegen nur in diesem Browser' : data.lastSaved ? 'Zuletzt gespeichert ' + fmtTime(data.lastSaved) : 'Gespeichert in der Hausakte'}>
         <span className={`sync-dot ${busy ? 'is-busy' : data.mode === 'local' ? 'is-local' : ''}`} />
-        <span>{busy ? 'Speichert …' : data.mode === 'local' ? 'Nur lokal' : data.lastSaved ? 'Stand ' + fmtTime(data.lastSaved) : 'Synchron'}</span>
+        <span>{busy ? 'Speichert …' : data.mode === 'local' ? 'Nur lokal' : data.lastSaved ? 'Gespeichert' : 'Synchron'}</span>
       </span>
       <button className={`ai-btn ${ui.drawer?.type === 'assistant' ? 'is-on' : ''}`} onClick={() => (ui.drawer?.type === 'assistant' ? closeDrawer() : openDrawer({ type: 'assistant' }))}>
         <Icon name="sparkles" size={17} />
@@ -543,7 +564,7 @@ function App() {
               <KpiRow data={data} />
               <SceneToolbar sceneRef={sceneRef} />
               <FloorPanel data={data} />
-              <Timeline data={data} />
+              {ui.sunOn ? <SunPanel data={data} /> : <Timeline data={data} />}
               <SelectionCard data={data} />
             </>
           ) : null}

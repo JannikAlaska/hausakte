@@ -1,11 +1,12 @@
 // AI features via the viewer's Claude (the artifact `sample` capability).
 // Every call sends the instruction, the relevant house data and the expected JSON shape.
 
-import { FUNDING_KNOWLEDGE, gewerk, projectKind, status as statusOf, PROJECT_KINDS, medium, CONSTRAINT_KINDS } from './catalog.js';
+import { FUNDING_KNOWLEDGE, gewerk, projectKind, status as statusOf, PROJECT_KINDS, medium, CONSTRAINT_KINDS, lineKind } from './catalog.js';
 import { buildingStats, componentWear, projectCost, sortFloors, consumptionByYear, heatingIndex, roomArea } from './metrics.js';
 import { bearingName } from './roof.js';
 import { todayISO, fmtNum } from './util.js';
 import { isSupabaseMode, makeSupaSample } from './supa.js';
+import { fileUrl } from './store.js';
 
 let samplePromise = null;
 export function getSample() {
@@ -41,6 +42,8 @@ const ERR = {
   overloaded: 'Die KI ist gerade überlastet. Versuche es in ein paar Minuten noch einmal.',
   not_member: 'Dein Konto gehört nicht zu dieser Hausakte.',
   file_missing: 'Die Datei ist noch nicht hochgeladen.',
+  pdf_unsupported: 'PDFs kann die KI in dieser Ansicht nicht lesen. Öffne die Hausakte über deine eigene Adresse oder lade das Angebot als Foto hoch.',
+  too_many_files: 'Vergleiche höchstens 5 Angebote auf einmal.',
 };
 export const aiErrorText = (e) => ERR[e?.code] || 'Die KI-Anfrage ist fehlgeschlagen. Versuche es später noch einmal.';
 export const isHardAiError = (e) => ['not_granted', 'sampling_disabled', 'not_declared', 'capability_disabled', 'capability_removed'].includes(e?.code);
@@ -88,6 +91,18 @@ export function houseContext(d, { withProjects = true, withComponents = true, wi
   for (const f of floors) {
     const rooms = (f.rooms || []).map((r) => `${r.name} ${fmtNum(roomArea(r), 1)} m²`).join(', ');
     L.push(`${f.short || ''} ${f.name} (OKFF ${fmtNum(f.elevation, 2)} m, Geschosshöhe ${fmtNum(f.height, 2)} m${f.underRoof ? ', Dachgeschoss' : ''}): ${rooms || 'keine Räume'}`);
+  }
+  const lineInfo = [];
+  for (const f of floors)
+    for (const l of f.lines || []) {
+      let len = 0;
+      for (let i = 1; i < (l.pts || []).length; i++) len += Math.hypot(l.pts[i][0] - l.pts[i - 1][0], l.pts[i][1] - l.pts[i - 1][1], (l.pts[i][2] ?? 0) - (l.pts[i - 1][2] ?? 0));
+      lineInfo.push(`- ${f.short || f.name}: ${lineKind(l.kind).name}${l.riser ? ' (Steigleitung)' : ''}${l.label ? ` „${l.label}“` : ''}, ${fmtNum(len, 1)} m, ${l.status || 'bestand'}${l.notes ? `, ${String(l.notes).slice(0, 120)}` : ''}`);
+    }
+  if (lineInfo.length) {
+    L.push('');
+    L.push('EINGEZEICHNETE LEITUNGEN');
+    L.push(...lineInfo.slice(0, 40));
   }
   if (withComponents) {
     L.push('');
@@ -293,6 +308,85 @@ ${JSON_RULES}
 Format:
 {"summary":"Fazit","benchmark":"Einordnung gegenüber Vergleichswerten","findings":["Auffälligkeit"],"tips":[{"title":"Maßnahme","saving":"z. B. 300–500 €/Jahr","effort":"gering|mittel|hoch"}]}`;
   return askJSON(prompt, opts);
+}
+
+// ---------- heat load / heat pump ----------
+export async function aiHeat(d, res, after, measures, opts) {
+  const f1 = (v) => fmtNum(v, 1);
+  const rows = res.surfaces.map((x) => `- ${x.label}: ${f1(x.area)} m², U ${fmtNum(x.u, 2)} W/m²K, Faktor ${fmtNum(x.b, 2)} → ${fmtNum(x.H * res.dT, 0)} W`).join('\n');
+  const prompt = `Du bist unabhängiger Energieberater (Gebäudeenergieberater, BAFA-gelistet) für private Wohngebäude in Deutschland.
+Ordne die vereinfachte Heizlast-Schätzung aus dem 3D-Modell der App ein und berate zur geplanten Wärmepumpe. Sei konkret, nenne Zahlen und weise auf Unsicherheiten hin. Ersetzt keine Heizlastberechnung nach DIN EN 12831 – sag, wann eine nötig ist (für die Förderung ist sie Pflicht).
+
+WISSENSBASIS FÖRDERUNG
+${FUNDING_KNOWLEDGE}
+
+HAUS
+${houseContext(d, { withConsumption: true })}
+
+SCHÄTZUNG AUS DEM MODELL
+Beheizte Etagen: ${res.heated.map((x) => x.short || x.name).join(', ')}; beheizte Fläche ca. ${f1(res.netArea)} m², Volumen ${fmtNum(res.volume, 0)} m³
+Innentemperatur ${res.cfg.tIn} °C, Norm-Außentemperatur ${res.cfg.tOut} °C, Luftwechsel ${res.cfg.ach}/h
+Wärmeverluste:
+${rows}
+- Wärmebrücken-Zuschlag: ${fmtNum(res.bridges * res.dT, 0)} W
+- Lüftung: ${fmtNum(res.HV * res.dT, 0)} W
+Heizlast ca. ${f1(res.loadKw)} kW (${fmtNum(res.perM2, 0)} W/m²), Heizwärmebedarf ca. ${fmtNum(res.heatKwh, 0)} kWh/a, Warmwasser ${fmtNum(res.wwKwh, 0)} kWh/a (${res.persons} Personen)
+Heizflächen: ${res.emitter.name} (Vorlauf ca. ${res.emitter.flow} °C, angenommene JAZ ${res.emitter.jaz})
+Wärmepumpe rechnerisch ca. ${res.hpSize} kW. Kosten/Jahr: Öl ca. ${fmtNum(res.oil.cost, 0)} € (${fmtNum(res.oil.liters, 0)} l), Wärmepumpe ca. ${fmtNum(res.hp.cost, 0)} € (${fmtNum(res.hp.kwh, 0)} kWh Strom)
+${res.actual ? `Tatsächlicher Ölverbrauch ${res.actual.year}: ${fmtNum(res.actual.liters, 0)} l → Heizlast nach Verbrauch ca. ${f1(res.actual.loadKw)} kW` : 'Kein Ölverbrauch erfasst.'}
+${measures.length ? `Ausgewählte Maßnahmen: ${measures.map((m) => m.label).join('; ')} → Heizlast danach ca. ${f1(after.loadKw)} kW, Wärmepumpe ca. ${after.hpSize} kW, WP-Kosten ca. ${fmtNum(after.hp.cost, 0)} €/a` : 'Keine Maßnahmen ausgewählt.'}
+
+${JSON_RULES}
+Format:
+{"summary":"Fazit in 2–3 Sätzen","plausibility":"Wie belastbar ist die Schätzung, was ist unsicher (z. B. U-Werte, Fachwerk)","hpFit":{"verdict":"gut|bedingt|kritisch","reason":"Eignung für eine Luft-Wasser-Wärmepumpe, Vorlauftemperatur, Heizkörper"},"sizing":"Empfohlene Leistung und warum (inkl. Warmwasser, Sperrzeiten, Bivalenz)","steps":[{"title":"Schritt","why":"Begründung","when":"vor/mit/nach Wärmepumpe"}],"funding":[{"program":"Programm","amount":"Betrag oder Quote","note":"Bedingung, z. B. Antrag vor Auftrag"}],"warnings":["Hinweis"]}`;
+  return askJSON(prompt, { tier: 'complex', ...opts });
+}
+
+// ---------- offer comparison ----------
+export async function aiCompareOffers(p, docs, d, opts = {}) {
+  const sample = await getSample();
+  if (!sample) throw { code: 'not_granted' };
+  const lim = await getLimits();
+  const canPdf = !!lim?.images?.mediaTypes?.includes('application/pdf');
+  const files = [];
+  const parts = [];
+  for (const doc of docs) {
+    const ex = doc.ai?.data;
+    if (ex && ((ex.items || []).length || ex.total)) {
+      parts.push(
+        `ANGEBOT [${doc.id}] „${doc.name}“ (bereits ausgelesen): Firma ${ex.vendor || 'unbekannt'}, Datum ${ex.date || 'unbekannt'}, Summe ${ex.total ?? 'unbekannt'} €. Positionen: ${(ex.items || []).map((i) => `${i.label}: ${i.amount} €`).join('; ') || 'keine'}. ${ex.summary || ''}`,
+      );
+      continue;
+    }
+    const url = fileUrl(doc);
+    if (!url) throw { code: 'file_missing' };
+    const isPdf = /pdf/i.test(doc.contentType || doc.name || '');
+    if (isPdf && !canPdf) throw { code: 'pdf_unsupported' };
+    if (!lim?.images) throw { code: 'images_unavailable' };
+    files.push(await (await fetch(url)).blob());
+    parts.push(`ANGEBOT [${doc.id}] „${doc.name}“: Datei Nr. ${files.length} im Anhang`);
+  }
+  if (files.length > (lim?.images?.maxCount || 5)) throw { code: 'too_many_files' };
+  const prompt = `Du bist ein erfahrener, unabhängiger Bauberater und Energieberater. Vergleiche die Handwerkerangebote für das Projekt „${p.title}“ (${projectKind(p.kind).name}) an diesem Haus. Lies alle Positionen, Mengen und Preise aus den Angeboten.
+Prüfe: Leistungsumfang im Vergleich (gleiche Leistungen nebeneinander), fehlende Leistungen, die für dieses Projekt üblich oder nötig sind (z. B. bei Wärmepumpen Heizlastberechnung, hydraulischer Abgleich, Elektroanschluss, Fundament/Aufstellung, Entsorgung Altanlage/Öltank, Inbetriebnahme; bei PV Gerüst, Zählerschrank, Anmeldung Netzbetreiber), Preisplausibilität (z. B. €/kW, €/kWp, €/m²), Gewährleistung, Zahlungsbedingungen, Bindefrist, und was für die Förderung nötig ist (Antrag vor Auftrag, technische Mindestanforderungen, Bestätigung des Fachunternehmens). Formuliere konkrete Rückfragen an jeden Anbieter.
+
+PROJEKT
+${projectBlock(p, d)}
+
+WISSENSBASIS FÖRDERUNG
+${FUNDING_KNOWLEDGE}
+
+HAUS
+${houseContext(d, { withConsumption: false, withComponents: true, withProjects: false })}
+
+ANGEBOTE
+${parts.join('\n')}
+
+${JSON_RULES}
+Verwende als offerId die ID in eckigen Klammern.
+Format:
+{"summary":"Fazit in 2–3 Sätzen","offers":[{"offerId":"ID","vendor":"Firma","total":12345,"date":"YYYY-MM-DD oder null","validUntil":"YYYY-MM-DD oder null","strengths":["…"],"weaknesses":["…"],"missing":["fehlende oder unklare Leistung"],"questions":["Rückfrage an den Anbieter"]}],"positions":[{"label":"Leistung (vereinheitlicht)","values":{"ID":1234},"note":"z. B. nur pauschal enthalten"}],"recommendation":{"offerId":"ID oder null","reason":"Begründung"},"funding":["Hinweis zur Förderung"],"warnings":["Auffälligkeit, z. B. Vorkasse"]}`;
+  return sample.json(prompt, { images: files.length ? files : undefined, modelTier: 'complex', signal: opts.signal, cache: false });
 }
 
 // ---------- images ----------

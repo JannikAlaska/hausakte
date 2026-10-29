@@ -359,3 +359,24 @@ SONSTIGES
 - Viele Bundesländer und Kommunen haben eigene Programme (z. B. Zuschüsse für Speicher, Wallbox, Gründach, Zisternen, Heizungstausch); Fristen und Budgets ändern sich häufig.
 - Grundregel: Förderanträge (KfW/BAFA) fast immer VOR Auftragsvergabe bzw. Baubeginn stellen; Energieeffizienz-Experte frühzeitig einbinden (Wartezeiten mehrere Wochen).
 `.trim();
+
+// Installation lines drawn into the floor plans (cables, pipes, ducts).
+// r = tube radius in the 3D model (exaggerated a little so they stay visible), z = default height above the floor.
+export const LINE_KINDS = [
+  { key: 'strom', name: 'Strom', color: '#e8b10b', r: 0.022, z: 0.3 },
+  { key: 'netzwerk', name: 'Netzwerk / Telefon', color: '#8e5cd9', r: 0.02, z: 0.3 },
+  { key: 'wasser', name: 'Trinkwasser kalt', color: '#2f80ed', r: 0.028, z: 0.25 },
+  { key: 'warmwasser', name: 'Trinkwasser warm', color: '#e5484d', r: 0.028, z: 0.3 },
+  { key: 'heizung', name: 'Heizung', color: '#ef6c00', r: 0.032, z: 0.15 },
+  { key: 'abwasser', name: 'Abwasser', color: '#7d838c', r: 0.05, z: 0.08 },
+  { key: 'gas', name: 'Gas', color: '#a3712a', r: 0.028, z: 0.2 },
+  { key: 'lueftung', name: 'Lüftung', color: '#2fa39a', r: 0.07, z: null },
+];
+export const lineKind = (k) => LINE_KINDS.find((x) => x.key === k) || LINE_KINDS[0];
+// Installation zones for cables in walls (DIN 18015-3), used as height presets.
+export const LINE_ZONES = [
+  { key: 'boden', name: 'Im Fußboden', z: () => 0.05 },
+  { key: 'unten', name: 'Untere Zone (30 cm)', z: () => 0.3 },
+  { key: 'mitte', name: 'Mittlere Zone (1,15 m)', z: () => 1.15 },
+  { key: 'oben', name: 'Obere Zone (30 cm unter Decke)', z: (f) => Math.max(0.5, (f?.height ?? 2.75) - (f?.slab ?? 0.2) - 0.3) },
+];

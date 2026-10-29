@@ -48,6 +48,7 @@ export function NumInput({ value, onChange, placeholder, unit, id, digits = 2, m
       <input
         id={id}
         className="input num"
+        style={unit ? { paddingRight: 14 + String(unit).length * 7 } : undefined}
         inputMode="decimal"
         value={text}
         placeholder={placeholder}

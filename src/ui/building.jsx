@@ -1,7 +1,9 @@
 import { Icon } from './icons.jsx';
 import { Btn, IconBtn, Field, TextInput, NumInput, Select, DateInput, Toggle, Pill, Section, Drawer, Sheet, Empty, ConfirmBtn, Seg, Meter, KV } from './common.jsx';
 import { AiRunner, useAiAvailable, AiUnavailable } from './ai-ui.jsx';
-import { setUI, openDrawer, closeDrawer, toast, go, showFloor } from './state.js';
+import { setUI, openDrawer, closeDrawer, toast, go, showFloor, useUI } from './state.js';
+import { HeatCheck } from './energy.jsx';
+import { SolarCheck } from './solar.jsx';
 import { UploadButton, uploadFiles } from './documents.jsx';
 import { GEWERKE, gewerk, CONDITION, ROOM_TYPES, roomType, BUNDESLAENDER, PROJECT_KINDS, projectKind, energyClass, ENERGY_CLASSES } from '../catalog.js';
 import { buildingStats, componentWear, roomArea, sortFloors, floorStats } from '../metrics.js';
@@ -17,7 +19,15 @@ const HOUSE_TYPES = ['EFH', 'Doppelhaushälfte', 'Reihenhaus', 'Bungalow', 'Zwei
 const CONSTRUCTIONS = ['Massivbau (Mauerwerk)', 'Stahlbeton', 'Holzständerbau', 'Fertighaus (Holz)', 'Fachwerk', 'Mischbauweise'];
 
 export function BuildingSheet({ data }) {
-  const [tab, setTab] = useState('bauteile');
+  const ui = useUI();
+  const [tab, setTabState] = useState(ui.buildingTab || 'bauteile');
+  const setTab = (t) => {
+    setTabState(t);
+    setUI({ buildingTab: t });
+  };
+  useEffect(() => {
+    if (ui.buildingTab && ui.buildingTab !== tab) setTabState(ui.buildingTab);
+  }, [ui.buildingTab]);
   const comps = Object.values(data.components);
   const rooms = Object.values(data.floors).reduce((s, f) => s + (f.rooms || []).length, 0);
   return (
@@ -31,11 +41,13 @@ export function BuildingSheet({ data }) {
         { key: 'stamm', label: 'Stammdaten', icon: 'home' },
         { key: 'raeume', label: 'Räume', icon: 'room', count: rooms },
         { key: 'kennwerte', label: 'Kennwerte', icon: 'ruler' },
+        { key: 'energie', label: 'Heizlast & Wärmepumpe', icon: 'flame' },
+        { key: 'sonne', label: 'Sonne & PV', icon: 'sun' },
       ]}
       tab={tab}
       onTab={setTab}
     >
-      {tab === 'stamm' ? <MasterData data={data} /> : tab === 'raeume' ? <RoomsTable data={data} /> : tab === 'kennwerte' ? <Metrics data={data} /> : <Components data={data} />}
+      {tab === 'stamm' ? <MasterData data={data} /> : tab === 'raeume' ? <RoomsTable data={data} /> : tab === 'kennwerte' ? <Metrics data={data} /> : tab === 'energie' ? <HeatCheck data={data} /> : tab === 'sonne' ? <SolarCheck data={data} /> : <Components data={data} />}
     </Sheet>
   );
 }

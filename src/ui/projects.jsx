@@ -1,4 +1,7 @@
 import { Icon } from './icons.jsx';
+import { HeatHint } from './energy.jsx';
+import { PvHint } from './solar.jsx';
+import { OfferCompare } from './offers.jsx';
 import { Btn, IconBtn, Field, TextInput, NumInput, Select, DateInput, Pill, Section, Drawer, Sheet, Empty, ConfirmBtn, Seg } from './common.jsx';
 import { AiRunner, useAiAvailable, AiUnavailable } from './ai-ui.jsx';
 import { useUI, setUI, openDrawer, closeDrawer, toast, go } from './state.js';
@@ -388,6 +391,9 @@ export function ProjectDrawer({ data, drawer }) {
         </div>
       ) : null}
 
+      {p.kind === 'heizung' ? <HeatHint data={data} /> : null}
+      {p.kind === 'pv' ? <PvHint data={data} /> : null}
+
       <Section n={1} title="Grunddaten">
         <Field label="Titel">
           <TextInput id={'p-title-' + p.id} value={p.title} onChange={(v) => set({ title: v })} />
@@ -455,6 +461,7 @@ export function ProjectDrawer({ data, drawer }) {
 
       <Section n={5} title="Kosten" aside={fmtEuro(cost.best)}>
         <Costs p={p} set={set} />
+        <OfferCompare p={p} data={data} set={set} />
         <div className="grid2">
           <Field label="Davon Eigenleistung" hint="Wert deiner eigenen Arbeit (für Finanzierung)">
             <NumInput id={'p-own-' + p.id} value={p.ownWork} onChange={(v) => set({ ownWork: v })} unit="€" digits={0} />

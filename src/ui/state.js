@@ -9,6 +9,9 @@ let ui = {
   floorId: null,
   showRoof: true,
   showLabels: true,
+  showLines: false, // x-ray view with installation lines
+  sunOn: false, // sun study in the model view
+  pvHeat: false, // PV shading colours on the roof
   selection: null, // {type:'room'|'project'|'component'|'floor'|'roof', ...}
   drawer: null, // {type, id, ...}
   highlight: null,
@@ -16,6 +19,8 @@ let ui = {
   wide: typeof window !== 'undefined' ? window.innerWidth >= 1100 : true,
   mobile: typeof window !== 'undefined' ? window.innerWidth <= 760 : false,
 };
+// the live 3D scene, for features that need its geometry (PV shading analysis)
+export const sceneHandle = { current: null };
 const subs = new Set();
 export const getUI = () => ui;
 export const subscribeUI = (fn) => {

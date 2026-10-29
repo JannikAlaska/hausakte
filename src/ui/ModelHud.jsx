@@ -81,6 +81,7 @@ export function SceneToolbar({ sceneRef }) {
       <span className="tb-sep tb-opt" />
       <IconBtn icon={ui.showRoof ? 'roof' : 'eyeOff'} label={ui.showRoof ? 'Dach ausblenden' : 'Dach einblenden'} active={!ui.showRoof} onClick={() => setUI({ showRoof: !ui.showRoof })} />
       <IconBtn icon="tag" label={ui.showLabels ? 'Beschriftung ausblenden' : 'Beschriftung einblenden'} active={!ui.showLabels} onClick={() => setUI({ showLabels: !ui.showLabels })} />
+      <IconBtn icon="sun" label={ui.sunOn ? 'Sonnenstand ausblenden' : 'Sonnenstand und Schatten'} active={!!ui.sunOn} onClick={() => setUI({ sunOn: !ui.sunOn })} />
     </div>
   );
 }
@@ -88,6 +89,7 @@ export function SceneToolbar({ sceneRef }) {
 export function FloorPanel({ data, compact }) {
   const ui = useUI();
   const floors = sortFloors(Object.values(data.floors)).reverse();
+  const lineCount = floors.reduce((n, f) => n + (f.lines || []).length, 0);
   return (
     <div className={`floorpanel ${compact ? 'is-compact' : ''}`}>
       <div className="fp-head">
@@ -116,6 +118,20 @@ export function FloorPanel({ data, compact }) {
             </span>
             <span className="fp-aside">
               <Icon name={ui.showRoof ? 'eye' : 'eyeOff'} size={15} />
+            </span>
+          </button>
+        </li>
+        <li>
+          <button className={`fp-row ${ui.showLines === true ? 'is-on' : 'is-dim'}`} aria-pressed={ui.showLines === true} onClick={() => setUI({ showLines: ui.showLines !== true })} title="Röntgenblick: Wände durchsichtig, Kabel und Rohre sichtbar">
+            <span className="fp-short">
+              <Icon name="pipe" size={15} />
+            </span>
+            <span className="fp-name">
+              <b>Leitungen</b>
+              <span>{lineCount ? (ui.showLines === true ? 'Röntgenblick an' : `${lineCount} eingezeichnet`) : 'im Grundriss einzeichnen'}</span>
+            </span>
+            <span className="fp-aside">
+              <Icon name={ui.showLines === true ? 'eye' : 'eyeOff'} size={15} />
             </span>
           </button>
         </li>

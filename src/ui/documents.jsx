@@ -61,7 +61,7 @@ export async function uploadFiles(files, meta = {}) {
   let ok = 0;
   for (const file of files) {
     const id = uid('d-');
-    const base = { id, name: file.name, type: meta.type || guessType(file), size: file.size, contentType: file.type, projectId: meta.projectId || null, componentId: meta.componentId || null, date: todayISO(), notes: '' };
+    const base = { id, name: file.name, type: meta.type || guessType(file), size: file.size, contentType: file.type, projectId: meta.projectId || null, componentId: meta.componentId || null, lineId: meta.lineId || null, date: todayISO(), notes: '' };
     try {
       if (assets) {
         if (!ASSET_TYPES.includes(file.type)) {
@@ -130,7 +130,7 @@ function AttachButton({ doc }) {
   );
 }
 
-export function UploadButton({ projectId, componentId, small, label = 'Hochladen', accept }) {
+export function UploadButton({ projectId, componentId, lineId, small, label = 'Hochladen', accept }) {
   const ref = useRef(null);
   const [busy, setBusy] = useState(false);
   return (
@@ -149,7 +149,7 @@ export function UploadButton({ projectId, componentId, small, label = 'Hochladen
           e.target.value = '';
           if (!files.length) return;
           setBusy(true);
-          await uploadFiles(files, { projectId, componentId });
+          await uploadFiles(files, { projectId, componentId, lineId, type: lineId ? 'foto' : undefined });
           setBusy(false);
         }}
       />

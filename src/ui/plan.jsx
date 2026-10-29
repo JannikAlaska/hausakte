@@ -3,7 +3,9 @@ import { Icon } from './icons.jsx';
 import { Btn, IconBtn, Field, TextInput, NumInput, Select, Toggle, Pill, Sheet, Seg, ConfirmBtn, Empty } from './common.jsx';
 import { useUI, setUI, openDrawer, toast, go } from './state.js';
 import { downscaleImage } from './documents.jsx';
-import { ROOM_TYPES, roomType, ROOM_COLORS } from '../catalog.js';
+import { ROOM_TYPES, roomType, ROOM_COLORS, LINE_KINDS, LINE_ZONES, lineKind } from '../catalog.js';
+import { DocList, UploadButton } from './documents.jsx';
+import { ADJ } from '../heat.js';
 import { ROOF_TYPES, autoRoofBase, sectionGeometry } from '../roof.js';
 import { sortFloors, roomArea } from '../metrics.js';
 import {
@@ -32,6 +34,43 @@ const OPENING_DEFAULTS = {
 const OPENING_NAMES = { window: 'Fenster', door: 'Tür', opening: 'Durchgang' };
 const r3 = (v) => Math.round(v * 1000) / 1000;
 const P3 = (p) => [r3(p[0]), r3(p[1])];
+const LINE_STATUS = [
+  { value: 'bestand', label: 'Bestand' },
+  { value: 'geplant', label: 'Geplant' },
+  { value: 'stillgelegt', label: 'Stillgelegt' },
+];
+
+// ---------- installation lines (points are [x, y, z] with z = height above the floor) ----------
+const zoneZ = (opts, floor) => (opts.zone === 'custom' ? opts.z ?? 0.3 : LINE_ZONES.find((z) => z.key === opts.zone)?.z(floor) ?? 0.3);
+const defaultZone = (kind) => (kind === 'lueftung' ? 'oben' : kind === 'abwasser' || kind === 'heizung' ? 'boden' : 'unten');
+export function lineLength(l) {
+  let L = 0;
+  for (let i = 1; i < (l.pts || []).length; i++) {
+    const a = l.pts[i - 1],
+      b = l.pts[i];
+    L += Math.hypot(b[0] - a[0], b[1] - a[1], (b[2] ?? 0) - (a[2] ?? 0));
+  }
+  return L;
+}
+function hitLine(p, lines, tol) {
+  let best = null;
+  for (const l of lines) {
+    const pts = l.pts || [];
+    if (l.riser && pts.length && dist(p, pts[0]) < tol * 1.4) return { line: l, d: 0 };
+    for (let i = 1; i < pts.length; i++) {
+      if (same(pts[i - 1], pts[i], 0.002)) continue;
+      const d = distToSeg(p, pts[i - 1], pts[i]).d;
+      if (d < tol && (!best || d < best.d)) best = { line: l, d };
+    }
+  }
+  return best;
+}
+// unique plan positions of a line (vertical pieces collapse to one point)
+function linePlanPts(l) {
+  const out = [];
+  for (const q of l.pts || []) if (!out.length || !same(out[out.length - 1], q, 0.002)) out.push([q[0], q[1]]);
+  return out;
+}
 
 // ---------- geometry helpers ----------
 function wallFrame(w) {
@@ -329,10 +368,14 @@ function FloorEditor({ data, floor, floors }) {
   const [grid, setGrid] = useState(0.05);
   const [ortho, setOrtho] = useState(true);
   const [calib, setCalib] = useState(null); // {pts:[]}
+  const [lineOpts, setLineOpts] = useState({ kind: 'strom', zone: 'unten', z: 0.3, status: 'bestand' });
+  const ui = useUI();
+  const showLines = ui.showLines !== false || tool === 'line' || tool === 'riser';
   const hist = useRef({ undo: [], redo: [] });
   const floorRef = useRef(floor);
   floorRef.current = floor;
   const walls = floor.walls || [];
+  const lines = floor.lines || [];
   const fitPts = useCallback(() => walls.flatMap((w) => [w.a, w.b]).concat(floor.underlay ? [[floor.underlay.x, floor.underlay.y], [floor.underlay.x + floor.underlay.w, floor.underlay.y + floor.underlay.w * (floor.underlay.aspect || 0.7)]] : []), [floor.id]);
   const { size, view, setView, fit } = useViewport(boxRef, fitPts, floor.id);
   const { pointers, pinch } = usePanZoom(svgRef, view, setView);
@@ -376,10 +419,34 @@ function FloorEditor({ data, floor, floors }) {
     if (sel.kind === 'opening') mutate((f) => ({ ...f, walls: f.walls.map((w) => (w.id === sel.wallId ? { ...w, openings: w.openings.filter((o) => o.id !== sel.id) } : w)) }), { refresh: false });
     if (sel.kind === 'room') mutate((f) => ({ ...f, rooms: f.rooms.filter((r) => r.id !== sel.id) }), { refresh: false });
     if (sel.kind === 'item') mutate((f) => ({ ...f, items: f.items.filter((r) => r.id !== sel.id) }), { refresh: false });
+    if (sel.kind === 'line') mutate((f) => ({ ...f, lines: (f.lines || []).filter((l) => l.id !== sel.id) }), { refresh: false });
     setSel(null);
   };
 
+  // adds a point to the line being drawn; a changed height first adds a vertical piece
+  const lineStep = (pts, sp, z) => {
+    const last = pts[pts.length - 1];
+    const next = [...pts];
+    if (last && Math.abs((last[2] ?? 0) - z) > 0.005) next.push([last[0], last[1], r3(z)]);
+    next.push([r3(sp[0]), r3(sp[1]), r3(z)]);
+    return next;
+  };
+  const changeLineOpts = (next) => {
+    setLineOpts(next);
+    if (tool === 'line' && chain?.pts.length) {
+      const z = zoneZ(next, floor);
+      const last = chain.pts[chain.pts.length - 1];
+      if (Math.abs((last[2] ?? 0) - z) > 0.005) setChain({ ...chain, pts: [...chain.pts, [last[0], last[1], r3(z)]] });
+    }
+  };
+
   const finishChain = () => {
+    if (tool === 'line' && chain && linePlanPts({ pts: chain.pts }).length >= 2) {
+      const id = uid('l');
+      const pts = chain.pts;
+      mutate((f) => ({ ...f, lines: [...(f.lines || []), { id, kind: lineOpts.kind, status: lineOpts.status, pts, label: '', notes: '' }] }), { refresh: false });
+      toast(`${lineKind(lineOpts.kind).name}: ${fmtFixed(lineLength({ pts }), 2)} m eingezeichnet`);
+    }
     if (tool === 'roomPoly' && chain?.pts.length >= 3) {
       const poly = chain.pts.map(P3);
       const id = uid('r');
@@ -439,6 +506,23 @@ function FloorEditor({ data, floor, floors }) {
     if (e.button === 1 || e.button === 2 || tool === 'hand') {
       if (e.button === 2 && chain) return finishChain();
       setDrag({ kind: 'pan', x0: e.clientX, y0: e.clientY, view: { ...view } });
+      return;
+    }
+    if (tool === 'line') {
+      const sp = snapPoint(p, snapOpts(chain?.pts[chain.pts.length - 1])).p;
+      const z = zoneZ(lineOpts, floor);
+      if (!chain) return setChain({ pts: [[r3(sp[0]), r3(sp[1]), r3(z)]] });
+      const last = chain.pts[chain.pts.length - 1];
+      if (dist(last, sp) < 0.05) return finishChain();
+      setChain({ pts: lineStep(chain.pts, sp, z) });
+      return;
+    }
+    if (tool === 'riser') {
+      const sp = snapPoint(p, snapOpts()).p;
+      const id = uid('l');
+      mutate((f) => ({ ...f, lines: [...(f.lines || []), { id, kind: lineOpts.kind, status: lineOpts.status, riser: true, pts: [[r3(sp[0]), r3(sp[1]), 0], [r3(sp[0]), r3(sp[1]), r3(f.height)]], label: '', notes: '' }] }), { refresh: false });
+      setSel({ kind: 'line', id });
+      setTool('select');
       return;
     }
     if (tool === 'wall') {
@@ -509,6 +593,30 @@ function FloorEditor({ data, floor, floors }) {
       return;
     }
     // select tool
+    if (sel?.kind === 'line' && showLines) {
+      const l = lines.find((x) => x.id === sel.id);
+      if (l) {
+        const hp = linePlanPts(l).find((q) => dist(p, q) < 10 / view.s);
+        if (hp) {
+          const idx = l.pts.map((q, i) => (same(q, hp, 0.002) ? i : -1)).filter((i) => i >= 0);
+          setDrag({ kind: 'linePt', id: l.id, idx, from: deepClone(floor) });
+          return;
+        }
+        const hl = hitLine(p, [l], tolM);
+        if (hl) {
+          setDrag({ kind: 'lineMove', id: l.id, p0: p, pts0: l.pts.map((q) => [...q]), from: deepClone(floor) });
+          return;
+        }
+      }
+    }
+    if (showLines) {
+      const hl = hitLine(p, lines, tolM);
+      if (hl) {
+        setSel({ kind: 'line', id: hl.line.id });
+        setDrag({ kind: 'lineMove', id: hl.line.id, p0: p, pts0: hl.line.pts.map((q) => [...q]), from: deepClone(floor) });
+        return;
+      }
+    }
     if (sel?.kind === 'wall') {
       const w = walls.find((x) => x.id === sel.id);
       if (w) {
@@ -563,7 +671,7 @@ function FloorEditor({ data, floor, floors }) {
     }
     const p = toWorld(e);
     if (!drag) {
-      if (tool === 'wall' || tool === 'roomPoly' || tool === 'measure' || tool === 'stairs') {
+      if (tool === 'wall' || tool === 'roomPoly' || tool === 'measure' || tool === 'stairs' || tool === 'line' || tool === 'riser') {
         const from = tool === 'measure' ? (measure && !measure.b ? measure.a : null) : chain?.pts[chain.pts.length - 1];
         setCursor(snapPoint(p, snapOpts(from)));
       } else if (tool === 'window' || tool === 'door' || tool === 'opening') {
@@ -618,6 +726,24 @@ function FloorEditor({ data, floor, floors }) {
       const { L } = wallFrame(w);
       const pos = distToSeg(p, w.a, w.b).t * L;
       o.pos = r3(Math.max(o.w / 2, Math.min(L - o.w / 2, Math.round(pos / 0.01) * 0.01)));
+      save(f, { undo: false, refresh: false });
+      drag.moved = true;
+      return;
+    }
+    if (drag.kind === 'linePt') {
+      const l = f.lines.find((x) => x.id === drag.id);
+      const sp = snapPoint(p, { ...snapOpts(), extra: [] }).p;
+      for (const i of drag.idx) l.pts[i] = [r3(sp[0]), r3(sp[1]), l.pts[i][2] ?? 0];
+      save(f, { undo: false, refresh: false });
+      drag.moved = true;
+      return;
+    }
+    if (drag.kind === 'lineMove') {
+      const l = f.lines.find((x) => x.id === drag.id);
+      const dx = Math.round((p[0] - drag.p0[0]) / grid) * grid,
+        dy = Math.round((p[1] - drag.p0[1]) / grid) * grid;
+      if (!dx && !dy && !drag.moved) return;
+      l.pts = drag.pts0.map((q) => [r3(q[0] + dx), r3(q[1] + dy), q[2] ?? 0]);
       save(f, { undo: false, refresh: false });
       drag.moved = true;
       return;
@@ -747,6 +873,7 @@ function FloorEditor({ data, floor, floors }) {
   const selOpening = sel?.kind === 'opening' ? walls.find((w) => w.id === sel.wallId)?.openings?.find((o) => o.id === sel.id) : null;
   const selRoom = sel?.kind === 'room' ? (floor.rooms || []).find((r) => r.id === sel.id) : null;
   const selItem = sel?.kind === 'item' ? (floor.items || []).find((r) => r.id === sel.id) : null;
+  const selLine = sel?.kind === 'line' ? lines.find((l) => l.id === sel.id) : null;
   const hints = {
     select: 'Klicken wählt Wände, Öffnungen, Räume und Treppen. Wand ziehen verschiebt sie, Endpunkte ziehen ändert die Länge. Leere Fläche ziehen verschiebt die Ansicht.',
     wall: chain ? 'Weiter klicken für die nächste Wand · Länge eintippen + Enter · Esc oder Doppelklick beendet' : 'Startpunkt klicken. Punkte rasten an Wandenden und auf Wänden ein.',
@@ -757,6 +884,8 @@ function FloorEditor({ data, floor, floors }) {
     opening: 'Auf eine Wand klicken, um einen Durchgang zu setzen.',
     stairs: 'Rechteck aufziehen. Richtung danach rechts einstellen.',
     measure: 'Zwei Punkte klicken, um den Abstand zu messen.',
+    line: chain ? 'Weiter klicken für den nächsten Punkt · Höhe rechts ändern = senkrechtes Stück · Enter oder Doppelklick beendet' : 'Startpunkt der Leitung klicken. Punkte rasten an Wänden ein. Art und Höhe stellst du rechts ein.',
+    riser: 'Klicke die Stelle, an der die Leitung senkrecht durch die Etage läuft (z. B. Steigleitung, Fallrohr).',
     underlay: calib ? (calib.pts.length ? 'Jetzt den zweiten Punkt klicken.' : 'Ersten Punkt einer bekannten Strecke auf dem Plan klicken (z. B. Außenmaß).') : 'Plan ziehen verschiebt ihn. Maßstab über „Kalibrieren“ festlegen.',
   };
 
@@ -773,6 +902,7 @@ function FloorEditor({ data, floor, floors }) {
               setMeasure(null);
               setCalib(null);
               setCursor(null);
+              if (t === 'line' || t === 'riser') setUI({ showLines: true });
             }}
             options={[
               { value: 'select', icon: 'cursor', title: 'Auswählen' },
@@ -782,12 +912,15 @@ function FloorEditor({ data, floor, floors }) {
               { value: 'door', icon: 'door', title: 'Tür' },
               { value: 'opening', icon: 'split', title: 'Durchgang' },
               { value: 'stairs', icon: 'stairs', title: 'Treppe' },
+              { value: 'line', icon: 'pipe', title: 'Leitung (Kabel, Rohr)' },
+              { value: 'riser', icon: 'riser', title: 'Steigleitung (senkrecht)' },
               { value: 'roomPoly', icon: 'edit', title: 'Raum als Polygon' },
               { value: 'measure', icon: 'ruler', title: 'Messen' },
               { value: 'underlay', icon: 'image', title: 'Plan-Unterlage' },
             ]}
           />
           <span style={{ flex: 1 }} />
+          <IconBtn icon={showLines ? 'eye' : 'eyeOff'} label={showLines ? 'Leitungen ausblenden' : 'Leitungen einblenden'} active={showLines && lines.length > 0} onClick={() => setUI({ showLines: !showLines })} />
           <IconBtn icon="undo" label="Rückgängig (Strg+Z)" onClick={undo} disabled={!hist.current.undo.length} />
           <IconBtn icon="redo" label="Wiederholen (Strg+Y)" onClick={redo} disabled={!hist.current.redo.length} />
         </div>
@@ -906,6 +1039,8 @@ function FloorEditor({ data, floor, floors }) {
                   </g>
                 );
               })}
+              {showLines ? <PlanLines lines={lines} sel={sel} px={px} /> : null}
+              {chain && tool === 'line' ? <LinePreview pts={chain.pts} cursor={cursor?.p} kind={lineOpts.kind} px={px} /> : null}
               {selWall ? <WallDims w={selWall} px={px} /> : null}
               {selWall
                 ? ['a', 'b'].map((end) => <circle key={end} cx={selWall[end][0]} cy={selWall[end][1]} r={px(6)} className="svg-handle" strokeWidth={px(2)} />)
@@ -914,7 +1049,7 @@ function FloorEditor({ data, floor, floors }) {
                 <DrawPreview chain={chain} cursor={cursor} px={px} t={tool === 'wall' ? defaults.t : null} />
               ) : null}
               {chain && tool === 'roomPoly' ? <polyline points={ptsAttr(chain.pts)} fill="none" className="svg-preview" strokeWidth={px(2)} /> : null}
-              {cursor && (tool === 'wall' || tool === 'roomPoly' || tool === 'measure' || tool === 'stairs') ? (
+              {cursor && (tool === 'wall' || tool === 'roomPoly' || tool === 'measure' || tool === 'stairs' || tool === 'line' || tool === 'riser') ? (
                 <g>
                   <circle cx={cursor.p[0]} cy={cursor.p[1]} r={px(cursor.kind === 'end' ? 7 : 5)} className="svg-snap" strokeWidth={px(2)} />
                   {cursor.kind === 'on' ? <rect x={cursor.p[0] - px(4)} y={cursor.p[1] - px(4)} width={px(8)} height={px(8)} className="svg-snap" strokeWidth={px(1.5)} /> : null}
@@ -955,6 +1090,17 @@ function FloorEditor({ data, floor, floors }) {
               </Btn>
             </div>
           ) : null}
+          {chain && tool === 'line' ? (
+            <div className="plan-len">
+              <span className="dot" style={{ background: lineKind(lineOpts.kind).color }} />
+              <span>
+                {lineKind(lineOpts.kind).name} · {fmtFixed(lineLength({ pts: chain.pts }), 2)} m · Höhe {fmtFixed(zoneZ(lineOpts, floor), 2)} m
+              </span>
+              <Btn small kind="ghost" onClick={finishChain}>
+                Fertig
+              </Btn>
+            </div>
+          ) : null}
           {calib?.ask ? <CalibrationPrompt onApply={applyCalibration} onCancel={() => setCalib(null)} /> : null}
           <div className="plan-hint">{hints[tool]}</div>
           <div className="plan-zoom">
@@ -973,6 +1119,10 @@ function FloorEditor({ data, floor, floors }) {
           <RoomProps r={selRoom} floor={floor} mutate={mutate} onDelete={deleteSelection} focus={sel.focus} />
         ) : selItem ? (
           <StairProps it={selItem} mutate={mutate} onDelete={deleteSelection} />
+        ) : selLine ? (
+          <LineProps l={selLine} floor={floor} data={data} mutate={mutate} onDelete={deleteSelection} />
+        ) : tool === 'line' || tool === 'riser' ? (
+          <LineToolProps opts={lineOpts} setOpts={changeLineOpts} floor={floor} riser={tool === 'riser'} />
         ) : (
           <FloorProps
             floor={floor}
@@ -984,6 +1134,7 @@ function FloorEditor({ data, floor, floors }) {
             ortho={ortho}
             setOrtho={setOrtho}
             mutate={mutate}
+            lines={lines}
             ulUrl={ulUrl}
             onUpload={() => fileRef.current?.click()}
             onCalibrate={() => { setTool('underlay'); setCalib({ pts: [] }); }}
@@ -992,6 +1143,158 @@ function FloorEditor({ data, floor, floors }) {
         <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => { const f = e.target.files[0]; e.target.value = ''; if (f) uploadUnderlay(f); }} />
       </div>
     </>
+  );
+}
+
+function PlanLines({ lines, sel, px }) {
+  return (
+    <g>
+      {lines.map((l) => {
+        const k = lineKind(l.kind);
+        const isSel = sel?.kind === 'line' && sel.id === l.id;
+        const pp = linePlanPts(l);
+        const dash = l.status === 'geplant' ? `${px(7)} ${px(4)}` : l.status === 'stillgelegt' ? `${px(2)} ${px(4)}` : undefined;
+        // points where the line goes up or down
+        const vert = [];
+        for (let i = 1; i < (l.pts || []).length; i++) if (same(l.pts[i - 1], l.pts[i], 0.002) && Math.abs((l.pts[i][2] ?? 0) - (l.pts[i - 1][2] ?? 0)) > 0.005) vert.push(l.pts[i]);
+        return (
+          <g key={l.id} opacity={l.status === 'stillgelegt' ? 0.55 : 1}>
+            {isSel && pp.length > 1 ? <polyline points={ptsAttr(pp)} fill="none" stroke="var(--accent)" strokeOpacity="0.35" strokeWidth={px(10)} strokeLinecap="round" strokeLinejoin="round" /> : null}
+            {pp.length > 1 ? <polyline points={ptsAttr(pp)} fill="none" stroke={k.color} strokeWidth={px(isSel ? 3.6 : 2.8)} strokeLinecap="round" strokeLinejoin="round" strokeDasharray={dash} /> : null}
+            {l.riser ? (
+              <g>
+                <circle cx={pp[0][0]} cy={pp[0][1]} r={px(7)} fill="var(--surface)" stroke={k.color} strokeWidth={px(2.5)} />
+                <circle cx={pp[0][0]} cy={pp[0][1]} r={px(2.5)} fill={k.color} />
+              </g>
+            ) : null}
+            {vert.map((q, i) => (
+              <circle key={i} cx={q[0]} cy={q[1]} r={px(4)} fill="var(--surface)" stroke={k.color} strokeWidth={px(2)} />
+            ))}
+            {isSel ? pp.map((q, i) => <circle key={'h' + i} cx={q[0]} cy={q[1]} r={px(5.5)} className="svg-handle" strokeWidth={px(2)} />) : null}
+          </g>
+        );
+      })}
+    </g>
+  );
+}
+
+function LinePreview({ pts, cursor, kind, px }) {
+  const k = lineKind(kind);
+  const pp = linePlanPts({ pts });
+  const all = cursor ? [...pp, cursor] : pp;
+  return all.length > 1 ? <polyline points={ptsAttr(all)} fill="none" stroke={k.color} strokeWidth={px(2.8)} strokeLinecap="round" strokeLinejoin="round" strokeOpacity="0.8" /> : null;
+}
+
+function HeightPicker({ opts, setOpts, floor }) {
+  return (
+    <>
+      <Field label="Höhe über Fußboden">
+        <Select
+          value={opts.zone}
+          onChange={(v) => setOpts({ ...opts, zone: v, z: v === 'custom' ? zoneZ(opts, floor) : opts.z })}
+          options={[...LINE_ZONES.map((z) => ({ value: z.key, label: `${z.name} – ${fmtFixed(z.z(floor), 2)} m` })), { value: 'custom', label: 'Eigene Höhe' }]}
+        />
+      </Field>
+      {opts.zone === 'custom' ? (
+        <Field label="Eigene Höhe">
+          <NumInput value={opts.z} onChange={(v) => v != null && setOpts({ ...opts, z: v })} unit="m" digits={2} />
+        </Field>
+      ) : null}
+    </>
+  );
+}
+
+function KindSelect({ value, onChange }) {
+  return (
+    <div className="kind-grid" role="radiogroup" aria-label="Art der Leitung">
+      {LINE_KINDS.map((k) => (
+        <button key={k.key} role="radio" aria-checked={value === k.key} className={`kind-btn ${value === k.key ? 'is-on' : ''}`} onClick={() => onChange(k.key)}>
+          <span className="dot" style={{ background: k.color }} />
+          {k.name}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function LineToolProps({ opts, setOpts, floor, riser }) {
+  return (
+    <div className="stack">
+      <h4>{riser ? 'Neue Steigleitung' : 'Neue Leitung'}</h4>
+      <KindSelect value={opts.kind} onChange={(kind) => setOpts({ ...opts, kind, zone: riser ? opts.zone : defaultZone(kind) })} />
+      {!riser ? <HeightPicker opts={opts} setOpts={setOpts} floor={floor} /> : null}
+      <Field label="Zustand">
+        <Seg small value={opts.status} onChange={(v) => setOpts({ ...opts, status: v })} options={LINE_STATUS} />
+      </Field>
+      <p className="small muted">
+        {riser
+          ? 'Eine Steigleitung läuft vom Fußboden bis zur nächsten Etage. Zeichne die Fortsetzung in der Etage darüber an derselben Stelle.'
+          : 'Zeichne die Leitung dort, wo sie wirklich liegt – z. B. in der Wandachse. Im 3D-Modell blendest du sie über „Leitungen“ mit Röntgenblick ein. Tipp: Kabel liegen nach DIN 18015-3 waagerecht in Zonen 30 cm unter der Decke, 30 cm über dem Boden oder auf 1,15 m.'}
+      </p>
+    </div>
+  );
+}
+
+function LineProps({ l, floor, data, mutate, onDelete }) {
+  const set = (patch) => mutate((f) => ({ ...f, lines: (f.lines || []).map((x) => (x.id === l.id ? { ...x, ...patch } : x)) }), { refresh: false });
+  const k = lineKind(l.kind);
+  const zs = (l.pts || []).map((q) => q[2] ?? 0);
+  const zMin = Math.min(...zs),
+    zMax = Math.max(...zs);
+  const flat = zMax - zMin < 0.005;
+  const [zAll, setZAll] = useState(r3(zMin));
+  const setAllZ = (z) => {
+    // keep the shape: collapse vertical pieces, then put every point on the new height
+    const pp = linePlanPts(l).map((q) => [q[0], q[1], r3(z)]);
+    set({ pts: pp });
+  };
+  return (
+    <div className="stack">
+      <div className="spread">
+        <h4>
+          <span className="dot" style={{ background: k.color, marginRight: 6 }} />
+          {l.riser ? 'Steigleitung' : 'Leitung'}
+        </h4>
+        <ConfirmBtn onConfirm={onDelete}>{''}</ConfirmBtn>
+      </div>
+      <KindSelect value={l.kind} onChange={(kind) => set({ kind })} />
+      <Field label="Bezeichnung">
+        <TextInput id={'ln-label-' + l.id} value={l.label} onChange={(v) => set({ label: v })} placeholder={l.riser ? 'z. B. Fallrohr Bad' : 'z. B. Zuleitung Küche, NYM 5×2,5'} />
+      </Field>
+      <Field label="Zustand">
+        <Seg small value={l.status || 'bestand'} onChange={(v) => set({ status: v })} options={LINE_STATUS} />
+      </Field>
+      <div>
+        <div className="kv">
+          <span>Länge</span>
+          <b>{fmtFixed(lineLength(l), 2)} m</b>
+        </div>
+        <div className="kv">
+          <span>Höhe über Fußboden</span>
+          <b>{l.riser ? `0 – ${fmtFixed(zMax, 2)} m (ganze Etage)` : flat ? `${fmtFixed(zMin, 2)} m` : `${fmtFixed(zMin, 2)} – ${fmtFixed(zMax, 2)} m`}</b>
+        </div>
+      </div>
+      {!l.riser ? (
+        <Field label={flat ? 'Höhe ändern' : 'Alle Punkte auf eine Höhe setzen'}>
+          <div className="inline-form">
+            <NumInput value={zAll} onChange={(v) => v != null && setZAll(v)} unit="m" digits={2} />
+            <Btn small onClick={() => setAllZ(zAll)}>
+              Übernehmen
+            </Btn>
+          </div>
+        </Field>
+      ) : null}
+      <Field label="Notizen">
+        <TextInput multiline rows={3} value={l.notes} onChange={(v) => set({ notes: v })} placeholder="Querschnitt, Material, Absicherung, Baujahr …" />
+      </Field>
+      <div className="divider" />
+      <div className="spread">
+        <span className="field-label">Fotos ({Object.values(data.documents || {}).filter((d) => d.lineId === l.id).length})</span>
+        <UploadButton small lineId={l.id} label="Foto" accept="image/*" />
+      </div>
+      {Object.values(data.documents || {}).some((d) => d.lineId === l.id) ? <DocList data={data} filter={(d) => d.lineId === l.id} compact /> : null}
+      <p className="small muted">Fotografiere offene Wände, bevor sie geschlossen werden – so weißt du später genau, wo die Leitung verläuft.</p>
+    </div>
   );
 }
 
@@ -1138,6 +1441,11 @@ function WallProps({ w, mutate, onDelete, onSelectOpening }) {
         </Field>
       ) : null}
       <Toggle checked={w.ext} onChange={(v) => set({ ext: v })} label="Außenwand" />
+      {w.ext ? (
+        <Field label="Außenseite grenzt an" hint="Für den Heizlast-Check">
+          <Select value={w.adj || ''} onChange={(v) => set({ adj: v || undefined }, { refresh: false })} options={[{ value: '', label: 'Automatisch (aus Lageplan)' }, ...ADJ.map((a) => ({ value: a.key, label: a.name }))]} />
+        </Field>
+      ) : null}
       <Field label="Höhe" hint="Leer = Geschosshöhe">
         <NumInput value={w.h} onChange={(v) => set({ h: v }, { refresh: false })} unit="m" digits={2} />
       </Field>
@@ -1261,7 +1569,28 @@ function StairProps({ it, mutate, onDelete }) {
   );
 }
 
-function FloorProps({ floor, tool, defaults, setDefaults, grid, setGrid, ortho, setOrtho, mutate, ulUrl, onUpload, onCalibrate }) {
+function LineSummary({ lines }) {
+  if (!lines.length) return null;
+  const by = new Map();
+  for (const l of lines) by.set(l.kind, (by.get(l.kind) || 0) + lineLength(l));
+  return (
+    <>
+      <div className="divider" />
+      <h4>Leitungen in dieser Etage</h4>
+      <ul className="legend-list">
+        {LINE_KINDS.filter((k) => by.has(k.key)).map((k) => (
+          <li key={k.key}>
+            <span className="dot" style={{ background: k.color }} />
+            <span>{k.name}</span>
+            <b>{fmtFixed(by.get(k.key), 1)} m</b>
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
+
+function FloorProps({ floor, tool, defaults, setDefaults, grid, setGrid, ortho, setOrtho, mutate, ulUrl, onUpload, onCalibrate, lines = [] }) {
   const set = (patch) => mutate((f) => ({ ...f, ...patch }), { refresh: false });
   const ul = floor.underlay;
   return (
@@ -1297,6 +1626,7 @@ function FloorProps({ floor, tool, defaults, setDefaults, grid, setGrid, ortho, 
         </Field>
       </div>
       <Toggle checked={!!floor.underRoof} onChange={(v) => set({ underRoof: v, kneeWall: v ? floor.kneeWall ?? 1.0 : floor.kneeWall })} label="Dachgeschoss (Wände unter Dachschräge)" />
+      <LineSummary lines={lines} />
       <div className="divider" />
       <h4>Raster & Fang</h4>
       <Field label="Raster">
