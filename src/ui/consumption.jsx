@@ -1,6 +1,7 @@
 import { Icon } from './icons.jsx';
 import { Btn, IconBtn, Field, NumInput, Select, DateInput, TextInput, Pill, Sheet, Empty, Seg, ConfirmBtn } from './common.jsx';
 import { AiRunner } from './ai-ui.jsx';
+import { AiVerdict } from './econ.jsx';
 import { go, toast } from './state.js';
 import { MEDIA, medium, ENERGY_CLASSES, energyClass } from '../catalog.js';
 import { consumptionByYear, heatingIndex, buildingStats, toKwh } from '../metrics.js';
@@ -217,6 +218,7 @@ export function ConsumptionSheet({ data }) {
                         {t.effort ? <Pill>{t.effort === 'gering' ? 'wenig Aufwand' : t.effort === 'mittel' ? 'mittlerer Aufwand' : 'großer Aufwand'}</Pill> : null}
                       </div>
                       {t.saving ? <p>Ersparnis: {t.saving}</p> : null}
+                      <AiVerdict verdict={t.verdict} payback={t.payback} cost={t.cost} />
                     </li>
                   ))}
                 </ul>

@@ -270,6 +270,7 @@ export async function aiRoadmap(d, opts) {
   const prompt = `Du bist Energieberater und erstellst für ein frisch gekauftes Bestandsgebäude einen Sanierungsfahrplan (ähnlich iSFP) für die nächsten 2–6 Jahre.
 Aufgabe: Leite aus Baujahr, Bauteilen (Alter vs. Nutzungsdauer, Zustand), Verbrauch und bestehenden Projekten die sinnvollen Maßnahmen ab. Ordne sie technisch sinnvoll (Hülle vor Heizungsauslegung, Elektrik vor PV/Wärmepumpe, Dach vor PV, Gerüst gemeinsam nutzen), berücksichtige Nachrüstpflichten nach dem Kauf, Förderfristen (z. B. sinkender Klimabonus) und Jahreszeiten.
 Bestehende Projekte nicht doppelt vorschlagen; verweise stattdessen über existingProjectId.
+Wirtschaftlichkeit: Schätze für jede Maßnahme die Amortisationszeit (Netto-Investition nach Förderung ÷ jährliche Ersparnis, Energiepreise +3 %/a) und vergleiche sie mit der Lebensdauer (Dämmung ca. 40 Jahre, Fenster 30, Wärmepumpe 20, PV 25, Speicher 15, Elektrik 40). verdict: "wirtschaftlich" wenn die Amortisation höchstens die halbe Lebensdauer beträgt, "grenzwertig" bis zur Lebensdauer, sonst "unwirtschaftlich"; bei Pflichtmaßnahmen, Sicherheit oder ohnehin fälligem Ersatz "notwendig". Sowieso-Kosten (z. B. Putz muss ohnehin erneuert werden) mindern die Investition.
 
 WISSENSBASIS
 ${FUNDING_KNOWLEDGE}
@@ -279,7 +280,7 @@ ${houseContext(d)}
 
 ${JSON_RULES}
 Format:
-{"summary":"Fazit in 3 Sätzen","measures":[{"key":"m1","title":"Maßnahme","kind":"${kinds}","priority":1,"start":"YYYY-MM-DD","end":"YYYY-MM-DD","costLow":10000,"costHigh":15000,"fundingHint":"Passende Förderung + Antragszeitpunkt","dependsOn":["m0"],"reason":"Warum und warum jetzt","existingProjectId":null}]}`;
+{"summary":"Fazit in 3 Sätzen","measures":[{"key":"m1","title":"Maßnahme","kind":"${kinds}","priority":1,"start":"YYYY-MM-DD","end":"YYYY-MM-DD","costLow":10000,"costHigh":15000,"fundingHint":"Passende Förderung + Antragszeitpunkt","saving":"z. B. 600–900 €/Jahr oder null","payback":"z. B. 12–16 Jahre oder null","verdict":"wirtschaftlich|grenzwertig|unwirtschaftlich|notwendig","dependsOn":["m0"],"reason":"Warum und warum jetzt","existingProjectId":null}]}`;
   return askJSON(prompt, { tier: 'complex', ...opts });
 }
 
@@ -299,14 +300,15 @@ Format:
 }
 
 export async function aiConsumption(d, opts) {
-  const prompt = `Du bist Energieberater. Analysiere die Verbrauchswerte des Hauses im Verhältnis zu Wohnfläche, Baujahr, Bauteilen und Haushaltsgröße. Vergleiche mit typischen Werten, nenne Auffälligkeiten und konkrete Einsparmaßnahmen mit grober Ersparnis pro Jahr.
+  const prompt = `Du bist Energieberater. Analysiere die Verbrauchswerte des Hauses im Verhältnis zu Wohnfläche, Baujahr, Bauteilen und Haushaltsgröße. Vergleiche mit typischen Werten, nenne Auffälligkeiten und konkrete Einsparmaßnahmen mit grober Ersparnis pro Jahr, Kosten und Amortisation.
+Wirtschaftlichkeit: Schätze für jede Maßnahme die Amortisationszeit (Netto-Investition nach Förderung ÷ jährliche Ersparnis, Energiepreise +3 %/a) und vergleiche sie mit der Lebensdauer (Dämmung ca. 40 Jahre, Fenster 30, Wärmepumpe 20, PV 25, Speicher 15, Elektrik 40). verdict: "wirtschaftlich" wenn die Amortisation höchstens die halbe Lebensdauer beträgt, "grenzwertig" bis zur Lebensdauer, sonst "unwirtschaftlich"; bei Pflichtmaßnahmen, Sicherheit oder ohnehin fälligem Ersatz "notwendig". Sowieso-Kosten (z. B. Putz muss ohnehin erneuert werden) mindern die Investition.
 
 HAUS
 ${houseContext(d)}
 
 ${JSON_RULES}
 Format:
-{"summary":"Fazit","benchmark":"Einordnung gegenüber Vergleichswerten","findings":["Auffälligkeit"],"tips":[{"title":"Maßnahme","saving":"z. B. 300–500 €/Jahr","effort":"gering|mittel|hoch"}]}`;
+{"summary":"Fazit","benchmark":"Einordnung gegenüber Vergleichswerten","findings":["Auffälligkeit"],"tips":[{"title":"Maßnahme","saving":"z. B. 300–500 €/Jahr","effort":"gering|mittel|hoch","cost":"z. B. 2.000–3.000 € oder 0","payback":"z. B. 5–7 Jahre oder sofort","verdict":"wirtschaftlich|grenzwertig|unwirtschaftlich"}]}`;
   return askJSON(prompt, opts);
 }
 
@@ -316,6 +318,7 @@ export async function aiHeat(d, res, after, measures, opts) {
   const rows = res.surfaces.map((x) => `- ${x.label}: ${f1(x.area)} m², U ${fmtNum(x.u, 2)} W/m²K, Faktor ${fmtNum(x.b, 2)} → ${fmtNum(x.H * res.dT, 0)} W`).join('\n');
   const prompt = `Du bist unabhängiger Energieberater (Gebäudeenergieberater, BAFA-gelistet) für private Wohngebäude in Deutschland.
 Ordne die vereinfachte Heizlast-Schätzung aus dem 3D-Modell der App ein und berate zur geplanten Wärmepumpe. Sei konkret, nenne Zahlen und weise auf Unsicherheiten hin. Ersetzt keine Heizlastberechnung nach DIN EN 12831 – sag, wann eine nötig ist (für die Förderung ist sie Pflicht).
+Wirtschaftlichkeit: Schätze für jede Maßnahme die Amortisationszeit (Netto-Investition nach Förderung ÷ jährliche Ersparnis, Energiepreise +3 %/a) und vergleiche sie mit der Lebensdauer (Dämmung ca. 40 Jahre, Fenster 30, Wärmepumpe 20, PV 25, Speicher 15, Elektrik 40). verdict: "wirtschaftlich" wenn die Amortisation höchstens die halbe Lebensdauer beträgt, "grenzwertig" bis zur Lebensdauer, sonst "unwirtschaftlich"; bei Pflichtmaßnahmen, Sicherheit oder ohnehin fälligem Ersatz "notwendig". Sowieso-Kosten (z. B. Putz muss ohnehin erneuert werden) mindern die Investition.
 
 WISSENSBASIS FÖRDERUNG
 ${FUNDING_KNOWLEDGE}
@@ -338,7 +341,7 @@ ${measures.length ? `Ausgewählte Maßnahmen: ${measures.map((m) => m.label).joi
 
 ${JSON_RULES}
 Format:
-{"summary":"Fazit in 2–3 Sätzen","plausibility":"Wie belastbar ist die Schätzung, was ist unsicher (z. B. U-Werte, Fachwerk)","hpFit":{"verdict":"gut|bedingt|kritisch","reason":"Eignung für eine Luft-Wasser-Wärmepumpe, Vorlauftemperatur, Heizkörper"},"sizing":"Empfohlene Leistung und warum (inkl. Warmwasser, Sperrzeiten, Bivalenz)","steps":[{"title":"Schritt","why":"Begründung","when":"vor/mit/nach Wärmepumpe"}],"funding":[{"program":"Programm","amount":"Betrag oder Quote","note":"Bedingung, z. B. Antrag vor Auftrag"}],"warnings":["Hinweis"]}`;
+{"summary":"Fazit in 2–3 Sätzen","plausibility":"Wie belastbar ist die Schätzung, was ist unsicher (z. B. U-Werte, Fachwerk)","hpFit":{"verdict":"gut|bedingt|kritisch","reason":"Eignung für eine Luft-Wasser-Wärmepumpe, Vorlauftemperatur, Heizkörper"},"sizing":"Empfohlene Leistung und warum (inkl. Warmwasser, Sperrzeiten, Bivalenz)","steps":[{"title":"Schritt","why":"Begründung","when":"vor/mit/nach Wärmepumpe","payback":"z. B. 15–20 Jahre oder null","verdict":"wirtschaftlich|grenzwertig|unwirtschaftlich|notwendig"}],"funding":[{"program":"Programm","amount":"Betrag oder Quote","note":"Bedingung, z. B. Antrag vor Auftrag"}],"warnings":["Hinweis"]}`;
   return askJSON(prompt, { tier: 'complex', ...opts });
 }
 

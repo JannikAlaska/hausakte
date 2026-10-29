@@ -368,9 +368,9 @@ function FloorEditor({ data, floor, floors }) {
   const [grid, setGrid] = useState(0.05);
   const [ortho, setOrtho] = useState(true);
   const [calib, setCalib] = useState(null); // {pts:[]}
-  const [lineOpts, setLineOpts] = useState({ kind: 'strom', zone: 'unten', z: 0.3, status: 'bestand' });
+  const [lineOpts, setLineOpts] = useState({ kind: 'strom', zone: 'unten', z: 0.3, status: 'bestand', rFrom: 0, rTo: null });
   const ui = useUI();
-  const showLines = ui.showLines !== false || tool === 'line' || tool === 'riser';
+  const showLines = ui.planLines !== false || tool === 'line' || tool === 'riser';
   const hist = useRef({ undo: [], redo: [] });
   const floorRef = useRef(floor);
   floorRef.current = floor;
@@ -520,7 +520,9 @@ function FloorEditor({ data, floor, floors }) {
     if (tool === 'riser') {
       const sp = snapPoint(p, snapOpts()).p;
       const id = uid('l');
-      mutate((f) => ({ ...f, lines: [...(f.lines || []), { id, kind: lineOpts.kind, status: lineOpts.status, riser: true, pts: [[r3(sp[0]), r3(sp[1]), 0], [r3(sp[0]), r3(sp[1]), r3(f.height)]], label: '', notes: '' }] }), { refresh: false });
+      const z0 = lineOpts.rFrom ?? 0,
+        z1 = lineOpts.rTo ?? floor.height;
+      mutate((f) => ({ ...f, lines: [...(f.lines || []), { id, kind: lineOpts.kind, status: lineOpts.status, riser: true, pts: [[r3(sp[0]), r3(sp[1]), r3(Math.min(z0, z1))], [r3(sp[0]), r3(sp[1]), r3(Math.max(z0, z1))]], label: '', notes: '' }] }), { refresh: false });
       setSel({ kind: 'line', id });
       setTool('select');
       return;
@@ -885,7 +887,7 @@ function FloorEditor({ data, floor, floors }) {
     stairs: 'Rechteck aufziehen. Richtung danach rechts einstellen.',
     measure: 'Zwei Punkte klicken, um den Abstand zu messen.',
     line: chain ? 'Weiter klicken für den nächsten Punkt · Höhe rechts ändern = senkrechtes Stück · Enter oder Doppelklick beendet' : 'Startpunkt der Leitung klicken. Punkte rasten an Wänden ein. Art und Höhe stellst du rechts ein.',
-    riser: 'Klicke die Stelle, an der die Leitung senkrecht durch die Etage läuft (z. B. Steigleitung, Fallrohr).',
+    riser: 'Klicke die Stelle, an der die Leitung senkrecht verläuft (z. B. Steigleitung, Fallrohr). Von- und Bis-Höhe stellst du rechts ein.',
     underlay: calib ? (calib.pts.length ? 'Jetzt den zweiten Punkt klicken.' : 'Ersten Punkt einer bekannten Strecke auf dem Plan klicken (z. B. Außenmaß).') : 'Plan ziehen verschiebt ihn. Maßstab über „Kalibrieren“ festlegen.',
   };
 
@@ -902,7 +904,7 @@ function FloorEditor({ data, floor, floors }) {
               setMeasure(null);
               setCalib(null);
               setCursor(null);
-              if (t === 'line' || t === 'riser') setUI({ showLines: true });
+              if (t === 'line' || t === 'riser') setUI({ planLines: true });
             }}
             options={[
               { value: 'select', icon: 'cursor', title: 'Auswählen' },
@@ -920,7 +922,7 @@ function FloorEditor({ data, floor, floors }) {
             ]}
           />
           <span style={{ flex: 1 }} />
-          <IconBtn icon={showLines ? 'eye' : 'eyeOff'} label={showLines ? 'Leitungen ausblenden' : 'Leitungen einblenden'} active={showLines && lines.length > 0} onClick={() => setUI({ showLines: !showLines })} />
+          <IconBtn icon={showLines ? 'eye' : 'eyeOff'} label={showLines ? 'Leitungen ausblenden' : 'Leitungen einblenden'} active={showLines && lines.length > 0} onClick={() => setUI({ planLines: !showLines })} />
           <IconBtn icon="undo" label="Rückgängig (Strg+Z)" onClick={undo} disabled={!hist.current.undo.length} />
           <IconBtn icon="redo" label="Wiederholen (Strg+Y)" onClick={redo} disabled={!hist.current.redo.length} />
         </div>
@@ -1039,6 +1041,7 @@ function FloorEditor({ data, floor, floors }) {
                   </g>
                 );
               })}
+              {showLines ? <PassingRisers floor={floor} floors={floors} px={px} /> : null}
               {showLines ? <PlanLines lines={lines} sel={sel} px={px} /> : null}
               {chain && tool === 'line' ? <LinePreview pts={chain.pts} cursor={cursor?.p} kind={lineOpts.kind} px={px} /> : null}
               {selWall ? <WallDims w={selWall} px={px} /> : null}
@@ -1120,9 +1123,9 @@ function FloorEditor({ data, floor, floors }) {
         ) : selItem ? (
           <StairProps it={selItem} mutate={mutate} onDelete={deleteSelection} />
         ) : selLine ? (
-          <LineProps l={selLine} floor={floor} data={data} mutate={mutate} onDelete={deleteSelection} />
+          <LineProps l={selLine} floor={floor} floors={floors} data={data} mutate={mutate} onDelete={deleteSelection} />
         ) : tool === 'line' || tool === 'riser' ? (
-          <LineToolProps opts={lineOpts} setOpts={changeLineOpts} floor={floor} riser={tool === 'riser'} />
+          <LineToolProps opts={lineOpts} setOpts={changeLineOpts} floor={floor} floors={floors} riser={tool === 'riser'} />
         ) : (
           <FloorProps
             floor={floor}
@@ -1178,6 +1181,71 @@ function PlanLines({ lines, sel, px }) {
   );
 }
 
+// risers drawn on other floors that run through this one
+function PassingRisers({ floor, floors, px }) {
+  const lo = floor.elevation,
+    hi = floor.elevation + floor.height;
+  const items = [];
+  for (const f of floors) {
+    if (f.id === floor.id) continue;
+    for (const l of f.lines || []) {
+      if (!l.riser || !(l.pts || []).length) continue;
+      const zs = l.pts.map((q) => f.elevation + (q[2] ?? 0));
+      if (Math.min(hi, Math.max(...zs)) - Math.max(lo, Math.min(...zs)) > 0.05) items.push({ l, f });
+    }
+  }
+  return (
+    <g>
+      {items.map(({ l, f }) => {
+        const k = lineKind(l.kind);
+        const q = l.pts[0];
+        return (
+          <g key={l.id}>
+            <title>{`${l.label || k.name} – Steigleitung aus ${f.name}`}</title>
+            <circle cx={q[0]} cy={q[1]} r={px(7)} fill="none" stroke={k.color} strokeWidth={px(2)} strokeDasharray={`${px(3)} ${px(2.5)}`} />
+            <circle cx={q[0]} cy={q[1]} r={px(2)} fill={k.color} opacity="0.7" />
+          </g>
+        );
+      })}
+    </g>
+  );
+}
+
+// From/to heights of a riser, relative to the floor of this storey (negative = below, above the storey height = upper floors)
+function RiserHeights({ from, to, floor, floors, onChange }) {
+  const fl = [...floors].sort((a, b) => a.elevation - b.elevation);
+  const top = fl[fl.length - 1],
+    low = fl[0];
+  const presets = [
+    { label: 'Diese Etage', v: [0, floor.height] },
+    { label: 'Bis oben', v: [0, r3(top.elevation + top.height - floor.elevation)] },
+    { label: 'Ab Keller', v: [r3(low.elevation - floor.elevation), floor.height] },
+  ].filter((p, i, arr) => arr.findIndex((x) => x.v[0] === p.v[0] && x.v[1] === p.v[1]) === i);
+  const abs = (z) => `${z + floor.elevation >= 0 ? '+' : '−'}${fmtFixed(Math.abs(z + floor.elevation), 2)} m`;
+  return (
+    <>
+      <div className="grid2">
+        <Field label="Von (über Fußboden)">
+          <NumInput value={from} onChange={(v) => v != null && onChange(v, to)} unit="m" digits={2} />
+        </Field>
+        <Field label="Bis (über Fußboden)">
+          <NumInput value={to} onChange={(v) => v != null && onChange(from, v)} unit="m" digits={2} />
+        </Field>
+      </div>
+      <div className="chips">
+        {presets.map((p) => (
+          <button key={p.label} className={`chip ${from === p.v[0] && to === p.v[1] ? 'is-on' : ''}`} onClick={() => onChange(p.v[0], p.v[1])}>
+            {p.label}
+          </button>
+        ))}
+      </div>
+      <p className="small muted">
+        Bezogen auf den EG-Fußboden: {abs(Math.min(from, to))} bis {abs(Math.max(from, to))}. Negative Werte führen nach unten, Werte über der Geschosshöhe ({fmtFixed(floor.height, 2)} m) in die Etagen darüber.
+      </p>
+    </>
+  );
+}
+
 function LinePreview({ pts, cursor, kind, px }) {
   const k = lineKind(kind);
   const pp = linePlanPts({ pts });
@@ -1217,25 +1285,25 @@ function KindSelect({ value, onChange }) {
   );
 }
 
-function LineToolProps({ opts, setOpts, floor, riser }) {
+function LineToolProps({ opts, setOpts, floor, floors, riser }) {
   return (
     <div className="stack">
       <h4>{riser ? 'Neue Steigleitung' : 'Neue Leitung'}</h4>
       <KindSelect value={opts.kind} onChange={(kind) => setOpts({ ...opts, kind, zone: riser ? opts.zone : defaultZone(kind) })} />
-      {!riser ? <HeightPicker opts={opts} setOpts={setOpts} floor={floor} /> : null}
+      {!riser ? <HeightPicker opts={opts} setOpts={setOpts} floor={floor} /> : <RiserHeights from={opts.rFrom ?? 0} to={opts.rTo ?? floor.height} floor={floor} floors={floors} onChange={(a, b) => setOpts({ ...opts, rFrom: a, rTo: b })} />}
       <Field label="Zustand">
         <Seg small value={opts.status} onChange={(v) => setOpts({ ...opts, status: v })} options={LINE_STATUS} />
       </Field>
       <p className="small muted">
         {riser
-          ? 'Eine Steigleitung läuft vom Fußboden bis zur nächsten Etage. Zeichne die Fortsetzung in der Etage darüber an derselben Stelle.'
+          ? 'Eine Steigleitung läuft senkrecht – auch über mehrere Etagen. In den anderen Etagen erscheint sie im Grundriss als gestrichelter Kreis.'
           : 'Zeichne die Leitung dort, wo sie wirklich liegt – z. B. in der Wandachse. Im 3D-Modell blendest du sie über „Leitungen“ mit Röntgenblick ein. Tipp: Kabel liegen nach DIN 18015-3 waagerecht in Zonen 30 cm unter der Decke, 30 cm über dem Boden oder auf 1,15 m.'}
       </p>
     </div>
   );
 }
 
-function LineProps({ l, floor, data, mutate, onDelete }) {
+function LineProps({ l, floor, floors, data, mutate, onDelete }) {
   const set = (patch) => mutate((f) => ({ ...f, lines: (f.lines || []).map((x) => (x.id === l.id ? { ...x, ...patch } : x)) }), { refresh: false });
   const k = lineKind(l.kind);
   const zs = (l.pts || []).map((q) => q[2] ?? 0);
@@ -1271,9 +1339,21 @@ function LineProps({ l, floor, data, mutate, onDelete }) {
         </div>
         <div className="kv">
           <span>Höhe über Fußboden</span>
-          <b>{l.riser ? `0 – ${fmtFixed(zMax, 2)} m (ganze Etage)` : flat ? `${fmtFixed(zMin, 2)} m` : `${fmtFixed(zMin, 2)} – ${fmtFixed(zMax, 2)} m`}</b>
+          <b>{flat ? `${fmtFixed(zMin, 2)} m` : `${fmtFixed(zMin, 2)} – ${fmtFixed(zMax, 2)} m`}</b>
         </div>
       </div>
+      {l.riser ? (
+        <RiserHeights
+          from={r3(zMin)}
+          to={r3(zMax)}
+          floor={floor}
+          floors={floors}
+          onChange={(a, b) => {
+            const q = l.pts[0];
+            set({ pts: [[q[0], q[1], r3(Math.min(a, b))], [q[0], q[1], r3(Math.max(a, b))]] });
+          }}
+        />
+      ) : null}
       {!l.riser ? (
         <Field label={flat ? 'Höhe ändern' : 'Alle Punkte auf eine Höhe setzen'}>
           <div className="inline-form">

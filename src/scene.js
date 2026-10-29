@@ -680,6 +680,8 @@ export class HouseScene {
         mats.forEach((m) => {
           m.userData.shared = false;
           m.clippingPlanes = planes.map((p) => p.plane);
+          // without this the uncut slab casts a large shadow onto the roof
+          m.clipShadows = true;
         });
         slab.material = mats;
         entry.clipPlanes = planes;

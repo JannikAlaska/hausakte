@@ -6,7 +6,9 @@ import { AiRunner } from './ai-ui.jsx';
 import { setUI, go } from './state.js';
 import { updateHouse } from '../store.js';
 import { heatResult, heatMeasures, applyMeasures, EMITTERS, HEAT_DEFAULTS, isHeatedFloor } from '../heat.js';
-import { sortFloors } from '../metrics.js';
+import { sortFloors, projectCost } from '../metrics.js';
+import { economics, kfw458, LIFE, PRICE_RISE } from '../econ.js';
+import { EconLine, AiVerdict } from './econ.jsx';
 import { aiHeat } from '../ai.js';
 import { fmtNum, fmtFixed, fmtEuro } from '../util.js';
 
@@ -68,7 +70,7 @@ export function HeatCheck({ data }) {
       Object.fromEntries(
         all.map((m) => {
           const r = applyMeasures(h, Object.values(data.floors), data.components, data.readings, [m.key]).after;
-          return [m.key, { dKw: base.loadKw - r.loadKw, dCost: base.hp.cost - r.hp.cost }];
+          return [m.key, { dKw: base.loadKw - r.loadKw, dCost: base.hp.cost - r.hp.cost, dOil: base.oil.cost - r.oil.cost }];
         }),
       ),
     [all, base],
@@ -82,6 +84,13 @@ export function HeatCheck({ data }) {
   };
   const cfg = base.cfg;
   const has = measures.length > 0;
+  // economics settings
+  const fund = heat.fundEnvelope ?? 0.2;
+  const rise = heat.priceRise ?? PRICE_RISE;
+  const lifeOf = (m) => (m.key === 'fenster' ? LIFE.fenster : LIFE.daemmung);
+  const econOf = (m, saving) => economics({ invest: m.cost, funding: m.cost * fund, saving, life: lifeOf(m), rise });
+  const sumCost = measures.reduce((a, m) => a + m.cost, 0);
+  const eAll = has ? economics({ invest: sumCost, funding: sumCost * fund, saving: base.hp.cost - after.hp.cost, life: Math.min(...measures.map(lifeOf)), rise }) : null;
   if (!base.heated.length)
     return (
       <div className="callout">
@@ -146,14 +155,21 @@ export function HeatCheck({ data }) {
         {all.length ? (
           <ul className="measure-list">
             {all.map((m) => {
-              const d = singles[m.key] || { dKw: 0, dCost: 0 };
+              const d = singles[m.key] || { dKw: 0, dCost: 0, dOil: 0 };
+              const e = econOf(m, d.dCost);
+              const wallHint = m.key.startsWith('wall:') && e.verdict !== 'gut' ? 'rechnet sich meist nur zusammen mit ohnehin nötigen Fassadenarbeiten (Gerüst, Putz) – dann zählen nur die Mehrkosten' : null;
               return (
                 <li key={m.key} className={selected.includes(m.key) ? 'is-on' : ''}>
-                  <Toggle checked={selected.includes(m.key)} onChange={() => toggle(m.key)} label={m.label} />
-                  <span className="measure-fig">
-                    <b>− {kw(d.dKw)}</b>
-                    <small>− {fmtEuro(d.dCost)}/a mit WP · grob {fmtEuro(Math.round(m.cost / 500) * 500)}</small>
-                  </span>
+                  <div className="measure-row">
+                    <Toggle checked={selected.includes(m.key)} onChange={() => toggle(m.key)} label={m.label} />
+                    <span className="measure-fig">
+                      <b>− {kw(d.dKw)}</b>
+                      <small>
+                        − {fmtEuro(d.dCost)}/a mit WP (mit Öl − {fmtEuro(d.dOil)}/a) · grob {fmtEuro(Math.round(m.cost / 500) * 500)}, nach Förderung {fmtEuro(Math.round(e.net / 500) * 500)}
+                      </small>
+                    </span>
+                  </div>
+                  <EconLine e={e} hint={wallHint} />
                 </li>
               );
             })}
@@ -172,12 +188,17 @@ export function HeatCheck({ data }) {
               ) : (
                 <>Die Wärmepumpe bleibt bei ca. {after.hpSize} kW,</>
               )}{' '}
-              die Heizkosten sinken um ca. {fmtEuro(base.hp.cost - after.hp.cost)} pro Jahr. Kosten der Maßnahmen grob {fmtEuro(Math.round(measures.reduce((s, m) => s + m.cost, 0) / 1000) * 1000)} vor Förderung.
+              die Heizkosten sinken um ca. {fmtEuro(base.hp.cost - after.hp.cost)} pro Jahr. Kosten der Maßnahmen grob {fmtEuro(Math.round(sumCost / 1000) * 1000)}, nach Förderung {fmtEuro(Math.round(eAll.net / 1000) * 1000)}.
+              <EconLine e={eAll} />
             </span>
           </div>
         ) : null}
-        <p className="small muted" style={{ marginTop: 8 }}>Kosten sind grobe Richtwerte (Material + Handwerker), ohne Förderung. Gedämmte Flächen senken auch die nötige Vorlauftemperatur – das verbessert die Effizienz der Wärmepumpe zusätzlich.</p>
+        <p className="small muted" style={{ marginTop: 8 }}>
+          Kosten sind grobe Richtwerte (Material + Handwerker). Förderung: {fund ? `${fmtNum(fund * 100, 0)} % (${fund >= 0.2 ? 'Steuerbonus § 35c, oft günstiger als 15 % BAFA' : 'BAFA BEG EM'})` : 'keine'}. Energiepreise steigen mit {fmtNum(rise * 100, 1)} % pro Jahr. Wirtschaftlich heißt: amortisiert sich in weniger als der halben Lebensdauer. Nicht eingerechnet sind Komfort, Werterhalt und eine kleinere Wärmepumpe.
+        </p>
       </div>
+
+      <HpEconomics data={data} base={has ? after : base} heat={heat} rise={rise} />
 
       <div className="panel">
         <div className="panel-head">
@@ -254,6 +275,15 @@ export function HeatCheck({ data }) {
           <Field label="Wärmepumpen-Strom">
             <NumInput value={cfg.priceHp} onChange={(v) => v > 0 && setHeat({ priceHp: v })} unit="€/kWh" digits={2} />
           </Field>
+          <Field label="Förderung Dämmung & Fenster">
+            <Select value={String(fund)} onChange={(v) => setHeat({ fundEnvelope: Number(v) })} options={[{ value: '0.2', label: '20 % Steuerbonus (§ 35c)' }, { value: '0.15', label: '15 % BAFA-Zuschuss' }, { value: '0', label: 'keine' }]} />
+          </Field>
+          <Field label="KfW-Einkommensbonus" hint="zu versteuerndes Einkommen bis 40.000 €">
+            <Select value={String(heat.incomeBonus ?? 0)} onChange={(v) => setHeat({ incomeBonus: Number(v) })} options={[{ value: '0', label: 'keiner' }, { value: '0.1', label: '10 %' }, { value: '0.3', label: '30 %' }, { value: '0.4', label: '40 %' }]} />
+          </Field>
+          <Field label="Preissteigerung Energie">
+            <NumInput value={rise * 100} onChange={(v) => v != null && setHeat({ priceRise: v / 100 })} unit="%/a" digits={1} />
+          </Field>
         </div>
         <div className="divider" />
         <span className="field-label">Beheizte Etagen</span>
@@ -283,6 +313,60 @@ export function HeatCheck({ data }) {
   );
 }
 
+// Does the heat pump pay off? Against keeping the old boiler and against a new oil boiler.
+const OIL_BOILER = 12000;
+function hpEconomics(data, base, heat, rise) {
+  const proj = Object.values(data.projects || {}).find((p) => p.kind === 'heizung');
+  const planned = proj ? projectCost(proj).best : 0;
+  const invest = planned || 12000 + 1600 * base.hpSize;
+  const grant = kfw458(invest, { replaceFossil: true, incomeBonus: heat.incomeBonus ?? 0, efficiency: !!heat.efficiencyBonus });
+  const riseOil = rise + 0.01, // includes the rising CO₂ price
+    risePower = Math.max(0, rise - 0.01);
+  const saving = (y) => base.oil.cost * Math.pow(1 + riseOil, y - 1) - base.hp.cost * Math.pow(1 + risePower, y - 1) + 100;
+  const eKeep = economics({ invest, funding: grant.amount, saving, life: LIFE.waermepumpe });
+  const eNew = economics({ invest: Math.max(0, invest - grant.amount), funding: OIL_BOILER, saving, life: LIFE.waermepumpe });
+  return { planned, invest, grant, riseOil, risePower, saving, eKeep, eNew };
+}
+
+function HpEconomics({ data, base, heat, rise }) {
+  const { planned, invest, grant, riseOil, risePower, saving, eKeep, eNew } = hpEconomics(data, base, heat, rise);
+  const oilBoiler = OIL_BOILER;
+  let oil20 = oilBoiler,
+    hp20 = invest - grant.amount;
+  for (let y = 1; y <= 20; y++) {
+    oil20 += base.oil.cost * Math.pow(1 + riseOil, y - 1);
+    hp20 += base.hp.cost * Math.pow(1 + risePower, y - 1) - 100;
+  }
+  return (
+    <div className="panel">
+      <div className="panel-head">
+        <h3>Lohnt sich die Wärmepumpe?</h3>
+      </div>
+      <div>
+        <div className="kv"><span>Investition {planned ? '(aus deinem Heizungsprojekt)' : '(Schätzung)'}</span><b>{fmtEuro(invest)}</b></div>
+        <div className="kv"><span>KfW-Zuschuss 458 ({fmtNum(grant.rate * 100, 0)} % von max. 28.000 €)</span><b>− {fmtEuro(grant.amount)}</b></div>
+        <div className="kv"><span>Eigenanteil</span><b>{fmtEuro(invest - grant.amount)}</b></div>
+        <div className="kv"><span>Ersparnis im 1. Jahr gegenüber Öl</span><b>{fmtEuro(saving(1))}</b></div>
+        <div className="kv"><span>Kosten über 20 Jahre: neuer Ölkessel + Öl</span><b>{fmtEuro(Math.round(oil20 / 1000) * 1000)}</b></div>
+        <div className="kv"><span>Kosten über 20 Jahre: Wärmepumpe + Strom</span><b>{fmtEuro(Math.round(hp20 / 1000) * 1000)}</b></div>
+      </div>
+      <div className="stack" style={{ gap: 6, marginTop: 10 }}>
+        <div>
+          <span className="field-label">Statt alten Kessel weiter zu betreiben</span>
+          <EconLine e={eKeep} />
+        </div>
+        <div>
+          <span className="field-label">Statt eines neuen Ölkessels (ca. {fmtEuro(oilBoiler)})</span>
+          <EconLine e={eNew} />
+        </div>
+      </div>
+      <p className="small muted" style={{ marginTop: 8 }}>
+        Der Ölkessel von 1992 muss nach dem Eigentümerwechsel womöglich ohnehin ersetzt werden (Austauschpflicht prüfen) – dann ist der Vergleich mit einem neuen Ölkessel der richtige. Annahmen: Öl +{fmtNum(riseOil * 100, 1)} %/a (inkl. CO₂-Preis), Strom +{fmtNum(risePower * 100, 1)} %/a, Wartung Wärmepumpe 100 €/a günstiger. Neue Ölheizungen brauchen ab 2029 steigende Bio-Anteile, das verteuert Öl zusätzlich.
+      </p>
+    </div>
+  );
+}
+
 function HeatAi({ r }) {
   const tone = { gut: 'accent', bedingt: 'warn', kritisch: 'danger' }[r.hpFit?.verdict] || 'neutral';
   return (
@@ -305,6 +389,7 @@ function HeatAi({ r }) {
                 {s.when ? <Pill>{s.when}</Pill> : null}
               </div>
               <span className="small">{s.why}</span>
+              <AiVerdict verdict={s.verdict} payback={s.payback} />
             </li>
           ))}
         </ul>
@@ -335,11 +420,13 @@ function HeatAi({ r }) {
 export function HeatHint({ data }) {
   const r = useMemo(() => heatResult(data.house, Object.values(data.floors), data.components, data.readings), [data.house, data.floors, data.components, data.readings]);
   if (!r.heated.length) return null;
+  const hp = hpEconomics(data, r, data.house.heat || {}, data.house.heat?.priceRise ?? PRICE_RISE);
   return (
     <div className="callout callout-info" style={{ marginTop: 10 }}>
       <Icon name="flame" size={16} />
       <div style={{ flex: 1 }}>
         Heizlast laut 3D-Modell ca. <b>{kw(r.loadKw)}</b> → Wärmepumpe ca. <b>{r.hpSize} kW</b>. Heizkosten mit Wärmepumpe ca. {fmtEuro(r.hp.cost)} statt {fmtEuro(r.oil.cost)} mit Öl.
+        <EconLine e={hp.eNew} hint="gegenüber einem neuen Ölkessel, nach KfW-Zuschuss" />
         <div style={{ marginTop: 6 }}>
           <Btn small icon="flame" onClick={() => { setUI({ buildingTab: 'energie', drawer: null }); go('gebaeude'); }}>
             Heizlast-Check öffnen

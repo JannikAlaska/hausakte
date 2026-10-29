@@ -78,11 +78,11 @@ function SceneView({ data, sceneRef }) {
     if (!s) return;
     if (ui.view === 'grundriss') {
       const fid = ui.floorId && ui.floorId !== 'roof' ? ui.floorId : null;
-      const showLines = ui.showLines !== false;
+      const showLines = ui.planLines !== false;
       if (fid) s.setView({ mode: 'floor', floorId: fid, showRoof: ui.showRoof, showLabels: ui.showLabels, showLines });
       else s.setView({ mode: 'all', floorId: null, showRoof: true, showLabels: ui.showLabels, showLines });
     } else s.setView({ mode: ui.mode, floorId: ui.floorId, showRoof: ui.showRoof, showLabels: ui.showLabels, showLines: ui.showLines === true });
-  }, [ui.view, ui.mode, ui.floorId, ui.showRoof, ui.showLabels, ui.showLines, data.house]);
+  }, [ui.view, ui.mode, ui.floorId, ui.showRoof, ui.showLabels, ui.showLines, ui.planLines, data.house]);
 
   useEffect(() => {
     sceneRef.current?.setSelection(ui.selection);

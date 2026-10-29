@@ -764,3 +764,12 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .offer-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 8px; }
 .offer-card { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; background: var(--surface); }
 .offer-card.is-best { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+
+/* ---------- economics ---------- */
+.econ { font-size: 12.5px; line-height: 1.6; color: var(--ink-2); margin-top: 4px; }
+.econ > .pill { margin-right: 8px; vertical-align: 1px; }
+.measure-list li { flex-direction: column; align-items: stretch; gap: 4px; }
+.measure-row { display: flex; align-items: center; gap: 12px; justify-content: space-between; }
+@media (max-width: 760px) {
+  .measure-row { flex-direction: column; align-items: stretch; }
+}

@@ -6,7 +6,9 @@ import { updateHouse } from '../store.js';
 import { houseGeo, sunPosition, localToUtc, sunTimes, doyOf, dateOfDoy, simulateSelfUse, SHADE_BINS, MONTHS } from '../solar.js';
 import { heatResult } from '../heat.js';
 import { bearingName } from '../roof.js';
-import { consumptionByYear } from '../metrics.js';
+import { consumptionByYear, projectCost } from '../metrics.js';
+import { economics, paybackText, LIFE, PRICE_RISE } from '../econ.js';
+import { EconLine } from './econ.jsx';
 import { fmtNum, fmtFixed, fmtEuro } from '../util.js';
 
 const { useState, useEffect, useMemo, useRef } = React;
@@ -270,6 +272,7 @@ export function SolarCheck({ data }) {
   };
   const panelsCount = sceneHandle.current?.pvPanels().length ?? 0;
   const savings = sim ? sim.self * st.priceGrid + sim.feed * st.feedIn : 0;
+  const econ = usePvEconomics({ data, result, st, heat, sim, pvProject, solar });
   return (
     <div className="stack">
       <p className="small muted">
@@ -335,6 +338,7 @@ export function SolarCheck({ data }) {
               </div>
             ) : null}
           </div>
+          {econ ? <EconLine e={econ.all} hint={`bei ${fmtEuro(econ.invest)} Investition`} /> : null}
 
           <div className="panel">
             <div className="panel-head">
@@ -413,8 +417,88 @@ export function SolarCheck({ data }) {
             ) : null}
             <p className="small muted" style={{ marginTop: 8 }}>Stündliche Simulation mit typischen Tagen je Monat (Standardlastprofil Haushalt, Wärmepumpe nach Heizgradtagen). Echte Werte schwanken mit Wetter und Gewohnheiten um ±10–15 %.</p>
           </div>
+
+          {econ ? <PvEconomics econ={econ} st={st} set={set} /> : null}
         </>
       ) : null}
+    </div>
+  );
+}
+
+// ---------- economics: whole system, PV alone, battery as add-on ----------
+const PV_EUR_KWP = 1400,
+  PV_FIXED = 1500, // scaffold, meter cabinet, registration
+  BATTERY_EUR_KWH = 650,
+  DEGRADATION = 0.005;
+
+export function pvEstimate(kwp, battery) {
+  return { pv: Math.round((PV_FIXED + PV_EUR_KWP * kwp) / 100) * 100, battery: Math.round((BATTERY_EUR_KWH * battery) / 100) * 100 };
+}
+
+// Savings in year y: self-used power replaces rising grid prices, feed-in tariff is fixed for 20 years.
+function pvSaving(sim, st, rise) {
+  return (y) => Math.pow(1 - DEGRADATION, y - 1) * (sim.self * st.priceGrid * Math.pow(1 + rise, y - 1) + sim.feed * (y <= 20 ? st.feedIn : 0.05));
+}
+
+function usePvEconomics({ data, result, st, heat, sim, pvProject, solar }) {
+  return useMemo(() => {
+    if (!result || !sim) return null;
+    const rise = solar.priceRise ?? data.house?.heat?.priceRise ?? PRICE_RISE;
+    const planned = pvProject ? projectCost(pvProject).best : 0;
+    const est = pvEstimate(result.kwp, st.battery);
+    const invest = solar.invest ?? (planned || est.pv + est.battery);
+    const source = solar.invest != null ? 'eigene Angabe' : planned ? 'aus deinem PV-Projekt' : 'Schätzung';
+    const sim0 = st.battery > 0 ? simulateSelfUse({ pvHourly: result.hourly, household: st.household, heatKwh: st.withHp ? heat.heatKwh : 0, wwKwh: st.withHp ? heat.wwKwh : 0, jaz: heat.emitter.jaz, battery: 0 }) : sim;
+    const batSize = st.battery > 0 ? st.battery : 8;
+    const simB = st.battery > 0 ? sim : simulateSelfUse({ pvHourly: result.hourly, household: st.household, heatKwh: st.withHp ? heat.heatKwh : 0, wwKwh: st.withHp ? heat.wwKwh : 0, jaz: heat.emitter.jaz, battery: batSize });
+    const batCost = st.battery > 0 ? Math.min(invest, est.battery) : pvEstimate(0, batSize).battery;
+    const pvCost = st.battery > 0 ? invest - batCost : invest;
+    const upkeep = (cost) => Math.round(cost * 0.01);
+    const all = economics({ invest, saving: pvSaving(sim, st, rise), life: LIFE.pv, rise, maintenance: upkeep(invest) });
+    const pvOnly = economics({ invest: pvCost, saving: pvSaving(sim0, st, rise), life: LIFE.pv, rise, maintenance: upkeep(pvCost) });
+    // the battery shifts surplus into the evening: each stored kWh saves the grid price but loses the feed-in tariff
+    const extra = simB.self - sim0.self;
+    const bat = economics({ invest: batCost, saving: (y) => extra * (st.priceGrid * Math.pow(1 + rise, y - 1) - (y <= 20 ? st.feedIn : 0.05)), life: LIFE.speicher, rise });
+    return { invest, source, rise, pvCost, batCost, batSize, hasBattery: st.battery > 0, extra, all, pvOnly, bat, planned, est };
+  }, [result, sim, st.battery, st.household, st.withHp, st.priceGrid, st.feedIn, heat, pvProject, solar.invest, solar.priceRise, data.house?.heat?.priceRise]);
+}
+
+function PvEconomics({ econ, st, set }) {
+  const e = econ;
+  return (
+    <div className="panel">
+      <div className="panel-head">
+        <h3>Lohnt sich die Anlage?</h3>
+      </div>
+      <div className="grid3">
+        <Field label="Investition gesamt" hint={e.source === 'Schätzung' ? `Schätzung: ${fmtEuro(PV_EUR_KWP)}/kWp + ${fmtEuro(PV_FIXED)}${st.battery > 0 ? ` + ${fmtEuro(BATTERY_EUR_KWH)}/kWh Speicher` : ''}` : e.source}>
+          <NumInput value={e.invest} onChange={(v) => set({ invest: v > 0 ? v : null })} unit="€" digits={0} />
+        </Field>
+        <Field label="Strompreis-Steigerung">
+          <NumInput value={Math.round(e.rise * 1000) / 10} onChange={(v) => v != null && set({ priceRise: v / 100 })} unit="%/a" digits={1} />
+        </Field>
+      </div>
+      <div className="stack" style={{ gap: 8, marginTop: 10 }}>
+        <div>
+          <span className="field-label">{e.hasBattery ? `Gesamtanlage mit ${fmtNum(st.battery, 1)} kWh Speicher` : 'PV-Anlage'}</span>
+          <EconLine e={e.all} hint={`Überschuss nach ${LIFE.pv} Jahren ca. ${fmtEuro(Math.round(e.all.benefit / 500) * 500)}`} />
+        </div>
+        {e.hasBattery ? (
+          <div>
+            <span className="field-label">Nur PV, ohne Speicher (ca. {fmtEuro(e.pvCost)})</span>
+            <EconLine e={e.pvOnly} />
+          </div>
+        ) : null}
+        <div>
+          <span className="field-label">
+            {e.hasBattery ? `Speicher allein (ca. ${fmtEuro(e.batCost)})` : `Mit ${fmtNum(e.batSize, 0)} kWh Speicher zusätzlich (ca. ${fmtEuro(e.batCost)})`}
+          </span>
+          <EconLine e={e.bat} hint={`+${fmtNum(Math.round(e.extra / 10) * 10, 0)} kWh Eigenverbrauch pro Jahr`} />
+        </div>
+      </div>
+      <p className="small muted" style={{ marginTop: 8 }}>
+        Annahmen: eigener Strom ersetzt Netzstrom (Preis +{fmtNum(e.rise * 100, 1)} %/a), Einspeisevergütung 20 Jahre fest, danach ca. 5 ct/kWh; Wartung und Versicherung 1 % der Investition pro Jahr; Leistungsverlust der Module 0,5 %/a; Lebensdauer PV {LIFE.pv} Jahre, Speicher {LIFE.speicher} Jahre. PV-Anlagen bis 30 kWp sind von der Mehrwertsteuer befreit und werden nicht bezuschusst. Ein Speicher rechnet sich meist erst mit Wärmepumpe oder E-Auto – oder wenn er günstig ist.
+      </p>
     </div>
   );
 }

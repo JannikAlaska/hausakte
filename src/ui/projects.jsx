@@ -2,6 +2,7 @@ import { Icon } from './icons.jsx';
 import { HeatHint } from './energy.jsx';
 import { PvHint } from './solar.jsx';
 import { OfferCompare } from './offers.jsx';
+import { AiVerdict } from './econ.jsx';
 import { Btn, IconBtn, Field, TextInput, NumInput, Select, DateInput, Pill, Section, Drawer, Sheet, Empty, ConfirmBtn, Seg } from './common.jsx';
 import { AiRunner, useAiAvailable, AiUnavailable } from './ai-ui.jsx';
 import { useUI, setUI, openDrawer, closeDrawer, toast, go } from './state.js';
@@ -1138,7 +1139,7 @@ export function RoadmapDrawer({ data }) {
         priority: m.priority,
         start: safeDate(m.start) || undefined,
         end: safeDate(m.end) || undefined,
-        notes: [m.reason, m.fundingHint ? 'Förderung: ' + m.fundingHint : ''].filter(Boolean).join('\n\n'),
+        notes: [m.reason, m.saving || m.payback ? `Wirtschaftlichkeit: ${[m.saving && 'Ersparnis ' + m.saving, m.payback && 'Amortisation ' + m.payback, m.verdict].filter(Boolean).join(', ')}` : '', m.fundingHint ? 'Förderung: ' + m.fundingHint : ''].filter(Boolean).join('\n\n'),
         costs: m.costLow || m.costHigh ? [{ id: uid('k'), label: 'Schätzung Sanierungsfahrplan', estimate: Math.round(((Number(m.costLow) || 0) + (Number(m.costHigh) || Number(m.costLow) || 0)) / 2 / 100) * 100, offer: null, actual: null, vendor: '' }] : [],
       });
       map[m.key] = id;
@@ -1197,6 +1198,8 @@ export function RoadmapDrawer({ data }) {
                         {m.priority === 1 ? <Pill tone="warn">dringend</Pill> : null}
                       </div>
                       {m.reason ? <p>{m.reason}</p> : null}
+                      {m.saving ? <p>Ersparnis: {m.saving}</p> : null}
+                      <AiVerdict verdict={m.verdict} payback={m.payback} />
                       {m.fundingHint ? (
                         <p>
                           <b>Förderung:</b> {m.fundingHint}
