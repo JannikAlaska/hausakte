@@ -216,6 +216,8 @@ function projectBlock(p, d) {
     `Startet erst nach: ${(p.dependsOn || []).map((r) => depName(d, r)).join('; ') || 'keine Abhängigkeit'}`,
     `Meilensteine: ${(p.milestones || []).map((m) => `${m.title} ${m.date || 'ohne Datum'}${m.done ? ' (erledigt)' : ''}${(m.dependsOn || []).length ? ` – erst nach ${m.dependsOn.map((r) => depName(d, r)).join(', ')}` : ''}`).join('; ') || 'keine'}`,
     `Hinweise: ${p.hints?.trim() || '–'}`,
+    `Offene Aufgaben: ${(p.constraints || []).filter((c) => !c.done).map((c) => `${c.text}${c.due ? ` (bis ${c.due})` : ''}${c.who ? ` [${c.who}]` : ''}`).join('; ') || 'keine'}`,
+    `Besprechungen: ${(p.meetings || []).slice(0, 5).map((m) => `${m.date} ${m.title}: ${String(m.summary || '').slice(0, 300)}`).join(' | ') || 'keine'}`,
     `Verknüpfte Bauteile: ${(p.components || []).map((id) => d.components?.[id]?.name).filter(Boolean).join('; ') || 'keine'}`,
     `Notizen: ${p.notes || '–'}`,
   ];
@@ -366,6 +368,35 @@ Format:
   return askJSON(prompt, opts);
 }
 
+// ---------- meeting notes from a voice memo ----------
+export async function aiMeeting(p, transcript, d, { date, signal } = {}) {
+  const ms = (p.milestones || []).map((m) => `- ${m.title} (${m.date || 'ohne Datum'}${m.done ? ', erledigt' : ''})`).join('\n') || 'keine';
+  const todos = (p.constraints || []).filter((c) => !c.done).map((c) => `- ${c.text}${c.due ? ` (bis ${c.due})` : ''}`).join('\n') || 'keine';
+  const prompt = `Du hilfst bei der Modernisierung eines Wohnhauses. Aus einer gesprochenen Notiz zu einem Termin oder Gespräch im Projekt erstellst du eine knappe Besprechungsnotiz und leitest Termine und Aufgaben ab.
+Die Notiz wurde automatisch aus Sprache in Text umgewandelt und kann Erkennungsfehler enthalten – korrigiere offensichtlich falsch erkannte Fachbegriffe (z. B. „Wechsel Richter“ = Wechselrichter, „Zähler Schrank“ = Zählerschrank).
+Datum der Besprechung: ${date || todayISO()} (heute ist ${todayISO()}). Rechne relative Angaben wie „nächsten Dienstag“, „in zwei Wochen“ oder „Ende November“ von diesem Datum aus in YYYY-MM-DD um.
+Termine (appointments) nur, wenn ein Zeitpunkt genannt oder klar ableitbar ist (z. B. Montage, Zählerwechsel, Besichtigung, Abnahme, Rückruf, Angebotsfrist); Uhrzeit, falls genannt.
+Aufgaben (todos) sind konkrete nächste Schritte mit Verantwortlichem (who: „ich“ für den Eigentümer oder Firma/Person) und Fälligkeit, wenn erkennbar.
+Erfinde nichts; Unklares gehört in openQuestions. Lege nichts doppelt an, was schon unten steht. Genannte Preise oder Angebotssummen in costs (Euro brutto).
+
+PROJEKT
+${projectBlock(p, d)}
+
+VORHANDENE MEILENSTEINE
+${ms}
+
+OFFENE AUFGABEN
+${todos}
+
+GESPROCHENE NOTIZ
+"""${String(transcript).slice(0, 40000)}"""
+
+${JSON_RULES}
+Format:
+{"title":"Kurzer Titel, z. B. Vor-Ort-Termin Elektriker PV","date":"YYYY-MM-DD","participants":["Person oder Firma"],"summary":"2–4 Sätze","points":["Besprochener Punkt"],"decisions":["Entscheidung oder Vereinbarung"],"openQuestions":["Offene Frage"],"appointments":[{"title":"Termin","date":"YYYY-MM-DD","time":"HH:MM oder null","note":"kurz"}],"todos":[{"text":"Was ist zu tun","who":"ich|Firma|Person","due":"YYYY-MM-DD oder null","kind":"${CONSTRAINT_KINDS.map((k) => k.key).join('|')}"}],"costs":[{"label":"Position","amount":1234}]}`;
+  return askJSON(prompt, { signal });
+}
+
 // ---------- heat load / heat pump ----------
 export async function aiHeat(d, res, after, measures, opts) {
   const f1 = (v) => fmtNum(v, 1);
@@ -473,6 +504,7 @@ export function chatRules(d) {
 Antworte auf Deutsch, konkret und knapp (höchstens ca. 200 Wörter, wenn nicht anders gewünscht). Nutze kurze Absätze oder Aufzählungen mit "- ". Fett mit **…** sparsam.
 Beziehe dich auf die Hausdaten unten. Bei Förderungen nutze die Wissensbasis und weise auf Prüfung bei KfW/BAFA hin. Erfinde keine Daten zum Haus; frage nach, wenn etwas fehlt.
 Wenn der Nutzer etwas anlegen oder ändern möchte (Projekt, Termine, Status, Hinweise, Abhängigkeiten, Förderung, Kostenposition, Rahmenbedingung, Meilenstein), nutze die verfügbaren Werkzeuge und sage danach kurz, was du geändert hast. Hole dir vor dem Ändern einzelner Positionen die IDs mit get_project. Ganze Projekte löschst du nicht – bitte den Nutzer, das selbst in der App zu tun.
+Besprechungen: Erzählt der Nutzer von einem Termin oder Gespräch zu einem Projekt (z. B. „Notiz zur PV: Elektriker war da …“), lege mit add_meeting_note eine Besprechungsnotiz mit Terminen und To-dos an.
 Grundriss: Für Maße (Türbreiten, Abstände zwischen Fenstern, Wandlängen, Raummaße) hole mit get_floor_plan die Räume, Wände und Öffnungen der Etage und trage das Maß mit add_measurement ein; Leitungslängen änderst du mit update_line. Wähle bei mehreren passenden Fenstern die naheliegendsten (gleiche Wand, nebeneinander) und sage kurz, welche du genommen hast. Nachrichten können per Spracheingabe kommen – rechne mit Erkennungsfehlern (z. B. „eins komma fünf“ = 1,5) und frage nach, wenn etwas unklar ist.
 Das Feld „Hinweise“ eines Projekts ist für Abhängigkeiten, Fristen und Besonderheiten gedacht, die man beim Planen beachten muss. Abhängigkeiten können auf ein Projekt (nach dessen Ende) oder auf einen Meilenstein („Projekt-ID#Meilenstein-ID“) zeigen – für Projekte und für Meilensteine.
 

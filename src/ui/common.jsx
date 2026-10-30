@@ -124,9 +124,28 @@ export function Section({ n, title, aside, children, className = '' }) {
 
 export function Drawer({ eyebrow, title, subtitle, icon, onClose, children, footer, className = '', tabs, tab, onTab }) {
   const body = useRef(null);
+  const bar = useRef(null);
   useEffect(() => {
     if (body.current) body.current.scrollTop = 0;
+    bar.current?.querySelector('.tab.is-on')?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
   }, [tab]);
+  // fade the tab bar edge while more tabs are hidden to the right
+  useEffect(() => {
+    const el = bar.current;
+    if (!el) return;
+    const upd = () => {
+      el.toggleAttribute('data-more', el.scrollLeft + el.clientWidth < el.scrollWidth - 4);
+      el.toggleAttribute('data-less', el.scrollLeft > 4);
+    };
+    upd();
+    el.addEventListener('scroll', upd, { passive: true });
+    const ro = new ResizeObserver(upd);
+    ro.observe(el);
+    return () => {
+      el.removeEventListener('scroll', upd);
+      ro.disconnect();
+    };
+  }, [!!tabs]);
   return (
     <aside className={`drawer ${className}`} aria-label={title}>
       <header className="drawer-head">
@@ -143,7 +162,7 @@ export function Drawer({ eyebrow, title, subtitle, icon, onClose, children, foot
         <IconBtn icon="x" label="Schließen" onClick={onClose} />
       </header>
       {tabs ? (
-        <nav className="tabs drawer-tabs" role="tablist">
+        <nav className="tabs drawer-tabs" role="tablist" ref={bar}>
           {tabs.map((t) => (
             <button key={t.key} type="button" role="tab" aria-selected={tab === t.key} className={`tab ${tab === t.key ? 'is-on' : ''}`} onClick={() => onTab(t.key)}>
               {t.warn ? <Icon name="alert" size={14} className="tab-warn" /> : null}

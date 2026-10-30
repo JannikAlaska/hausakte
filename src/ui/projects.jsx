@@ -2,6 +2,7 @@ import { Icon } from './icons.jsx';
 import { HeatHint } from './energy.jsx';
 import { PvHint } from './solar.jsx';
 import { OfferCompare } from './offers.jsx';
+import { Meetings } from './meetings.jsx';
 import { AiVerdict } from './econ.jsx';
 import { Btn, IconBtn, Field, TextInput, NumInput, Select, DateInput, Pill, Section, Drawer, Sheet, Empty, ConfirmBtn, Seg } from './common.jsx';
 import { AiRunner, useAiAvailable, AiUnavailable } from './ai-ui.jsx';
@@ -353,6 +354,7 @@ const P_TABS = [
   { key: 'kosten', label: 'Kosten', icon: 'euro' },
   { key: 'foerderung', label: 'Förderung', icon: 'flag' },
   { key: 'aufgaben', label: 'Aufgaben', icon: 'checkCircle' },
+  { key: 'besprechungen', label: 'Besprechungen', icon: 'mic' },
   { key: 'dokumente', label: 'Dokumente', icon: 'file' },
 ];
 
@@ -381,7 +383,7 @@ export function ProjectDrawer({ data, drawer }) {
   };
   const tabs = P_TABS.map((t) => ({
     ...t,
-    count: t.key === 'zeitplan' ? (p.milestones || []).length || null : t.key === 'foerderung' ? (p.funding || []).length || null : t.key === 'aufgaben' ? cons.filter((c) => !c.done).length || null : t.key === 'dokumente' ? docs.length || null : null,
+    count: t.key === 'zeitplan' ? (p.milestones || []).length || null : t.key === 'foerderung' ? (p.funding || []).length || null : t.key === 'aufgaben' ? cons.filter((c) => !c.done).length || null : t.key === 'dokumente' ? docs.length || null : t.key === 'besprechungen' ? (p.meetings || []).length || null : null,
     warn: t.key === 'zeitplan' && warns.some((w) => w.kind === 'dependency' || w.kind === 'dates' || w.kind === 'overdue'),
   }));
   const nextMs = [...(p.milestones || [])].filter((m) => !m.done && isISO(m.date)).sort((a, b) => (a.date < b.date ? -1 : 1))[0];
@@ -627,6 +629,8 @@ export function ProjectDrawer({ data, drawer }) {
         </>
       ) : null}
 
+      {tab === 'besprechungen' ? <Meetings p={p} data={data} /> : null}
+
       {tab === 'dokumente' ? (
         <Section title="Dokumente" aside={<UploadButton projectId={p.id} small />}>
           <DocList data={data} filter={(d) => d.projectId === p.id} projectId={p.id} compact />
@@ -715,6 +719,13 @@ function Milestones({ p, set, data, noLabel }) {
                       </Btn>
                     </div>
                   ) : null}
+                </div>
+              ) : m.time || m.meetingId ? (
+                <div className="ms-dep-sum small muted">
+                  <Icon name="clock" size={12} /> {m.time ? `${m.time} Uhr` : ''}
+                  {m.meetingId ? `${m.time ? ' · ' : ''}aus Besprechung` : ''}
+                  {m.note ? ` · ${m.note}` : ''}
+                  {deps.length ? ` · nach ${deps.length} Vorgänger${deps.length > 1 ? 'n' : ''}` : ''}
                 </div>
               ) : deps.length ? (
                 <div className="ms-dep-sum small muted">
@@ -833,17 +844,30 @@ function Constraints({ p, set }) {
     <>
       <div className="rows">
         {list.map((c) => (
-          <div key={c.id} className={`row row-check ${c.done ? 'is-done' : ''}`}>
-            <input type="checkbox" checked={!!c.done} onChange={(e) => upd(c.id, { done: e.target.checked })} aria-label="Erledigt" />
-            <input className="input" value={c.text} onChange={(e) => upd(c.id, { text: e.target.value })} aria-label="Rahmenbedingung" />
-            <select className="input select" style={{ width: 130 }} value={c.kind} onChange={(e) => upd(c.id, { kind: e.target.value })} aria-label="Art">
-              {CONSTRAINT_KINDS.map((k) => (
-                <option key={k.key} value={k.key}>
-                  {k.name}
-                </option>
-              ))}
-            </select>
-            <IconBtn icon="trash" label="Löschen" size={15} onClick={() => set({ constraints: list.filter((x) => x.id !== c.id) })} />
+          <div key={c.id} className="ms-block">
+            <div className={`row row-check ${c.done ? 'is-done' : ''}`}>
+              <input type="checkbox" checked={!!c.done} onChange={(e) => upd(c.id, { done: e.target.checked })} aria-label="Erledigt" />
+              <input className="input" value={c.text} onChange={(e) => upd(c.id, { text: e.target.value })} aria-label="Rahmenbedingung" />
+              <select className="input select" style={{ width: 130 }} value={c.kind} onChange={(e) => upd(c.id, { kind: e.target.value })} aria-label="Art">
+                {CONSTRAINT_KINDS.map((k) => (
+                  <option key={k.key} value={k.key}>
+                    {k.name}
+                  </option>
+                ))}
+              </select>
+              <IconBtn icon="trash" label="Löschen" size={15} onClick={() => set({ constraints: list.filter((x) => x.id !== c.id) })} />
+            </div>
+            {c.due || c.who || c.meetingId ? (
+              <div className={`todo-meta small ${!c.done && c.due && c.due < todayISO() ? 'is-late' : ''}`}>
+                {c.due ? (
+                  <span>
+                    <Icon name="calendar" size={12} /> bis {fmtDate(c.due)}
+                  </span>
+                ) : null}
+                {c.who ? <span>{c.who}</span> : null}
+                {c.meetingId ? <span className="muted">aus Besprechung{(() => { const d = (p.meetings || []).find((m) => m.id === c.meetingId)?.date; return isISO(d) ? ` ${fmtDayMonth(d)}` : ''; })()}</span> : null}
+              </div>
+            ) : null}
           </div>
         ))}
       </div>

@@ -3,7 +3,7 @@ import { Btn, IconBtn, Drawer } from './common.jsx';
 import { Md, useAiAvailable, AiUnavailable } from './ai-ui.jsx';
 import { closeDrawer, openDrawer, toast } from './state.js';
 import { aiChat, aiErrorText, isHardAiError, AI_DISCLAIMER } from '../ai.js';
-import { createProject, patchProject, addFunding, addCost, addConstraint, addMilestone, deleteMilestone } from '../actions.js';
+import { createProject, patchProject, addFunding, addCost, addConstraint, addMilestone, deleteMilestone, addMeeting } from '../actions.js';
 import { resolveRef, createsCycle, msRef, sortFloors } from '../metrics.js';
 import { floorPlanInfo, measurePoints, dimLength, lineLength, resizeLine, relink, r3 } from '../planops.js';
 import { lineKind } from '../catalog.js';
@@ -236,6 +236,33 @@ export function makeTools(log) {
         updateDoc('floors', f.id, (x) => relink({ ...x, lines: (x.lines || []).map((y) => (y.id === l.id ? { ...y, ...patch } : y)) }), 50);
         log({ kind: 'plan', floorId: f.id, text: `Leitung geändert: ${l.label || lineKind(l.kind).name}${patch.pts ? ` – ${r3(lineLength({ pts: patch.pts }))} m` : ''}` });
         return { ok: true, length: r3(lineLength({ pts: patch.pts || l.pts })) };
+      },
+    },
+    {
+      name: 'add_meeting_note',
+      description: 'Legt an einem Projekt eine Besprechungsnotiz an (z. B. nach einem Termin mit einem Handwerker) und trägt die daraus abgeleiteten Termine als Meilensteine und die To-dos als Aufgaben ein. Relative Datumsangaben vorher in YYYY-MM-DD umrechnen.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          projectId: { type: 'string' },
+          title: { type: 'string' },
+          date: { type: 'string', description: 'Datum der Besprechung YYYY-MM-DD' },
+          participants: { type: 'array', items: { type: 'string' } },
+          summary: { type: 'string', description: '2–4 Sätze' },
+          points: { type: 'array', items: { type: 'string' } },
+          decisions: { type: 'array', items: { type: 'string' } },
+          openQuestions: { type: 'array', items: { type: 'string' } },
+          appointments: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' }, date: { type: 'string' }, time: { type: 'string' }, note: { type: 'string' } }, required: ['title'] } },
+          todos: { type: 'array', items: { type: 'object', properties: { text: { type: 'string' }, who: { type: 'string' }, due: { type: 'string' }, kind: { type: 'string', enum: CONSTRAINT_KINDS.map((k) => k.key) } }, required: ['text'] } },
+          transcript: { type: 'string', description: 'Wortlaut der Nachricht des Nutzers' },
+        },
+        required: ['projectId', 'summary'],
+      },
+      execute(input) {
+        const p = getProject(input.projectId);
+        const r = addMeeting(p.id, input, { transcript: str(input.transcript, 20000), date: isISO(input.date) ? input.date : undefined });
+        log({ kind: 'project', id: p.id, text: `Besprechung bei „${p.title}“${r.milestones ? ` · ${r.milestones} Termin${r.milestones > 1 ? 'e' : ''}` : ''}${r.todos ? ` · ${r.todos} To-do${r.todos > 1 ? 's' : ''}` : ''}` });
+        return r;
       },
     },
     {

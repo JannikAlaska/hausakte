@@ -143,3 +143,39 @@ export function addReading(r) {
   putDoc('readings', id, { id, medium: r.medium || 'strom', from: r.from, to: r.to, amount: r.amount ?? null, cost: r.cost ?? null, note: r.note || '' }, 50);
   return id;
 }
+
+// Stores a meeting note on a project and adds the appointments as milestones and the to-dos as tasks.
+// r: { title, date, participants, summary, points, decisions, openQuestions, appointments, todos, costs }
+export function addMeeting(projectId, r, { transcript = '', date, source = 'ki' } = {}) {
+  const iso = (v) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
+  const txt = (v, n = 300) => String(v ?? '').trim().slice(0, n);
+  const list = (v, n = 20) => (Array.isArray(v) ? v.map((x) => txt(x, 400)).filter(Boolean).slice(0, n) : []);
+  const id = uid('mt');
+  const milestones = (Array.isArray(r.appointments) ? r.appointments : [])
+    .filter((a) => a && txt(a.title))
+    .slice(0, 12)
+    .map((a) => ({ id: uid('m'), title: txt(a.title, 160), date: iso(a.date), time: /^\d{1,2}:\d{2}$/.test(a.time || '') ? a.time.padStart(5, '0') : null, note: txt(a.note, 300), done: false, dependsOn: [], meetingId: id }));
+  const kinds = CONSTRAINT_KINDS.map((k) => k.key);
+  const todos = (Array.isArray(r.todos) ? r.todos : [])
+    .filter((t) => t && txt(t.text))
+    .slice(0, 20)
+    .map((t) => ({ id: uid('b'), text: txt(t.text, 240), kind: kinds.includes(t.kind) ? t.kind : 'organisatorisch', done: false, due: iso(t.due), who: txt(t.who, 60), meetingId: id }));
+  const meeting = {
+    id,
+    date: iso(r.date) || iso(date) || todayISO(),
+    title: txt(r.title, 140) || 'Besprechung',
+    participants: list(r.participants, 10),
+    summary: txt(r.summary, 2000),
+    points: list(r.points),
+    decisions: list(r.decisions),
+    openQuestions: list(r.openQuestions),
+    costs: (Array.isArray(r.costs) ? r.costs : []).filter((c) => c && txt(c.label) && Number(c.amount) > 0).slice(0, 10).map((c) => ({ label: txt(c.label, 120), amount: Math.round(Number(c.amount)) })),
+    transcript: txt(transcript, 60000),
+    milestoneIds: milestones.map((m) => m.id),
+    todoIds: todos.map((t) => t.id),
+    source,
+    createdAt: Date.now(),
+  };
+  patchProject(projectId, (p) => ({ ...p, meetings: [meeting, ...(p.meetings || [])], milestones: [...(p.milestones || []), ...milestones], constraints: [...(p.constraints || []), ...todos] }));
+  return { id, milestones: milestones.length, todos: todos.length };
+}

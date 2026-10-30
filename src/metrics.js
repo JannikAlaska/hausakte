@@ -178,6 +178,7 @@ export function deadlines(projects, today = todayISO()) {
       if (f.deadline && ['pruefen', 'geplant'].includes(f.status) && f.deadline >= today)
         out.push({ date: f.deadline, label: `Antrag ${f.program || 'Förderung'}`, project: p, kind: 'funding' });
     for (const m of p.milestones || []) if (m.date && !m.done && m.date >= today) out.push({ date: m.date, label: m.title, project: p, kind: 'milestone' });
+    for (const c of p.constraints || []) if (c.due && !c.done && c.due >= today) out.push({ date: c.due, label: c.text, project: p, kind: 'todo' });
     if (p.start && p.start >= today && statusOf(p.status).step < 4) out.push({ date: p.start, label: `Start ${p.title}`, project: p, kind: 'start' });
   }
   return out.sort((a, b) => (a.date < b.date ? -1 : 1));
