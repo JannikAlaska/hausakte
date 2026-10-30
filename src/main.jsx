@@ -15,7 +15,7 @@ import { DocumentsSheet } from './ui/documents.jsx';
 import { AssistantDrawer } from './ui/assistant.jsx';
 import { projectKind, gewerk, roomType } from './catalog.js';
 import { fmtTime, fmtArea } from './util.js';
-import { portfolio, buildingStats, roomArea } from './metrics.js';
+import { portfolio, buildingStats, roomArea, liveProjects } from './metrics.js';
 import { isSupabaseMode, getSession, onAuth, signIn, signUp, resetPassword, updatePassword, authErrorText } from './supa.js';
 
 const { useEffect, useRef, useMemo, useState, useLayoutEffect } = React;
@@ -67,7 +67,7 @@ function SceneView({ data, sceneRef }) {
     const s = sceneRef.current;
     if (!s || !data.house) return;
     const id = requestAnimationFrame(() =>
-      s.setData({ house: data.house, floors: Object.values(data.floors), projects: Object.values(data.projects), components: data.components }),
+      s.setData({ house: data.house, floors: Object.values(data.floors), projects: liveProjects(data.projects), components: data.components }),
     );
     return () => cancelAnimationFrame(id);
   }, [data.house, data.floors, data.projects, data.components]);
@@ -164,7 +164,7 @@ function SearchBox({ data }) {
       for (const r of f.rooms || [])
         if ((r.name || '').toLowerCase().includes(s)) out.push({ icon: 'room', title: r.name, sub: `${f.name} · ${fmtArea(roomArea(r))}`, go: () => { setUI({ mode: 'floor', floorId: f.id, selection: { type: 'room', floorId: f.id, roomId: r.id } }); go('modell'); } });
     for (const p of Object.values(data.projects))
-      if (p.title.toLowerCase().includes(s)) out.push({ icon: projectKind(p.kind).icon, title: p.title, sub: 'Projekt', go: () => openDrawer({ type: 'project', id: p.id }) });
+      if (p.title.toLowerCase().includes(s)) out.push({ icon: projectKind(p.kind).icon, title: p.title, sub: p.archived ? 'Projekt · deaktiviert' : 'Projekt', go: () => openDrawer({ type: 'project', id: p.id }) });
     for (const c of Object.values(data.components))
       if (`${c.name} ${c.material}`.toLowerCase().includes(s)) out.push({ icon: gewerk(c.gewerk).icon, title: c.name, sub: `${gewerk(c.gewerk).name} · ${c.material || ''}`, go: () => openDrawer({ type: 'component', id: c.id }) });
     for (const d of Object.values(data.documents))
@@ -205,7 +205,7 @@ function SearchBox({ data }) {
 function TopBar({ data }) {
   const ui = useUI();
   const h = data.house;
-  const pf = portfolio(Object.values(data.projects));
+  const pf = portfolio(liveProjects(data.projects));
   const pct = pf.total ? Math.round((pf.done / pf.total) * 100) : 0;
   const code = h?.zip || (h?.name || 'Haus').split(/\s+/).map((w) => w[0]).join('').slice(0, 3).toUpperCase();
   const busy = data.saving > 0;

@@ -53,8 +53,12 @@ function dropRefs(drop, exceptId) {
   }
 }
 
+export const archiveProject = (id, on = true) => patchProject(id, (p) => ({ ...p, archived: on, archivedAt: on ? Date.now() : null }));
+
+// only deactivated projects can be deleted
 export function deleteProject(id) {
   const s = getState();
+  if (!s.projects[id]?.archived) return false;
   dropRefs((r) => r === id || String(r).startsWith(id + '#'), id);
   for (const d of Object.values(s.documents)) if (d.projectId === id) updateDoc('documents', d.id, (x) => ({ ...x, projectId: null }), 50);
   deleteDoc('projects', id);

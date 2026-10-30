@@ -9,8 +9,8 @@ import { AiRunner, useAiAvailable, AiUnavailable } from './ai-ui.jsx';
 import { useUI, setUI, openDrawer, closeDrawer, toast, go } from './state.js';
 import { DocList, UploadButton } from './documents.jsx';
 import { PROJECT_KINDS, projectKind, STATUS, status as statusOf, CONSTRAINT_KINDS, FUNDING_TYPES, FUNDING_STATUS, gewerk } from '../catalog.js';
-import { projectCost, projectIssues, createsCycle, isDone, costValue, resolveRef, dependentsOf, msRef } from '../metrics.js';
-import { createProject, patchProject, deleteProject, addFunding, addCost, addConstraint, addMilestone, deleteMilestone, alignMilestone, alignToDependencies } from '../actions.js';
+import { projectCost, projectIssues, createsCycle, isDone, costValue, resolveRef, dependentsOf, msRef, liveProjects } from '../metrics.js';
+import { createProject, patchProject, deleteProject, archiveProject, addFunding, addCost, addConstraint, addMilestone, deleteMilestone, alignMilestone, alignToDependencies } from '../actions.js';
 import { aiFunding, aiTiming, aiCosts, aiRisks, aiRoadmap } from '../ai.js';
 import { updateHouse } from '../store.js';
 import { uid, fmtEuro, fmtDate, fmtDayMonth, fmtMonth, todayISO, addDays, diffDays, parseISO, toISO, isISO, MONTHS, fmtNum } from '../util.js';
@@ -44,15 +44,16 @@ const statusTone = (p) => ({ done: 'accent', late: 'warn', active: 'solid', book
 // ================= Sheet =================
 export function ProjectsSheet({ data }) {
   const [tab, setTab] = useState('zeitplan');
-  const projects = Object.values(data.projects);
+  const projects = liveProjects(data.projects);
+  const archived = Object.values(data.projects).filter((p) => p.archived);
   return (
     <Sheet
       title="Modernisierungsprojekte"
       icon="tasks"
-      eyebrow={`${projects.length} Projekte`}
+      eyebrow={`${projects.length} Projekte${archived.length ? ` · ${archived.length} deaktiviert` : ''}`}
       tabs={[
         { key: 'zeitplan', label: 'Zeitplan', icon: 'gantt' },
-        { key: 'liste', label: 'Liste', icon: 'list', count: projects.length },
+        { key: 'liste', label: 'Liste', icon: 'list', count: projects.length + archived.length },
       ]}
       tab={tab}
       onTab={setTab}
@@ -68,7 +69,7 @@ export function ProjectsSheet({ data }) {
         </>
       }
     >
-      {!projects.length ? (
+      {!projects.length && !archived.length ? (
         <Empty
           icon="tasks"
           title="Noch keine Projekte"
@@ -90,12 +91,14 @@ export function ProjectsSheet({ data }) {
 }
 
 function ProjectList({ data }) {
-  const all = Object.values(data.projects);
+  const all = liveProjects(data.projects);
+  const off = Object.values(data.projects).filter((p) => p.archived);
   const groups = [
     { key: 'laufend', title: 'Laufend', items: all.filter((p) => ['umsetzung', 'beauftragt'].includes(p.status)) },
     { key: 'geplant', title: 'In Planung', items: all.filter((p) => ['idee', 'planung', 'angebote'].includes(p.status)) },
     { key: 'pausiert', title: 'Pausiert', items: all.filter((p) => p.status === 'pausiert') },
     { key: 'fertig', title: 'Abgeschlossen', items: all.filter(isDone) },
+    { key: 'aus', title: 'Deaktiviert', items: off, hint: 'Nicht im Zeitplan, Budget und 3D-Modell. Öffnen zum Reaktivieren oder endgültigen Löschen.' },
   ];
   return (
     <div>
@@ -105,6 +108,7 @@ function ProjectList({ data }) {
             <div className="group-title">
               {g.title} <span className="tab-count">{g.items.length}</span>
             </div>
+            {g.hint ? <p className="small muted" style={{ margin: '-4px 0 8px' }}>{g.hint}</p> : null}
             <div className="plist">
               {g.items
                 .sort((a, b) => ((a.start || '9') < (b.start || '9') ? -1 : 1))
@@ -123,14 +127,14 @@ function ProjectRow({ p, data }) {
   const c = projectCost(p);
   const issues = projectIssues(p, Object.values(data.projects)).filter((i) => i.level === 'warn');
   return (
-    <button className="prow" onClick={() => openDrawer({ type: 'project', id: p.id })}>
+    <button className={`prow ${p.archived ? 'is-archived' : ''}`} onClick={() => openDrawer({ type: 'project', id: p.id })}>
       <span className="prow-ico">
         <Icon name={projectKind(p.kind).icon} />
       </span>
       <span className="prow-main">
         <b>{p.title}</b>
         <span className="prow-meta">
-          <Pill tone={statusTone(p)}>{statusOf(p.status).name}</Pill>
+          {p.archived ? <Pill icon="eyeOff">deaktiviert</Pill> : <Pill tone={statusTone(p)}>{statusOf(p.status).name}</Pill>}
           <span>
             {p.start ? fmtDayMonth(p.start) : '–'} – {p.end ? fmtDayMonth(p.end) : '–'}
           </span>
@@ -165,7 +169,8 @@ function Gantt({ data }) {
   const wrapRef = useRef(null);
   const ppd = ZOOMS[zoom];
   const today = todayISO();
-  const projects = Object.values(data.projects).sort((a, b) => ((a.start || '9') < (b.start || '9') ? -1 : 1));
+  const projects = liveProjects(data.projects).sort((a, b) => ((a.start || '9') < (b.start || '9') ? -1 : 1));
+  const hidden = Object.values(data.projects).filter((p) => p.archived).length;
   const dates = projects.flatMap((p) => [p.start, p.end, ...(p.milestones || []).map((m) => m.date), ...(p.funding || []).map((f) => f.deadline)]).filter(isISO);
   dates.push(today);
   dates.sort();
@@ -256,7 +261,9 @@ function Gantt({ data }) {
             { value: 'quartal', label: 'Quartale' },
           ]}
         />
-        <span className="small muted">Balken ziehen verschiebt das Projekt, Ränder ändern Start und Ende.</span>
+        <span className="small muted">
+          Balken ziehen verschiebt das Projekt, Ränder ändern Start und Ende.{hidden ? ` ${hidden} deaktivierte${hidden > 1 ? '' : 's'} Projekt${hidden > 1 ? 'e' : ''} unter „Liste“.` : ''}
+        </span>
       </div>
       <div className="gantt-wrap" ref={wrapRef} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={() => setDrag(null)}>
         <div className="gantt" style={{ width: 190 + W }}>
@@ -372,7 +379,7 @@ export function ProjectDrawer({ data, drawer }) {
   const set = (patch) => patchProject(p.id, (x) => ({ ...x, ...patch }));
   const kind = projectKind(p.kind);
   const all = Object.values(data.projects);
-  const issues = projectIssues(p, all);
+  const issues = p.archived ? [] : projectIssues(p, all);
   const warns = issues.filter((i) => i.level === 'warn');
   const cost = projectCost(p);
   const docs = Object.values(data.documents || {}).filter((d) => d.projectId === p.id);
@@ -396,6 +403,7 @@ export function ProjectDrawer({ data, drawer }) {
       onClose={closeDrawer}
       subtitle={
         <>
+          {p.archived ? <Pill tone="warn" icon="eyeOff">deaktiviert</Pill> : null}
           <Pill tone={statusTone(p)}>{statusOf(p.status).name}</Pill>
           <span>
             {p.start ? fmtDate(p.start) : '–'} – {p.end ? fmtDate(p.end) : '–'}
@@ -407,14 +415,36 @@ export function ProjectDrawer({ data, drawer }) {
       tab={tab}
       onTab={setTab}
       footer={
-        <>
-          <ConfirmBtn onConfirm={() => { deleteProject(p.id); closeDrawer(); toast('Projekt gelöscht'); }} />
-          <Btn kind="ai" icon="sparkles" onClick={runFunding}>
-            Förderung & Zeitpunkt prüfen
-          </Btn>
-        </>
+        p.archived ? (
+          <>
+            <ConfirmBtn confirmText="Endgültig löschen?" onConfirm={() => { deleteProject(p.id); closeDrawer(); toast('Projekt endgültig gelöscht'); }}>
+              Endgültig löschen
+            </ConfirmBtn>
+            <Btn kind="primary" icon="rotL" onClick={() => { archiveProject(p.id, false); toast('Projekt wieder aktiviert'); }}>
+              Reaktivieren
+            </Btn>
+          </>
+        ) : (
+          <>
+            <Btn kind="ghost" small icon="eyeOff" onClick={() => { archiveProject(p.id, true); toast('Projekt deaktiviert – zu finden unter Projekte › Liste › Deaktiviert'); }}>
+              Deaktivieren
+            </Btn>
+            <Btn kind="ai" icon="sparkles" onClick={runFunding}>
+              Förderung & Zeitpunkt prüfen
+            </Btn>
+          </>
+        )
       }
     >
+      {p.archived ? (
+        <div className="callout callout-warn archived-callout">
+          <Icon name="eyeOff" size={16} />
+          <div>
+            <b>Dieses Projekt ist deaktiviert{p.archivedAt ? ` (seit ${fmtDate(new Date(p.archivedAt).toISOString().slice(0, 10))})` : ''}.</b>
+            <div>Es erscheint nicht im Zeitplan, im 3D-Modell, im Budget und bei den Fristen. Unten kannst du es reaktivieren oder endgültig löschen.</div>
+          </div>
+        </div>
+      ) : null}
       {tab === 'uebersicht' ? (
         <>
           <div className="p-summary">
@@ -747,7 +777,7 @@ function Milestones({ p, set, data, noLabel }) {
 
 // Chosen dependencies as chips plus a picker for projects and milestones of all projects.
 function DepEditor({ data, refs, self, ownDate, onChange, label }) {
-  const all = Object.values(data.projects).sort((a, b) => ((a.start || '9') < (b.start || '9') ? -1 : 1));
+  const all = liveProjects(data.projects).sort((a, b) => ((a.start || '9') < (b.start || '9') ? -1 : 1));
   const resolved = refs.map((r) => resolveRef(data.projects, r)).filter(Boolean);
   const add = (ref) => {
     if (!ref || refs.includes(ref)) return;
@@ -779,6 +809,7 @@ function DepEditor({ data, refs, self, ownDate, onChange, label }) {
               <Icon name={bad ? 'alert' : d.kind === 'milestone' ? 'flag' : 'link'} size={13} />
               <button type="button" className="link" onClick={() => openDrawer({ type: 'project', id: d.project.id })}>
                 {d.kind === 'milestone' ? `${d.title} · ${d.project.title}` : d.title}
+                {d.project.archived ? ' (deaktiviert)' : ''}
               </button>
               <button type="button" className="link" aria-label={`Abhängigkeit ${d.title} entfernen`} onClick={() => onChange(refs.filter((r) => r !== d.ref))}>
                 <Icon name="x" size={12} />

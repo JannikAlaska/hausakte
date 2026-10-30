@@ -178,7 +178,8 @@ export function houseContext(d, { withProjects = true, withComponents = true, wi
   if (withProjects) {
     L.push('');
     L.push('PROJEKTE');
-    const projects = Object.values(d.projects || {});
+    const projects = Object.values(d.projects || {}).filter((p) => !p.archived);
+    const archived = Object.values(d.projects || {}).filter((p) => p.archived);
     if (!projects.length) L.push('keine');
     for (const p of projects) {
       const c = projectCost(p);
@@ -189,6 +190,7 @@ export function houseContext(d, { withProjects = true, withComponents = true, wi
       for (const m of p.milestones || [])
         L.push(`  Meilenstein [${p.id}#${m.id}] ${m.title}: ${m.date || 'ohne Datum'}${m.done ? ', erledigt' : ''}${(m.dependsOn || []).length ? `, erst nach ${m.dependsOn.join(', ')}` : ''}`);
     }
+    if (archived.length) L.push(`Deaktivierte Projekte (nicht geplant, nicht im Budget): ${archived.map((p) => `[${p.id}] ${p.title}`).join('; ')}`);
     if (projects.length) L.push('Abhängigkeiten verweisen auf eine Projekt-ID (= nach Projektende) oder auf „Projekt-ID#Meilenstein-ID“ (= nach diesem Meilenstein).');
   }
   L.push('');
@@ -261,7 +263,7 @@ Format:
 
 export async function aiTiming(p, d, opts) {
   const others = Object.values(d.projects || {})
-    .filter((x) => x.id !== p.id)
+    .filter((x) => x.id !== p.id && !x.archived)
     .map((x) => `- [${x.id}] ${x.title} (${projectKind(x.kind).name}, ${statusOf(x.status).name}, ${x.start || '?'} bis ${x.end || '?'})${(x.milestones || []).length ? `; Meilensteine: ${x.milestones.map((m) => `${m.title} ${m.date || 'ohne Datum'}`).join(', ')}` : ''}`)
     .join('\n');
   const prompt = `Du bist Bauleiter und planst Modernisierungen an einem bewohnten Einfamilienhaus in Deutschland.
@@ -503,7 +505,7 @@ export function chatRules(d) {
   return `Du bist der Haus-Assistent in der App „Hausakte“. Du hilfst dem Eigentümer, sein gerade gekauftes Haus zu verstehen, zu renovieren und zu modernisieren.
 Antworte auf Deutsch, konkret und knapp (höchstens ca. 200 Wörter, wenn nicht anders gewünscht). Nutze kurze Absätze oder Aufzählungen mit "- ". Fett mit **…** sparsam.
 Beziehe dich auf die Hausdaten unten. Bei Förderungen nutze die Wissensbasis und weise auf Prüfung bei KfW/BAFA hin. Erfinde keine Daten zum Haus; frage nach, wenn etwas fehlt.
-Wenn der Nutzer etwas anlegen oder ändern möchte (Projekt, Termine, Status, Hinweise, Abhängigkeiten, Förderung, Kostenposition, Rahmenbedingung, Meilenstein), nutze die verfügbaren Werkzeuge und sage danach kurz, was du geändert hast. Hole dir vor dem Ändern einzelner Positionen die IDs mit get_project. Ganze Projekte löschst du nicht – bitte den Nutzer, das selbst in der App zu tun.
+Wenn der Nutzer etwas anlegen oder ändern möchte (Projekt, Termine, Status, Hinweise, Abhängigkeiten, Förderung, Kostenposition, Rahmenbedingung, Meilenstein), nutze die verfügbaren Werkzeuge und sage danach kurz, was du geändert hast. Hole dir vor dem Ändern einzelner Positionen die IDs mit get_project. Ganze Projekte löschst du nicht. Auf Wunsch deaktivierst du ein Projekt mit update_project (archived: true); endgültig löschen kann der Nutzer ein deaktiviertes Projekt nur selbst in der App.
 Besprechungen: Erzählt der Nutzer von einem Termin oder Gespräch zu einem Projekt (z. B. „Notiz zur PV: Elektriker war da …“), lege mit add_meeting_note eine Besprechungsnotiz mit Terminen und To-dos an.
 Grundriss: Für Maße (Türbreiten, Abstände zwischen Fenstern, Wandlängen, Raummaße) hole mit get_floor_plan die Räume, Wände und Öffnungen der Etage und trage das Maß mit add_measurement ein; Leitungslängen änderst du mit update_line. Wähle bei mehreren passenden Fenstern die naheliegendsten (gleiche Wand, nebeneinander) und sage kurz, welche du genommen hast. Nachrichten können per Spracheingabe kommen – rechne mit Erkennungsfehlern (z. B. „eins komma fünf“ = 1,5) und frage nach, wenn etwas unklar ist.
 Das Feld „Hinweise“ eines Projekts ist für Abhängigkeiten, Fristen und Besonderheiten gedacht, die man beim Planen beachten muss. Abhängigkeiten können auf ein Projekt (nach dessen Ende) oder auf einen Meilenstein („Projekt-ID#Meilenstein-ID“) zeigen – für Projekte und für Meilensteine.

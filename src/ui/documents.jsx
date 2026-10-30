@@ -312,7 +312,7 @@ function DocCard({ doc, data, compact, onOpen }) {
           value={doc.projectId || ''}
           placeholder="Kein Projekt"
           onChange={(v) => set({ projectId: v || null })}
-          options={Object.values(data.projects).map((p) => ({ value: p.id, label: p.title }))}
+          options={Object.values(data.projects).map((p) => ({ value: p.id, label: p.archived ? `${p.title} (deaktiviert)` : p.title }))}
           aria-label="Projekt"
         />
         {missing ? (

@@ -93,6 +93,9 @@ export function projectCost(p) {
 }
 
 export const isDone = (p) => p.status === 'abgeschlossen';
+// deactivated projects stay stored but leave plans, budget and deadlines until they are reactivated or deleted
+export const isArchived = (p) => !!p?.archived;
+export const liveProjects = (projects) => Object.values(projects || {}).filter((p) => !p.archived);
 export const isActive = (p) => ['planung', 'angebote', 'beauftragt', 'umsetzung'].includes(p.status);
 
 // ---------- dependencies between projects and milestones ----------
@@ -133,14 +136,14 @@ export function projectIssues(p, all, today = todayISO()) {
   const byId = Object.fromEntries(all.map((x) => [x.id, x]));
   for (const ref of p.dependsOn || []) {
     const d = resolveRef(byId, ref);
-    if (!d || !d.date || !p.start || p.start >= d.date) continue;
+    if (!d || d.project.archived || !d.date || !p.start || p.start >= d.date) continue;
     if (!d.done) issues.push({ kind: 'dependency', level: 'warn', text: d.kind === 'milestone' ? `Startet vor Meilenstein „${d.title}“ von „${d.project.title}“ (${dmy(d.date)})` : `Startet vor Ende von „${d.title}“ (${dmy(d.date)})`, depId: ref });
     else if (d.kind === 'project') issues.push({ kind: 'dependency', level: 'info', text: `Überschneidet sich mit „${d.title}“`, depId: ref });
   }
   for (const m of p.milestones || []) {
     for (const ref of m.dependsOn || []) {
       const d = resolveRef(byId, ref);
-      if (!d || !d.date || !m.date || m.date >= d.date || d.done || m.done) continue;
+      if (!d || d.project.archived || !d.date || !m.date || m.date >= d.date || d.done || m.done) continue;
       issues.push({ kind: 'dependency', level: 'warn', text: `Meilenstein „${m.title}“ liegt vor ${d.kind === 'milestone' ? `Meilenstein „${d.title}“${d.project.id !== p.id ? ` von „${d.project.title}“` : ''}` : `dem Ende von „${d.title}“`} (${dmy(d.date)})`, depId: ref, msId: m.id });
     }
   }

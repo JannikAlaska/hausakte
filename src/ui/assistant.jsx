@@ -81,7 +81,7 @@ export function makeTools(log) {
       execute(input) {
         const p = getProject(input.projectId);
         return {
-          id: p.id, title: p.title, kind: p.kind, status: p.status, priority: p.priority, start: p.start, end: p.end, notes: p.notes || '', hints: p.hints || '', dependsOn: p.dependsOn || [],
+          id: p.id, title: p.title, kind: p.kind, status: p.status, archived: !!p.archived, priority: p.priority, start: p.start, end: p.end, notes: p.notes || '', hints: p.hints || '', dependsOn: p.dependsOn || [],
           milestones: (p.milestones || []).map((m) => ({ id: m.id, ref: msRef(p.id, m.id), title: m.title, date: m.date, done: !!m.done, dependsOn: m.dependsOn || [] })),
           costs: (p.costs || []).map((k) => ({ id: k.id, label: k.label, estimate: k.estimate, offer: k.offer, actual: k.actual, vendor: k.vendor || '' })),
           constraints: (p.constraints || []).map((c) => ({ id: c.id, text: c.text, kind: c.kind, done: !!c.done })),
@@ -105,6 +105,7 @@ export function makeTools(log) {
           notes: { type: 'string', description: 'ersetzt die Notizen' },
           hints: { type: 'string', description: 'ersetzt die Hinweise (Abhängigkeiten, Fristen, Besonderheiten)' },
           appendHints: { type: 'string', description: 'hängt einen Hinweis an die bestehenden an' },
+          archived: { type: 'boolean', description: 'true deaktiviert das Projekt (aus Plan und Budget genommen), false aktiviert es wieder. Löschen kann nur der Nutzer selbst.' },
           ...depProps,
         },
         required: ['projectId'],
@@ -124,6 +125,7 @@ export function makeTools(log) {
         if (typeof input.hints === 'string') (patch.hints = str(input.hints)), changed.push('Hinweise');
         if (input.appendHints) (patch.hints = [(patch.hints ?? p.hints ?? '').trim(), str(input.appendHints, 600)].filter(Boolean).join('\n')), changed.push('Hinweise');
         if (input.dependsOn || input.addDependsOn || input.removeDependsOn) (patch.dependsOn = nextDeps(p.dependsOn, input, p.id)), changed.push('Abhängigkeiten');
+        if (typeof input.archived === 'boolean' && input.archived !== !!p.archived) (patch.archived = input.archived), (patch.archivedAt = input.archived ? Date.now() : null), changed.push(input.archived ? 'deaktiviert' : 'wieder aktiviert');
         if (!changed.length) return 'Keine gültigen Änderungen übergeben';
         patchProject(p.id, (x) => ({ ...x, ...patch }));
         log({ kind: 'project', id: p.id, text: `${p.title}: ${[...new Set(changed)].join(', ')} geändert` });

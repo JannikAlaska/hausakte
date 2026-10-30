@@ -6,7 +6,7 @@ import { AiRunner } from './ai-ui.jsx';
 import { setUI, go } from './state.js';
 import { updateHouse } from '../store.js';
 import { heatResult, heatMeasures, applyMeasures, EMITTERS, HEAT_DEFAULTS, isHeatedFloor } from '../heat.js';
-import { sortFloors, projectCost } from '../metrics.js';
+import { sortFloors, projectCost, liveProjects } from '../metrics.js';
 import { economics, kfw458, LIFE, PRICE_RISE } from '../econ.js';
 import { EconLine, AiVerdict } from './econ.jsx';
 import { aiHeat } from '../ai.js';
@@ -316,7 +316,7 @@ export function HeatCheck({ data }) {
 // Does the heat pump pay off? Against keeping the old boiler and against a new oil boiler.
 const OIL_BOILER = 12000;
 function hpEconomics(data, base, heat, rise) {
-  const proj = Object.values(data.projects || {}).find((p) => p.kind === 'heizung');
+  const proj = liveProjects(data.projects).find((p) => p.kind === 'heizung');
   const planned = proj ? projectCost(proj).best : 0;
   const invest = planned || 12000 + 1600 * base.hpSize;
   const grant = kfw458(invest, { replaceFossil: true, incomeBonus: heat.incomeBonus ?? 0, efficiency: !!heat.efficiencyBonus });

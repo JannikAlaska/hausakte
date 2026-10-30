@@ -321,7 +321,7 @@ function ComponentAssessment({ r, data }) {
           .filter((it) => data.components[it.componentId])
           .map((it, i) => {
             const c = data.components[it.componentId];
-            const linked = Object.values(data.projects).find((p) => (p.components || []).includes(c.id));
+            const linked = Object.values(data.projects).find((p) => !p.archived && (p.components || []).includes(c.id));
             return (
               <li key={i} className="ai-item">
                 <div className="ai-item-head">

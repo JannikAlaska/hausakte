@@ -896,3 +896,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 @media (max-width: 760px) {
   .meet-intro { flex-direction: column; align-items: stretch; }
 }
+
+/* deactivated projects */
+.prow.is-archived { opacity: 0.62; }
+.prow.is-archived:hover { opacity: 1; }
+.archived-callout b { display: block; margin-bottom: 2px; }

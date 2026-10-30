@@ -1,7 +1,7 @@
 import { Icon } from './icons.jsx';
 import { IconBtn, Seg, Btn, Pill } from './common.jsx';
 import { useUI, setUI, openDrawer, go, showFloor } from './state.js';
-import { portfolio, sortFloors, floorStats, componentWear, isDone, roomArea, buildingStats } from '../metrics.js';
+import { portfolio, sortFloors, floorStats, componentWear, isDone, roomArea, buildingStats, liveProjects } from '../metrics.js';
 import { projectKind, status as statusOf, roomType } from '../catalog.js';
 import { ROOF_TYPES } from '../roof.js';
 import { fmtEuro, fmtDayMonth, fmtFixed, todayISO, fmtNum } from '../util.js';
@@ -11,7 +11,7 @@ import { bearingName } from '../roof.js';
 const { useMemo } = React;
 
 export function KpiRow({ data }) {
-  const projects = Object.values(data.projects);
+  const projects = liveProjects(data.projects);
   const pf = useMemo(() => portfolio(projects), [data.projects]);
   const comps = Object.values(data.components);
   const due = comps.filter((c) => componentWear(c).state === 'faellig');
@@ -177,7 +177,7 @@ const stepTone = (p, today) => {
 
 export function Timeline({ data }) {
   const today = todayISO();
-  const projects = Object.values(data.projects).sort((a, b) => (a.start || '9999') < (b.start || '9999') ? -1 : 1);
+  const projects = liveProjects(data.projects).sort((a, b) => (a.start || '9999') < (b.start || '9999') ? -1 : 1);
   if (!projects.length)
     return (
       <div className="timeline">

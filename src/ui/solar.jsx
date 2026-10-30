@@ -6,7 +6,7 @@ import { updateHouse } from '../store.js';
 import { houseGeo, sunPosition, localToUtc, sunTimes, doyOf, dateOfDoy, simulateSelfUse, SHADE_BINS, MONTHS } from '../solar.js';
 import { heatResult } from '../heat.js';
 import { bearingName } from '../roof.js';
-import { consumptionByYear, projectCost } from '../metrics.js';
+import { consumptionByYear, projectCost, liveProjects } from '../metrics.js';
 import { economics, paybackText, LIFE, PRICE_RISE } from '../econ.js';
 import { EconLine } from './econ.jsx';
 import { fmtNum, fmtFixed, fmtEuro } from '../util.js';
@@ -241,11 +241,11 @@ export function SolarCheck({ data }) {
   const [busy, setBusy] = useState(null);
   const ctl = useRef(null);
   const set = (patch) => updateHouse((x) => ({ ...x, solar: { ...(x.solar || {}), ...patch } }), 300);
-  const pvProject = Object.values(data.projects || {}).find((p) => p.kind === 'pv');
+  const pvProject = liveProjects(data.projects).find((p) => p.kind === 'pv');
   const st = {
     household: solar.household ?? defaultHousehold(data),
     battery: solar.battery ?? (/speicher/i.test(pvProject?.title || '') ? 8 : 0),
-    withHp: solar.withHp ?? Object.values(data.projects || {}).some((p) => p.kind === 'heizung' && /wärmepumpe/i.test(p.title || '')),
+    withHp: solar.withHp ?? liveProjects(data.projects).some((p) => p.kind === 'heizung' && /wärmepumpe/i.test(p.title || '')),
     priceGrid: solar.priceGrid ?? 0.34,
     feedIn: solar.feedIn ?? 0.078,
   };
