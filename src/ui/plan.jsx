@@ -13,6 +13,7 @@ import {
   planarFaces, wallSegs, roomInnerPolygon, outerOutline, same, faceAt,
 } from '../geometry.js';
 import { putDoc, deleteDoc, updateHouse, getAssets, blobUrl, getState } from '../store.js';
+import { lineLength, linePlanPts, fixtureAnchor, dedup3, relink, roomOfPoint, resizeLine, dimLength } from '../planops.js';
 import { uid, deepClone, fmtFixed, fmtNum, parseNum } from '../util.js';
 
 const { useState, useRef, useEffect, useMemo, useCallback } = React;
@@ -43,15 +44,6 @@ const LINE_STATUS = [
 // ---------- installation lines (points are [x, y, z] with z = height above the floor) ----------
 const zoneZ = (opts, floor) => (opts.zone === 'custom' ? opts.z ?? 0.3 : LINE_ZONES.find((z) => z.key === opts.zone)?.z(floor) ?? 0.3);
 const defaultZone = (kind) => (kind === 'lueftung' ? 'oben' : kind === 'abwasser' || kind === 'heizung' ? 'boden' : 'unten');
-export function lineLength(l) {
-  let L = 0;
-  for (let i = 1; i < (l.pts || []).length; i++) {
-    const a = l.pts[i - 1],
-      b = l.pts[i];
-    L += Math.hypot(b[0] - a[0], b[1] - a[1], (b[2] ?? 0) - (a[2] ?? 0));
-  }
-  return L;
-}
 function hitLine(p, lines, tol) {
   let best = null;
   for (const l of lines) {
@@ -65,13 +57,6 @@ function hitLine(p, lines, tol) {
   }
   return best;
 }
-// unique plan positions of a line (vertical pieces collapse to one point)
-function linePlanPts(l) {
-  const out = [];
-  for (const q of l.pts || []) if (!out.length || !same(out[out.length - 1], q, 0.002)) out.push([q[0], q[1]]);
-  return out;
-}
-
 // ---------- connection points (outlets, switches, lamps, taps) ----------
 // Wall-mounted kinds sit on the wall face nearest to the click; rot is the direction (degrees) the face points to.
 function snapFixture(p, kind, walls, grid) {
@@ -99,74 +84,6 @@ function hitPoint(p, points, tol) {
   }
   return best?.pt || null;
 }
-// point in the wall axis behind a wall-mounted fixture (lamps: the fixture itself)
-function fixtureAnchor(pt, walls) {
-  if (pt.rot == null) return [pt.x, pt.y];
-  let best = null;
-  for (const w of walls) {
-    const r = distToSeg([pt.x, pt.y], w.a, w.b);
-    const e = Math.abs(r.d - w.t / 2);
-    if (e < 0.03 && (!best || e < best.e)) best = { e, q: r.q };
-  }
-  return best ? P3(best.q) : [pt.x, pt.y];
-}
-// nearest point of a line in plan, with its height (risers: clamped to the wanted height)
-function nearestOnLine(p, l, zWant) {
-  const pts = l.pts || [];
-  let best = null;
-  for (let i = 1; i < pts.length; i++) {
-    const a = pts[i - 1],
-      b = pts[i];
-    if (same(a, b, 0.002)) continue;
-    const r = distToSeg(p, a, b);
-    if (!best || r.d < best.d) best = { d: r.d, q: [r.q[0], r.q[1], (a[2] ?? 0) + ((b[2] ?? 0) - (a[2] ?? 0)) * r.t] };
-  }
-  if (!best && pts.length) {
-    const zs = pts.map((q) => q[2] ?? 0);
-    best = { d: dist(p, pts[0]), q: [pts[0][0], pts[0][1], Math.max(Math.min(...zs), Math.min(Math.max(...zs), zWant))] };
-  }
-  return best;
-}
-const dedup3 = (pts) => pts.filter((q, i, a) => i === 0 || Math.abs(q[0] - a[i - 1][0]) + Math.abs(q[1] - a[i - 1][1]) + Math.abs(q[2] - a[i - 1][2]) > 0.004);
-// Connects every fixture to a matching line nearby with a short piece: along the wall axis, up or down, out to the wall face.
-// These pieces are regenerated on every change; once edited by hand they stay.
-export function relink(f) {
-  const lines = f.lines || [];
-  const keep = lines.filter((l) => !(l.auto && l.stubFor));
-  const points = f.points || [];
-  const stubs = [];
-  for (const pt of points) {
-    const kinds = fixtureKind(pt.kind).lines || [];
-    const cand = keep.filter((l) => kinds.includes(l.kind) && (l.pts || []).length >= 2);
-    if (!cand.length) continue;
-    const P = [pt.x, pt.y];
-    if (cand.some((l) => l.pts.some((q) => dist(q, P) < 0.03))) continue;
-    const A = fixtureAnchor(pt, f.walls || []);
-    const zf = pt.z ?? 0.3;
-    // a line running right through the fixture only needs a vertical piece (if at all)
-    const through = cand.map((l) => ({ l, r: nearestOnLine(P, l, zf) })).filter((x) => x.r && x.r.d < 0.03);
-    if (through.length) {
-      if (through.some((x) => Math.abs(x.r.q[2] - zf) < 0.01)) continue;
-      const t = through[0];
-      stubs.push({ id: 'ls-' + pt.id, kind: t.l.kind, status: t.l.status || 'bestand', pts: [[P[0], P[1], r3(t.r.q[2])], [P[0], P[1], r3(zf)]], label: '', notes: '', stubFor: pt.id, auto: true });
-      continue;
-    }
-    let best = null;
-    for (const l of cand) {
-      const r = nearestOnLine(A, l, zf);
-      if (r && (!best || r.d < best.d)) best = { ...r, l };
-    }
-    if (!best || best.d > (pt.kind === 'lampe' ? 0.8 : 0.4)) continue;
-    const zq = best.q[2];
-    // wall fixtures: along the wall axis, then up/down; ceiling lamps: up into the ceiling, then across
-    const raw = pt.rot == null ? [[best.q[0], best.q[1], zq], [best.q[0], best.q[1], zf], [P[0], P[1], zf]] : [[best.q[0], best.q[1], zq], [A[0], A[1], zq], [A[0], A[1], zf], [P[0], P[1], zf]];
-    const pts = dedup3(raw.map((q) => q.map(r3)));
-    if (pts.length < 2) continue;
-    stubs.push({ id: 'ls-' + pt.id, kind: best.l.kind, status: pt.status === 'geplant' || best.l.status === 'geplant' ? 'geplant' : best.l.status || 'bestand', pts, label: '', notes: '', stubFor: pt.id, auto: true });
-  }
-  if (!stubs.length && keep.length === lines.length) return f;
-  return { ...f, lines: [...keep, ...stubs] };
-}
 // a drawn line that ends on a fixture goes into the wall axis, to the fixture height and out to the face
 function wireEnds(pts, points, walls) {
   let out = pts.map((q) => [...q]);
@@ -184,13 +101,6 @@ function wireEnds(pts, points, walls) {
   const b = seq(out[0]);
   if (b) out = [...b.reverse(), ...out.slice(1)];
   return dedup3(out.map((q) => [q[0], q[1], q[2] ?? 0]));
-}
-
-// room a point belongs to (wall points are nudged into the room they face)
-export function roomOfPoint(floor, pt) {
-  const a = ((pt.rot ?? 0) * Math.PI) / 180;
-  const q = pt.rot == null ? [pt.x, pt.y] : [pt.x + Math.cos(a) * 0.08, pt.y + Math.sin(a) * 0.08];
-  return (floor.rooms || []).find((r) => r.poly?.length && pointInPoly(q, r.poly)) || null;
 }
 
 // ---------- geometry helpers ----------
@@ -286,6 +196,28 @@ function snapPoint(raw, { from, walls, s, grid, ortho, extra = [] }) {
     return { p: P3(add(from, mul(norm(v), Lr))), kind };
   }
   return { p: [r3(Math.round(p[0] / grid) * grid), r3(Math.round(p[1] / grid) * grid)], kind };
+}
+
+// door and window edges (wall axis and both faces) as snap points for dimensions
+function jambPoints(walls) {
+  const out = [];
+  for (const w of walls) {
+    const { u, n } = wallFrame(w);
+    for (const o of w.openings || [])
+      for (const e of [o.pos - o.w / 2, o.pos + o.w / 2]) {
+        const c = add(w.a, mul(u, e));
+        out.push(P3(c), P3(add(c, mul(n, w.t / 2))), P3(add(c, mul(n, -w.t / 2))));
+      }
+  }
+  return out;
+}
+function hitDim(p, dims, tol) {
+  let best = null;
+  for (const d of dims) {
+    const r = distToSeg(p, d.a, d.b).d;
+    if (r < tol && (!best || r < best.r)) best = { d, r };
+  }
+  return best?.d || null;
 }
 
 function hitOpening(p, walls, tol) {
@@ -544,6 +476,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
   const walls = floor.walls || [];
   const lines = floor.lines || [];
   const points = floor.points || [];
+  const dims = floor.dims || [];
   const fitPts = useCallback(() => walls.flatMap((w) => [w.a, w.b]).concat(guide ? [[guide.x - 1, guide.y - 1], [guide.x + guide.w + 1, guide.y + guide.d + 1]] : []).concat(floor.underlay ? [[floor.underlay.x, floor.underlay.y], [floor.underlay.x + floor.underlay.w, floor.underlay.y + floor.underlay.w * (floor.underlay.aspect || 0.7)]] : []), [floor.id]);
   const { size, view, setView, fit } = useViewport(boxRef, fitPts, floor.id);
   const { pointers, pinch } = usePanZoom(svgRef, view, setView);
@@ -587,8 +520,12 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
     const r = svgRef.current.getBoundingClientRect();
     return [(e.clientX - r.left - view.tx) / view.s, (e.clientY - r.top - view.ty) / view.s];
   };
-  const wiring = tool === 'line' || tool === 'riser' || tool === 'select';
-  const snapOpts = (from) => ({ from, walls, s: view.s, grid, ortho, extra: [...(chain?.pts || []), ...(wiring ? [...points.map((q) => [q.x, q.y]), ...lines.filter((l) => !l.auto).flatMap((l) => linePlanPts(l))] : [])] });
+  const wiring = tool === 'line' || tool === 'riser' || tool === 'select' || tool === 'measure';
+  const measuring = tool === 'measure' || (tool === 'select' && sel?.kind === 'dim');
+  const snapOpts = (from) => ({
+    from, walls, s: view.s, grid, ortho,
+    extra: [...(chain?.pts || []), ...(wiring ? [...points.map((q) => [q.x, q.y]), ...lines.filter((l) => !l.auto).flatMap((l) => linePlanPts(l))] : []), ...(measuring ? jambPoints(walls) : [])],
+  });
 
   const deleteSelection = () => {
     if (!sel) return;
@@ -597,6 +534,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
     if (sel.kind === 'room') mutate((f) => ({ ...f, rooms: f.rooms.filter((r) => r.id !== sel.id) }), { refresh: false });
     if (sel.kind === 'item') mutate((f) => ({ ...f, items: f.items.filter((r) => r.id !== sel.id) }), { refresh: false });
     if (sel.kind === 'line') mutate((f) => ({ ...f, lines: (f.lines || []).filter((l) => l.id !== sel.id) }), { refresh: false });
+    if (sel.kind === 'dim') mutate((f) => ({ ...f, dims: (f.dims || []).filter((d) => d.id !== sel.id) }), { refresh: false });
     if (sel.kind === 'point') mutate((f) => ({ ...f, points: (f.points || []).filter((q) => q.id !== sel.id), lines: (f.lines || []).filter((l) => l.stubFor !== sel.id) }), { refresh: false });
     setSel(null);
   };
@@ -772,8 +710,12 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
     }
     if (tool === 'measure') {
       const sp = snapPoint(p, snapOpts(measure && !measure.b ? measure.a : null)).p;
-      if (!measure || measure.b) setMeasure({ a: sp, b: null });
-      else setMeasure({ ...measure, b: sp });
+      if (!measure || measure.b) return setMeasure({ a: sp, b: null });
+      if (dist(measure.a, sp) < 0.02) return;
+      const id = uid('d');
+      mutate((f) => ({ ...f, dims: [...(f.dims || []), { id, a: P3(measure.a), b: P3(sp), value: null, label: '' }] }), { refresh: false });
+      setMeasure(null);
+      setSel({ kind: 'dim', id, focus: true });
       return;
     }
     if (tool === 'underlay' && floor.underlay) {
@@ -787,6 +729,17 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
       return;
     }
     // select tool
+    if (sel?.kind === 'dim') {
+      const d = dims.find((x) => x.id === sel.id);
+      const end = d && ['a', 'b'].find((k) => dist(p, d[k]) < 10 / view.s);
+      if (end) return setDrag({ kind: 'dimPt', id: d.id, end, from: deepClone(floor) });
+    }
+    const hd = hitDim(p, dims, tolM);
+    if (hd) {
+      setSel({ kind: 'dim', id: hd.id });
+      setDrag({ kind: 'dimMove', id: hd.id, p0: p, a0: [...hd.a], b0: [...hd.b], from: deepClone(floor) });
+      return;
+    }
     if (showLines) {
       const hp = hitPoint(p, points, 9 / view.s);
       if (hp) {
@@ -941,6 +894,24 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
       drag.moved = true;
       return;
     }
+    if (drag.kind === 'dimPt') {
+      const d = f.dims.find((x) => x.id === drag.id);
+      d[drag.end] = P3(snapPoint(p, snapOpts(d[drag.end === 'a' ? 'b' : 'a'])).p);
+      save(f, { undo: false, refresh: false });
+      drag.moved = true;
+      return;
+    }
+    if (drag.kind === 'dimMove') {
+      const d = f.dims.find((x) => x.id === drag.id);
+      const dx = Math.round((p[0] - drag.p0[0]) / grid) * grid,
+        dy = Math.round((p[1] - drag.p0[1]) / grid) * grid;
+      if (!dx && !dy && !drag.moved) return;
+      d.a = P3([drag.a0[0] + dx, drag.a0[1] + dy]);
+      d.b = P3([drag.b0[0] + dx, drag.b0[1] + dy]);
+      save(f, { undo: false, refresh: false });
+      drag.moved = true;
+      return;
+    }
     if (drag.kind === 'ptMove') {
       const q = f.points.find((x) => x.id === drag.id);
       const sf = snapFixture(p, q.kind, f.walls || [], grid);
@@ -1003,6 +974,19 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
       }
     }
     setDrag(null);
+  };
+
+  // typed length while drawing a line: next point at that distance towards the cursor
+  const applyTypedLine = () => {
+    const L = parseNum(typed);
+    if (!chain || !L || L <= 0) return;
+    const last = chain.pts[chain.pts.length - 1];
+    const target = cursor?.p || add(last, [1, 0]);
+    const dir = norm(sub(target, [last[0], last[1]]));
+    if (!len(dir)) return;
+    const sp = P3(add([last[0], last[1]], mul(dir, L)));
+    setChain({ pts: lineStep(chain.pts, sp, zoneZ(lineOpts, floor)) });
+    setTyped('');
   };
 
   // typed length while drawing walls
@@ -1088,6 +1072,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
   const selItem = sel?.kind === 'item' ? (floor.items || []).find((r) => r.id === sel.id) : null;
   const selLine = sel?.kind === 'line' ? lines.find((l) => l.id === sel.id) : null;
   const selPoint = sel?.kind === 'point' ? points.find((q) => q.id === sel.id) : null;
+  const selDim = sel?.kind === 'dim' ? dims.find((d) => d.id === sel.id) : null;
   const hints = {
     select: 'Klicken wählt Wände, Öffnungen, Räume und Treppen. Wand ziehen verschiebt sie, Endpunkte ziehen ändert die Länge. Leere Fläche ziehen verschiebt die Ansicht.',
     wall: chain ? 'Weiter klicken für die nächste Wand · Länge eintippen + Enter · Esc oder Doppelklick beendet' : 'Startpunkt klicken. Punkte rasten an Wandenden und auf Wänden ein.',
@@ -1097,8 +1082,8 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
     door: 'Auf eine Wand klicken, um eine Tür zu setzen.',
     opening: 'Auf eine Wand klicken, um einen Durchgang zu setzen.',
     stairs: 'Rechteck aufziehen. Richtung danach rechts einstellen.',
-    measure: 'Zwei Punkte klicken, um den Abstand zu messen.',
-    line: chain ? 'Weiter klicken für den nächsten Punkt · Höhe rechts ändern = senkrechtes Stück · Enter oder Doppelklick beendet' : 'Startpunkt der Leitung klicken. Punkte rasten an Wänden ein. Art und Höhe stellst du rechts ein.',
+    measure: measure && !measure.b ? 'Jetzt den Endpunkt klicken. Punkte rasten an Wänden, Tür- und Fensterkanten ein.' : 'Anfang und Ende klicken – z. B. Türbreite oder Abstand zwischen zwei Fenstern. Den vor Ort gemessenen Wert trägst du danach rechts ein.',
+    line: chain ? 'Weiter klicken für den nächsten Punkt · Länge eintippen + Enter setzt das nächste Stück in Cursorrichtung · Höhe rechts ändern = senkrechtes Stück · Doppelklick beendet' : 'Startpunkt der Leitung klicken. Punkte rasten an Wänden ein. Art und Höhe stellst du rechts ein.',
     fixture: `${fixtureKind(fixOpts.kind).wall ? 'Klicke neben die Wand, an der der Anschluss sitzt – er rastet auf dieser Wandseite ein.' : 'Klicke die Stelle im Raum, an der die Lampe hängt.'} Weitere Klicks setzen weitere Anschlüsse, Ziehen verschiebt sie.`,
     riser: 'Klicke die Stelle, an der die Leitung senkrecht verläuft (z. B. Steigleitung, Fallrohr). Von- und Bis-Höhe stellst du rechts ein.',
     underlay: calib ? (calib.pts.length ? 'Jetzt den zweiten Punkt klicken.' : 'Ersten Punkt einer bekannten Strecke auf dem Plan klicken (z. B. Außenmaß).') : 'Plan ziehen verschiebt ihn. Maßstab über „Kalibrieren“ festlegen.',
@@ -1132,7 +1117,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
               { value: 'riser', icon: 'riser', title: 'Steigleitung (senkrecht)' },
               { value: 'fixture', icon: 'socket', title: 'Anschluss (Steckdose, Schalter, Lampe, Netzwerk, Wasser, Gas)' },
               { value: 'roomPoly', icon: 'edit', title: 'Raum als Polygon' },
-              { value: 'measure', icon: 'ruler', title: 'Messen' },
+              { value: 'measure', icon: 'ruler', title: 'Maß eintragen (Maßlinie)' },
               { value: 'underlay', icon: 'image', title: 'Plan-Unterlage' },
             ].filter((o) => !ctx || o.value !== 'underlay')}
           />
@@ -1281,6 +1266,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
               {drag?.kind === 'newStairs' ? (
                 <rect x={Math.min(drag.a[0], drag.b[0])} y={Math.min(drag.a[1], drag.b[1])} width={Math.abs(drag.b[0] - drag.a[0])} height={Math.abs(drag.b[1] - drag.a[1])} className="svg-stairs" strokeWidth={px(1.5)} style={{ stroke: 'var(--accent)' }} />
               ) : null}
+              <DimLines dims={dims} sel={sel} px={px} />
               {measure ? <MeasureLine a={measure.a} b={measure.b || cursor?.p} px={px} /> : null}
               {calib?.pts?.map((q, i) => <circle key={i} cx={q[0]} cy={q[1]} r={px(6)} fill="var(--warn)" />)}
               {calib?.pts?.length === 2 ? <line x1={calib.pts[0][0]} y1={calib.pts[0][1]} x2={calib.pts[1][0]} y2={calib.pts[1][1]} stroke="var(--warn)" strokeWidth={px(2)} /> : null}
@@ -1315,9 +1301,27 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
           {chain && tool === 'line' ? (
             <div className="plan-len">
               <span className="dot" style={{ background: lineKind(lineOpts.kind).color }} />
-              <span>
-                {lineKind(lineOpts.kind).name} · {fmtFixed(lineLength({ pts: chain.pts }), 2)} m · Höhe {fmtFixed(zoneZ(lineOpts, floor), 2)} m
+              <span className="plan-len-info">
+                {fmtFixed(lineLength({ pts: chain.pts }), 2)} m · Höhe {fmtFixed(zoneZ(lineOpts, floor), 2)} m
               </span>
+              <input
+                id="plan-typed"
+                className="input"
+                inputMode="decimal"
+                value={typed}
+                placeholder={cursor ? fmtFixed(dist(chain.pts[chain.pts.length - 1], cursor.p), 2) : 'Länge'}
+                onChange={(e) => setTyped(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (typed.trim()) applyTypedLine();
+                    else finishChain();
+                  }
+                }}
+                aria-label="Länge des nächsten Stücks in Metern"
+              />
+              <span>m</span>
               <Btn small kind="ghost" onClick={finishChain}>
                 Fertig
               </Btn>
@@ -1333,7 +1337,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
         </div>
       </div>
       <PropsPanel
-        title={selWall ? 'Wand' : selOpening ? OPENING_NAMES[selOpening.type] : selRoom ? `Raum: ${selRoom.name}` : selItem ? 'Treppe' : selPoint ? fixtureKind(selPoint.kind).name : selLine ? 'Leitung' : tool === 'line' || tool === 'riser' ? 'Neue Leitung' : tool === 'fixture' ? 'Anschluss' : ctx ? 'Nebengebäude' : 'Etage & Einstellungen'}
+        title={selDim ? `Maß${selDim.label ? ': ' + selDim.label : ''}` : selWall ? 'Wand' : selOpening ? OPENING_NAMES[selOpening.type] : selRoom ? `Raum: ${selRoom.name}` : selItem ? 'Treppe' : selPoint ? fixtureKind(selPoint.kind).name : selLine ? 'Leitung' : tool === 'line' || tool === 'riser' ? 'Neue Leitung' : tool === 'fixture' ? 'Anschluss' : ctx ? 'Nebengebäude' : 'Etage & Einstellungen'}
         openKey={sel ? sel.kind + sel.id : ['line', 'riser', 'fixture', 'wall'].includes(tool) ? tool : null}
       >
         {selWall ? (
@@ -1344,6 +1348,8 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
           <RoomProps r={selRoom} floor={floor} mutate={mutate} onDelete={deleteSelection} focus={sel.focus} noDetails={ctx} />
         ) : selItem ? (
           <StairProps it={selItem} mutate={mutate} onDelete={deleteSelection} />
+        ) : selDim ? (
+          <DimProps d={selDim} floor={floor} mutate={mutate} onDelete={deleteSelection} focus={sel.focus} />
         ) : tool === 'fixture' ? (
           <FixtureToolProps opts={fixOpts} setOpts={setFixOpts} floor={floor} selected={selPoint} mutate={mutate} onDelete={deleteSelection} onDetails={() => setTool('select')} />
         ) : selPoint ? (
@@ -1367,6 +1373,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
             mutate={mutate}
             lines={lines}
             points={points}
+            dims={dims}
             ulUrl={ulUrl}
             onUpload={() => fileRef.current?.click()}
             onCalibrate={() => { setTool('underlay'); setCalib({ pts: [] }); }}
@@ -1634,6 +1641,49 @@ function RiserHeights({ from, to, floor, floors, onChange }) {
   );
 }
 
+// Length of a drawn line; a new value moves the end (or the start) so plan and 3D match the real length.
+function LineLength({ l, set }) {
+  const [atStart, setAtStart] = useState(false);
+  const L = lineLength(l);
+  // applied on Enter or when leaving the field – shortening while typing would cut pieces off
+  const [text, setText] = useState(null);
+  const apply = () => {
+    const v = parseNum(text ?? '');
+    setText(null);
+    if (v > 0.02 && Math.abs(v - L) > 0.0005) set({ pts: resizeLine(l.pts, v, atStart) });
+  };
+  return (
+    <>
+      <Field label="Länge" hint={l.riser ? 'Ändert die obere Höhe der Steigleitung · Enter übernimmt' : 'Neue Länge verlängert oder kürzt die Leitung am gewählten Ende · Enter übernimmt'}>
+        <span className="input-wrap">
+          <input
+            id={'ln-len-' + l.id}
+            className="input num"
+            style={{ paddingRight: 21 }}
+            inputMode="decimal"
+            value={text ?? fmtNum(L, 2)}
+            onChange={(e) => setText(e.target.value)}
+            onBlur={apply}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                e.currentTarget.blur();
+              }
+              if (e.key === 'Escape') setText(null);
+            }}
+          />
+          <span className="input-unit">m</span>
+        </span>
+      </Field>
+      {!l.riser ? (
+        <Field label="Anpassen">
+          <Seg small value={atStart ? 'start' : 'end'} onChange={(v) => setAtStart(v === 'start')} options={[{ value: 'end', label: 'am Ende' }, { value: 'start', label: 'am Anfang' }]} />
+        </Field>
+      ) : null}
+    </>
+  );
+}
+
 function LinePreview({ pts, cursor, kind, px }) {
   const k = lineKind(kind);
   const pp = linePlanPts({ pts });
@@ -1721,11 +1771,8 @@ function LineProps({ l, floor, floors, data, mutate, onDelete }) {
       <Field label="Zustand">
         <Seg small value={l.status || 'bestand'} onChange={(v) => set({ status: v })} options={LINE_STATUS} />
       </Field>
+      <LineLength l={l} set={set} />
       <div>
-        <div className="kv">
-          <span>Länge</span>
-          <b>{fmtFixed(lineLength(l), 2)} m</b>
-        </div>
         <div className="kv">
           <span>Höhe über Fußboden</span>
           <b>{flat ? `${fmtFixed(zMin, 2)} m` : `${fmtFixed(zMin, 2)} – ${fmtFixed(zMax, 2)} m`}</b>
@@ -1809,6 +1856,120 @@ function DrawPreview({ chain, cursor, px, t }) {
         {fmtFixed(L, 2)} m
       </text>
     </g>
+  );
+}
+
+// Saved dimension lines: ticks at both ends, the measured value (or the plan length) above the line.
+function DimLines({ dims, sel, px }) {
+  return (
+    <g>
+      {dims.map((d) => {
+        const isSel = sel?.kind === 'dim' && sel.id === d.id;
+        const L = dimLength(d);
+        if (L < 0.005) return null;
+        const u = [(d.b[0] - d.a[0]) / L, (d.b[1] - d.a[1]) / L];
+        const n = [-u[1], u[0]];
+        const m = [(d.a[0] + d.b[0]) / 2, (d.a[1] + d.b[1]) / 2];
+        const ang = (Math.atan2(u[1], u[0]) * 180) / Math.PI;
+        const rot = ang > 90 || ang < -90 ? ang + 180 : ang;
+        const tick = (q) => `M${q[0] + (u[0] + n[0]) * px(5)},${q[1] + (u[1] + n[1]) * px(5)} L${q[0] - (u[0] + n[0]) * px(5)},${q[1] - (u[1] + n[1]) * px(5)}`;
+        const ext = (q) => `M${q[0] + n[0] * px(7)},${q[1] + n[1] * px(7)} L${q[0] - n[0] * px(7)},${q[1] - n[1] * px(7)}`;
+        const off = d.value != null && Math.abs(d.value - L) > 0.02;
+        const text = `${d.label ? d.label + ': ' : ''}${fmtFixed(d.value ?? L, 2)} m`;
+        const tp = [m[0] - n[0] * px(9), m[1] - n[1] * px(9)];
+        return (
+          <g key={d.id} className="svg-dimline">
+            {isSel ? <line x1={d.a[0]} y1={d.a[1]} x2={d.b[0]} y2={d.b[1]} stroke="var(--accent)" strokeOpacity="0.3" strokeWidth={px(10)} strokeLinecap="round" /> : null}
+            <line x1={d.a[0]} y1={d.a[1]} x2={d.b[0]} y2={d.b[1]} stroke="var(--violet)" strokeWidth={px(1.6)} />
+            <path d={`${tick(d.a)} ${tick(d.b)} ${ext(d.a)} ${ext(d.b)}`} stroke="var(--violet)" strokeWidth={px(1.6)} fill="none" />
+            <text x={tp[0]} y={tp[1]} textAnchor="middle" fontSize={px(11.5)} fontWeight="700" fill="var(--violet)" stroke="var(--surface)" strokeWidth={px(3)} paintOrder="stroke" transform={`rotate(${rot} ${tp[0]} ${tp[1]})`}>
+              {text}
+              {off ? <tspan fontWeight="400" fontSize={px(10)}>{` (Plan ${fmtFixed(L, 2)})`}</tspan> : null}
+            </text>
+            {isSel ? ['a', 'b'].map((k) => <circle key={k} cx={d[k][0]} cy={d[k][1]} r={px(5.5)} className="svg-handle" strokeWidth={px(2)} />) : null}
+          </g>
+        );
+      })}
+    </g>
+  );
+}
+
+function DimProps({ d, floor, mutate, onDelete, focus }) {
+  const set = (patch) => mutate((f) => ({ ...f, dims: (f.dims || []).map((x) => (x.id === d.id ? { ...x, ...patch } : x)) }), { refresh: false });
+  const L = dimLength(d);
+  const ref = useRef(null);
+  useEffect(() => {
+    // after the click on the plan has finished moving the focus
+    if (!focus) return;
+    const t = setTimeout(() => ref.current?.querySelector('input')?.focus(), 60);
+    return () => clearTimeout(t);
+  }, [d.id]);
+  const room = (floor.rooms || []).find((r) => r.poly?.length && pointInPoly([(d.a[0] + d.b[0]) / 2, (d.a[1] + d.b[1]) / 2], r.poly));
+  const fit = () => {
+    const k = d.value / L;
+    set({ b: P3([d.a[0] + (d.b[0] - d.a[0]) * k, d.a[1] + (d.b[1] - d.a[1]) * k]) });
+  };
+  return (
+    <div className="stack">
+      <div className="spread">
+        <h4>Maß</h4>
+        <ConfirmBtn onConfirm={onDelete}>{''}</ConfirmBtn>
+      </div>
+      <div ref={ref}>
+        <Field label="Gemessen (vor Ort)" hint="Leer = Länge aus dem Plan">
+          <NumInput value={d.value} onChange={(v) => set({ value: v > 0 ? v : null })} unit="m" digits={3} />
+        </Field>
+      </div>
+      <Field label="Bezeichnung">
+        <TextInput id={'dim-label-' + d.id} value={d.label} onChange={(v) => set({ label: v })} placeholder="z. B. Türbreite Bad, Abstand Fenster" />
+      </Field>
+      <div>
+        <div className="kv">
+          <span>Länge im Plan</span>
+          <b className="mono">{fmtFixed(L, 3)} m</b>
+        </div>
+        {d.value != null ? (
+          <div className="kv">
+            <span>Abweichung</span>
+            <b className="mono" style={{ color: Math.abs(d.value - L) > 0.05 ? 'var(--warn-ink)' : undefined }}>
+              {d.value - L >= 0 ? '+' : '−'}
+              {fmtFixed(Math.abs(d.value - L) * 100, 1)} cm
+            </b>
+          </div>
+        ) : null}
+        {room ? (
+          <div className="kv">
+            <span>Raum</span>
+            <b>{room.name}</b>
+          </div>
+        ) : null}
+      </div>
+      {d.value != null && Math.abs(d.value - L) > 0.005 ? (
+        <Btn small icon="ruler" onClick={fit}>
+          Linie auf {fmtFixed(d.value, 2)} m anpassen
+        </Btn>
+      ) : null}
+      <p className="small muted">Maßlinien halten fest, was du vor Ort gemessen hast – z. B. Türbreiten oder Abstände zwischen Fenstern. Weicht der Plan ab, passe Wand oder Öffnung an oder ziehe die Linie zurecht. Endpunkte ziehen ändert die Linie, die Linie ziehen verschiebt sie.</p>
+    </div>
+  );
+}
+
+function DimSummary({ dims }) {
+  if (!dims.length) return null;
+  return (
+    <>
+      <div className="divider" />
+      <h4>Maße in dieser Etage</h4>
+      <ul className="legend-list">
+        {dims.map((d) => (
+          <li key={d.id}>
+            <Icon name="ruler" size={13} />
+            <span>{d.label || 'Maß'}</span>
+            <b>{fmtFixed(d.value ?? dimLength(d), 2)} m</b>
+          </li>
+        ))}
+      </ul>
+    </>
   );
 }
 
@@ -2083,7 +2244,7 @@ function LineSummary({ lines, points = [] }) {
   );
 }
 
-function FloorProps({ floor, tool, defaults, setDefaults, grid, setGrid, ortho, setOrtho, mutate, ulUrl, onUpload, onCalibrate, lines = [], points = [] }) {
+function FloorProps({ floor, tool, defaults, setDefaults, grid, setGrid, ortho, setOrtho, mutate, ulUrl, onUpload, onCalibrate, lines = [], points = [], dims = [] }) {
   const set = (patch) => mutate((f) => ({ ...f, ...patch }), { refresh: false });
   const ul = floor.underlay;
   return (
@@ -2120,6 +2281,7 @@ function FloorProps({ floor, tool, defaults, setDefaults, grid, setGrid, ortho, 
       </div>
       <Toggle checked={!!floor.underRoof} onChange={(v) => set({ underRoof: v, kneeWall: v ? floor.kneeWall ?? 1.0 : floor.kneeWall })} label="Dachgeschoss (Wände unter Dachschräge)" />
       <LineSummary lines={lines} points={points} />
+      <DimSummary dims={dims} />
       <div className="divider" />
       <h4>Raster & Fang</h4>
       <Field label="Raster">
@@ -2627,12 +2789,12 @@ function SiteEditor({ data, floors }) {
 // Floor plan of an outbuilding: the regular editor, stored inside the site entry.
 function CtxFloorEditor({ data, b }) {
   const ground = data.house?.model?.groundLevel ?? 0;
-  const floor = { id: b.id, name: b.name || 'Nebengebäude', short: 'NG', elevation: r3(ground + (b.z ?? 0)), height: b.h ?? 2.4, slab: 0, walls: b.walls || [], rooms: b.rooms || [], items: b.items || [], lines: b.lines || [], points: b.points || [] };
+  const floor = { id: b.id, name: b.name || 'Nebengebäude', short: 'NG', elevation: r3(ground + (b.z ?? 0)), height: b.h ?? 2.4, slab: 0, walls: b.walls || [], rooms: b.rooms || [], items: b.items || [], lines: b.lines || [], points: b.points || [], dims: b.dims || [] };
   const persist = (n, delay) =>
     updateHouse(
       (h) => ({
         ...h,
-        model: { ...h.model, context: (h.model?.context || []).map((x) => (x.id === b.id ? { ...x, walls: n.walls || [], rooms: n.rooms || [], items: n.items || [], lines: n.lines || [], points: n.points || [] } : x)) },
+        model: { ...h.model, context: (h.model?.context || []).map((x) => (x.id === b.id ? { ...x, walls: n.walls || [], rooms: n.rooms || [], items: n.items || [], lines: n.lines || [], points: n.points || [], dims: n.dims || [] } : x)) },
       }),
       delay,
     );

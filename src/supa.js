@@ -323,6 +323,6 @@ export function makeSupaSample() {
   }
   const sample = (input, opts) => run(input, opts);
   sample.json = async (input, opts = {}) => extractJson((await run(input, { ...opts, json: true })).text);
-  sample.limits = async () => ({ maxPromptBytes: 262144, images: { maxCount: 5, maxInputBytes: 20 * 1024 * 1024, mediaTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf'] }, tools: { maxCount: 10 } });
+  sample.limits = async () => ({ maxPromptBytes: 262144, images: { maxCount: 5, maxInputBytes: 20 * 1024 * 1024, mediaTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf'] }, tools: { maxCount: 16 } });
   return sample;
 }

@@ -4,7 +4,12 @@ import { Md, useAiAvailable, AiUnavailable } from './ai-ui.jsx';
 import { closeDrawer, openDrawer, toast } from './state.js';
 import { aiChat, aiErrorText, isHardAiError, AI_DISCLAIMER } from '../ai.js';
 import { createProject, patchProject, addFunding, addCost, addConstraint, addMilestone, deleteMilestone } from '../actions.js';
-import { resolveRef, createsCycle, msRef } from '../metrics.js';
+import { resolveRef, createsCycle, msRef, sortFloors } from '../metrics.js';
+import { floorPlanInfo, measurePoints, dimLength, lineLength, resizeLine, relink, r3 } from '../planops.js';
+import { lineKind } from '../catalog.js';
+import { updateDoc } from '../store.js';
+import { pointInPoly } from '../geometry.js';
+import { setUI, go } from './state.js';
 import { getState } from '../store.js';
 import { PROJECT_KINDS, CONSTRAINT_KINDS, FUNDING_TYPES, FUNDING_STATUS, STATUS, status as statusOf } from '../catalog.js';
 import { isISO } from '../util.js';
@@ -25,6 +30,16 @@ const ITEM_LISTS = { milestone: 'milestones', cost: 'costs', constraint: 'constr
 const ITEM_NAMES = { milestone: 'Meilenstein', cost: 'Kostenposition', constraint: 'Rahmenbedingung', funding: 'Förderung' };
 const num = (v) => (v === null ? null : Number.isFinite(Number(v)) ? Number(v) : undefined);
 const str = (v, n = 2000) => String(v ?? '').slice(0, n);
+
+// floor by id, short name ("EG") or name ("Erdgeschoss")
+function findFloor(q) {
+  const floors = Object.values(getState().floors || {});
+  const k = String(q || '').trim().toLowerCase();
+  const f = floors.find((x) => x.id === q) || floors.find((x) => (x.short || '').toLowerCase() === k) || floors.find((x) => (x.name || '').toLowerCase() === k) || floors.find((x) => (x.name || '').toLowerCase().includes(k) && k);
+  if (!f) throw new Error(`Unbekannte Etage ${q}. Vorhanden: ${sortFloors(floors).map((x) => `${x.short} (${x.id})`).join(', ')}`);
+  return f;
+}
+const midRoom = (floor, a, b) => (floor.rooms || []).find((r) => r.poly?.length && pointInPoly([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], r.poly));
 
 export function makeTools(log) {
   const getProject = (id) => {
@@ -146,6 +161,81 @@ export function makeTools(log) {
         });
         log({ kind: 'project', id, text: `Projekt angelegt: ${input.title}` });
         return { id, title: input.title };
+      },
+    },
+    {
+      name: 'get_floor_plan',
+      description: 'Liefert den Grundriss einer Etage: Räume mit Größe, Wänden (Lage aus Sicht des Raums als Himmelsrichtung) und Fenstern/Türen samt IDs, dazu eingetragene Maße und Leitungen. Vor add_measurement oder update_line aufrufen.',
+      inputSchema: { type: 'object', properties: { floor: { type: 'string', description: 'Etagen-ID, Kürzel (z. B. EG) oder Name' } }, required: ['floor'] },
+      execute(input) {
+        const f = findFloor(input.floor);
+        return {
+          floorId: f.id,
+          name: f.name,
+          rooms: floorPlanInfo(f, getState().house?.northAngle || 0),
+          dims: (f.dims || []).map((d) => ({ id: d.id, label: d.label, value: d.value, planLength: r3(dimLength(d)), room: midRoom(f, d.a, d.b)?.name || null })),
+          lines: (f.lines || []).filter((l) => !l.auto).map((l) => ({ id: l.id, kind: lineKind(l.kind).name, label: l.label || '', riser: !!l.riser, length: r3(lineLength(l)), status: l.status || 'bestand', room: l.pts?.length ? midRoom(f, l.pts[0], l.pts[l.pts.length - 1])?.name || null : null })),
+        };
+      },
+    },
+    {
+      name: 'add_measurement',
+      description: 'Trägt eine Maßlinie in den Grundriss ein, z. B. Türbreite (type opening), Abstand zwischen zwei Fenstern oder Türen an derselben Wand (type between_openings: Lücke zwischen den Kanten), Wandlänge (wall), Raumbreite/-tiefe (room) oder zwei Punkte in Metern (points). value ist der vor Ort gemessene Wert in Metern. IDs aus get_floor_plan.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          floor: { type: 'string', description: 'Etagen-ID oder Kürzel' },
+          type: { type: 'string', enum: ['opening', 'between_openings', 'wall', 'room', 'points'] },
+          label: { type: 'string', description: 'kurze Bezeichnung, z. B. "Abstand Fenster Wohnzimmer"' },
+          value: { type: 'number', description: 'gemessener Wert in Metern' },
+          roomId: { type: 'string', description: 'Raum, auf dessen Seite die Maßlinie liegt (bei room Pflicht)' },
+          openingId: { type: 'string' },
+          openingId2: { type: 'string', description: 'zweite Öffnung bei between_openings' },
+          wallId: { type: 'string' },
+          direction: { type: 'string', enum: ['lang', 'kurz'], description: 'bei room: lange oder kurze Raumseite' },
+          a: { type: 'array', items: { type: 'number' }, description: 'bei points: [x, y] in Metern' },
+          b: { type: 'array', items: { type: 'number' } },
+        },
+        required: ['floor', 'type'],
+      },
+      execute(input) {
+        const f = findFloor(input.floor);
+        const [a, b] = measurePoints(f, input);
+        const value = Number(input.value) > 0 ? r3(Number(input.value)) : null;
+        const id = 'd' + Math.random().toString(36).slice(2, 10);
+        const d = { id, a, b, value, label: str(input.label, 80), by: 'ki' };
+        updateDoc('floors', f.id, (x) => ({ ...x, dims: [...(x.dims || []), d] }), 50);
+        const plan = r3(dimLength(d));
+        log({ kind: 'plan', floorId: f.id, text: `Maß im Grundriss ${f.short || f.name}: ${d.label || 'Maß'} ${value ?? plan} m` });
+        return { id, planLength: plan, value, room: midRoom(f, a, b)?.name || null, note: value && Math.abs(value - plan) > 0.05 ? `Der Plan zeigt ${plan} m – Abweichung ${r3(value - plan)} m` : undefined };
+      },
+    },
+    {
+      name: 'update_line',
+      description: 'Ändert eine eingezeichnete Leitung: Länge in Metern (die Zeichnung wird am Ende bzw. Anfang verlängert oder gekürzt, bei Steigleitungen oben), Bezeichnung oder Zustand. IDs aus get_floor_plan.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          floor: { type: 'string' },
+          lineId: { type: 'string' },
+          length: { type: 'number', description: 'neue Länge in Metern' },
+          atStart: { type: 'boolean', description: 'am Anfang statt am Ende anpassen' },
+          label: { type: 'string' },
+          status: { type: 'string', enum: ['bestand', 'geplant', 'stillgelegt'] },
+        },
+        required: ['floor', 'lineId'],
+      },
+      execute(input) {
+        const f = findFloor(input.floor);
+        const l = (f.lines || []).find((x) => x.id === String(input.lineId));
+        if (!l) throw new Error('Unbekannte lineId');
+        const patch = { auto: false };
+        if (Number(input.length) > 0.02) patch.pts = resizeLine(l.pts, Number(input.length), !!input.atStart);
+        if (typeof input.label === 'string') patch.label = str(input.label, 120);
+        if (['bestand', 'geplant', 'stillgelegt'].includes(input.status)) patch.status = input.status;
+        updateDoc('floors', f.id, (x) => relink({ ...x, lines: (x.lines || []).map((y) => (y.id === l.id ? { ...y, ...patch } : y)) }), 50);
+        log({ kind: 'plan', floorId: f.id, text: `Leitung geändert: ${l.label || lineKind(l.kind).name}${patch.pts ? ` – ${r3(lineLength({ pts: patch.pts }))} m` : ''}` });
+        return { ok: true, length: r3(lineLength({ pts: patch.pts || l.pts })) };
       },
     },
     {
@@ -274,7 +364,10 @@ export function makeTools(log) {
   ];
 }
 
-export function AssistantDrawer({ data }) {
+// Browser speech recognition (Chrome, Edge, Safari); null where it is missing (Firefox).
+const SpeechRec = typeof window !== 'undefined' ? window.SpeechRecognition || window.webkitSpeechRecognition : null;
+
+export function AssistantDrawer({ data, drawer }) {
   const avail = useAiAvailable();
   const [msgs, setMsgs] = useState(memory);
   const [input, setInput] = useState('');
@@ -282,11 +375,60 @@ export function AssistantDrawer({ data }) {
   const [hard, setHard] = useState(false);
   const ctl = useRef(null);
   const end = useRef(null);
+  const rec = useRef(null);
+  const [listening, setListening] = useState(false);
   useEffect(() => {
     memory = msgs;
     end.current?.scrollIntoView({ block: 'end' });
   }, [msgs]);
-  useEffect(() => () => ctl.current?.abort(), []);
+  useEffect(
+    () => () => {
+      ctl.current?.abort();
+      rec.current?.abort();
+    },
+    [],
+  );
+
+  // speech: the transcript appears in the input and is sent when you stop talking
+  const listen = () => {
+    if (listening) return rec.current?.stop();
+    if (!SpeechRec) return toast('Spracheingabe kann dieser Browser nicht – nutze das Mikrofon deiner Tastatur (Diktieren) oder Chrome/Safari.', 'warn', 6000);
+    const r = new SpeechRec();
+    r.lang = 'de-DE';
+    r.interimResults = true;
+    r.continuous = false;
+    r.maxAlternatives = 1;
+    let final = '';
+    r.onresult = (e) => {
+      let interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) final += e.results[i][0].transcript;
+        else interim += e.results[i][0].transcript;
+      }
+      setInput((final + interim).trim());
+    };
+    r.onerror = (e) => {
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') toast('Das Mikrofon ist für diese Seite nicht freigegeben. Erlaube den Zugriff in den Browser-Einstellungen – in der Vorschau in claude.ai geht es nicht, nutze dort deine Hausakte-Adresse.', 'warn', 7000);
+      else if (e.error === 'no-speech') toast('Nichts verstanden – versuche es noch einmal.', 'warn');
+      else if (e.error !== 'aborted') toast('Spracheingabe fehlgeschlagen.', 'err');
+    };
+    r.onend = () => {
+      setListening(false);
+      rec.current = null;
+      const t = final.trim();
+      if (t) send(t);
+    };
+    rec.current = r;
+    try {
+      r.start();
+      setListening(true);
+    } catch {
+      toast('Spracheingabe konnte nicht starten.', 'err');
+    }
+  };
+  useEffect(() => {
+    if (drawer?.voice && avail !== false && !rec.current) listen();
+  }, [drawer?.voice]);
 
   const send = async (text) => {
     const q = (text ?? input).trim();
@@ -344,7 +486,7 @@ export function AssistantDrawer({ data }) {
               id="chat-input"
               className="input"
               rows={2}
-              placeholder="z. B. Welche Förderung gibt es für neue Fenster?"
+              placeholder={listening ? 'Ich höre zu …' : 'z. B. Welche Förderung gibt es für neue Fenster?'}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {
@@ -354,6 +496,7 @@ export function AssistantDrawer({ data }) {
                 }
               }}
             />
+            {!busy ? <IconBtn icon={listening ? 'stop' : 'mic'} label={listening ? 'Zuhören beenden' : 'Sprechen'} className={`mic-btn ${listening ? 'is-listening' : ''}`} onClick={listen} /> : null}
             {busy ? <IconBtn icon="stop" label="Stoppen" onClick={() => ctl.current?.abort()} /> : <IconBtn icon="send" label="Senden" onClick={() => send()} />}
           </div>
         )
@@ -365,6 +508,7 @@ export function AssistantDrawer({ data }) {
             <div className="msg msg-ai">
               <p>Hallo! Ich kenne die Daten deiner Hausakte und helfe dir bei Förderung, Reihenfolge, Kosten und Pflichten rund um die Modernisierung.</p>
               <p>Ich kann auch Projekte, Förderungen, Kostenpositionen und Termine für dich anlegen und bestehende Projekte ändern – z. B. Termine verschieben, Status setzen, Hinweise ergänzen oder Abhängigkeiten festlegen.</p>
+              <p>Im Grundriss trage ich Maße ein und passe Leitungslängen an – z. B. „Erfasse den Abstand zwischen den zwei Fenstern im Wohnzimmer: 1,5 Meter“. Tippe aufs Mikrofon, um mir das einfach zu sagen.</p>
             </div>
             <div className="suggest">
               {SUGGESTIONS.map((s) => (
@@ -381,7 +525,18 @@ export function AssistantDrawer({ data }) {
               {m.content}
             </div>
           ) : m.role === 'tool' ? (
-            <button key={i} className="msg-tool" onClick={() => m.id && openDrawer({ type: 'project', id: m.id })} style={{ border: 0 }}>
+            <button
+              key={i}
+              className="msg-tool"
+              onClick={() => {
+                if (m.kind === 'plan') {
+                  closeDrawer();
+                  setUI({ floorId: m.floorId, planFull: false });
+                  go('grundriss');
+                } else if (m.id) openDrawer({ type: 'project', id: m.id });
+              }}
+              style={{ border: 0 }}
+            >
               <Icon name="check" size={13} /> {m.text}
             </button>
           ) : (

@@ -48,7 +48,7 @@ Deno.serve(async (req) => {
     return reply({ code: "bad_request", message: "messages must start with a user turn" }, 400);
   }
   const tools = (Array.isArray(body.tools) ? body.tools : [])
-    .slice(0, 10)
+    .slice(0, 16)
     .filter((t) => /^[a-zA-Z0-9_-]{1,64}$/.test(t?.name ?? "") && t.input_schema?.type === "object")
     .map((t) => ({ name: t.name, description: String(t.description ?? "").slice(0, 2000), input_schema: t.input_schema }));
 

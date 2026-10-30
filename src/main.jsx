@@ -242,6 +242,11 @@ function TopBar({ data }) {
         <span className={`sync-dot ${busy ? 'is-busy' : data.mode === 'local' ? 'is-local' : ''}`} />
         <span>{busy ? 'Speichert …' : data.mode === 'local' ? 'Nur lokal' : data.lastSaved ? 'Gespeichert' : 'Synchron'}</span>
       </span>
+      {typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition) ? (
+        <button className="voice-btn" aria-label="Sprachbefehl an den Assistenten" title="Sprachbefehl" onClick={() => openDrawer({ type: 'assistant', voice: Date.now() })}>
+          <Icon name="mic" size={18} />
+        </button>
+      ) : null}
       <button className={`ai-btn ${ui.drawer?.type === 'assistant' ? 'is-on' : ''}`} onClick={() => (ui.drawer?.type === 'assistant' ? closeDrawer() : openDrawer({ type: 'assistant' }))}>
         <Icon name="sparkles" size={17} />
         <span>Assistent</span>
@@ -390,7 +395,7 @@ function DrawerHost({ data, sceneRef }) {
   if (d.type === 'room') return <RoomDrawer key={d.roomId} data={data} drawer={d} />;
   if (d.type === 'component') return <ComponentDrawer key={d.id} data={data} drawer={d} />;
   if (d.type === 'roadmap') return <RoadmapDrawer data={data} />;
-  if (d.type === 'assistant') return <AssistantDrawer data={data} sceneRef={sceneRef} />;
+  if (d.type === 'assistant') return <AssistantDrawer data={data} drawer={d} sceneRef={sceneRef} />;
   return null;
 }
 

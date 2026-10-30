@@ -10,6 +10,7 @@ export const ICON_PATHS = {
   gantt: 'M3 5h8M6 10h10M9 15h9M5 20h6',
   bolt: 'M13 2 4.5 13.5H11L10 22l8.5-11.5H12z',
   pipe: 'M3 7h8a3 3 0 0 1 3 3v4a3 3 0 0 0 3 3h4M3 4v6M21 14v6',
+  mic: 'M12 3.5a3 3 0 0 0-3 3V12a3 3 0 0 0 6 0V6.5a3 3 0 0 0-3-3zM5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M8.5 21h7',
   expand: 'M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5',
   collapse: 'M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5',
   socket: 'M12 4.5a7.5 7.5 0 1 0 0 15 7.5 7.5 0 0 0 0-15zM9.3 12h.01M14.7 12h.01M5 12h1.5M17.5 12H19',

@@ -115,6 +115,18 @@ export function houseContext(d, { withProjects = true, withComponents = true, wi
       L.push(`- ${b.name || 'Nebengebäude'}: ${fmtNum(b.w, 1)} × ${fmtNum(b.d, 1)} m, Wandhöhe ${fmtNum(b.h ?? 2.4, 1)} m${b.open ? ', offen' : ''}${rooms ? `; Räume: ${rooms}` : ''}${(b.lines || []).length ? `; ${b.lines.length} Leitungen (${[...new Set(b.lines.map((l) => lineKind(l.kind).name))].join(', ')})` : ''}${fx ? `; Anschlüsse: ${fx}` : ''}${b.notes ? `; Notiz: ${String(b.notes).slice(0, 160)}` : ''}`);
     }
   }
+  const dimInfo = [];
+  for (const f of floors)
+    for (const d of f.dims || []) {
+      const m = [(d.a[0] + d.b[0]) / 2, (d.a[1] + d.b[1]) / 2];
+      const rm = (f.rooms || []).find((r) => r.poly?.length && pointInPoly(m, r.poly));
+      dimInfo.push(`- ${f.short || f.name}${rm ? ' ' + rm.name : ''}: ${d.label || 'Maß'} ${fmtNum(d.value ?? Math.hypot(d.b[0] - d.a[0], d.b[1] - d.a[1]), 2)} m${d.value != null ? ' (vor Ort gemessen)' : ''}`);
+    }
+  if (dimInfo.length) {
+    L.push('');
+    L.push('EINGETRAGENE MASSE');
+    L.push(...dimInfo.slice(0, 40));
+  }
   const fixInfo = [];
   for (const f of floors) {
     const by = new Map();
@@ -461,6 +473,7 @@ export function chatRules(d) {
 Antworte auf Deutsch, konkret und knapp (höchstens ca. 200 Wörter, wenn nicht anders gewünscht). Nutze kurze Absätze oder Aufzählungen mit "- ". Fett mit **…** sparsam.
 Beziehe dich auf die Hausdaten unten. Bei Förderungen nutze die Wissensbasis und weise auf Prüfung bei KfW/BAFA hin. Erfinde keine Daten zum Haus; frage nach, wenn etwas fehlt.
 Wenn der Nutzer etwas anlegen oder ändern möchte (Projekt, Termine, Status, Hinweise, Abhängigkeiten, Förderung, Kostenposition, Rahmenbedingung, Meilenstein), nutze die verfügbaren Werkzeuge und sage danach kurz, was du geändert hast. Hole dir vor dem Ändern einzelner Positionen die IDs mit get_project. Ganze Projekte löschst du nicht – bitte den Nutzer, das selbst in der App zu tun.
+Grundriss: Für Maße (Türbreiten, Abstände zwischen Fenstern, Wandlängen, Raummaße) hole mit get_floor_plan die Räume, Wände und Öffnungen der Etage und trage das Maß mit add_measurement ein; Leitungslängen änderst du mit update_line. Wähle bei mehreren passenden Fenstern die naheliegendsten (gleiche Wand, nebeneinander) und sage kurz, welche du genommen hast. Nachrichten können per Spracheingabe kommen – rechne mit Erkennungsfehlern (z. B. „eins komma fünf“ = 1,5) und frage nach, wenn etwas unklar ist.
 Das Feld „Hinweise“ eines Projekts ist für Abhängigkeiten, Fristen und Besonderheiten gedacht, die man beim Planen beachten muss. Abhängigkeiten können auf ein Projekt (nach dessen Ende) oder auf einen Meilenstein („Projekt-ID#Meilenstein-ID“) zeigen – für Projekte und für Meilensteine.
 
 WISSENSBASIS
