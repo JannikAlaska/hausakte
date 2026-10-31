@@ -3,6 +3,8 @@
 
 import { FUNDING_KNOWLEDGE, gewerk, projectKind, status as statusOf, PROJECT_KINDS, medium, CONSTRAINT_KINDS, lineKind, fixtureKind } from './catalog.js';
 import { pointInPoly } from './geometry.js';
+import { roomOfPoint } from './planops.js';
+import { furnLabel } from './furniture.js';
 import { buildingStats, componentWear, projectCost, sortFloors, consumptionByYear, heatingIndex, roomArea, resolveRef } from './metrics.js';
 import { bearingName } from './roof.js';
 import { todayISO, fmtNum } from './util.js';
@@ -104,6 +106,23 @@ export function houseContext(d, { withProjects = true, withComponents = true, wi
     L.push('');
     L.push('EINGEZEICHNETE LEITUNGEN');
     L.push(...lineInfo.slice(0, 40));
+  }
+  // furniture per floor and room, so questions like "passt ein 2-m-Sofa ins Wohnzimmer?" can be answered
+  const furnInfo = [];
+  for (const f of [...floors, ...(h.model?.context || []).filter((b) => b.kind !== 'neighbor')]) {
+    const byRoom = new Map();
+    for (const x of f.furniture || []) {
+      const r = roomOfPoint(f, { x: x.x, y: x.y });
+      const k = r?.name || 'ohne Raum/außen';
+      if (!byRoom.has(k)) byRoom.set(k, []);
+      byRoom.get(k).push(`${furnLabel(x)}${x.status === 'geplant' ? ' (geplant)' : ''}`);
+    }
+    for (const [room, items] of byRoom) furnInfo.push(`- ${f.short || f.name}, ${room}: ${items.join(', ')}`);
+  }
+  if (furnInfo.length) {
+    L.push('');
+    L.push('MÖBEL (im Grundriss eingerichtet)');
+    L.push(...furnInfo.slice(0, 40));
   }
   const outb = (h.model?.context || []).filter((b) => b.kind !== 'neighbor');
   if (outb.length) {
@@ -530,7 +549,7 @@ Wenn der Nutzer etwas anlegen oder ändern möchte (Projekt, Termine, Status, Hi
 Besprechungen: Erzählt der Nutzer von einem Termin oder Gespräch zu einem Projekt (z. B. „Notiz zur PV: Elektriker war da …“), lege mit add_meeting_note eine Besprechungsnotiz mit Terminen und To-dos an. Ändern und löschen kannst du Besprechungen mit update_item bzw. delete_item (type meeting, IDs aus get_project); frage beim Löschen nach, ob die daraus angelegten Termine und To-dos mit weg sollen, wenn der Nutzer das nicht gesagt hat.
 Kontakte (Handwerker, Berater, Behörden) verwaltest und verknüpfst du mit manage_contact; Fotos von Visitenkarten lädt der Nutzer unter Dokumente › Kontakte oder im Projekt-Reiter „Ansprechpartner“ hoch.
 Allgemeine Notizen ohne Projektbezug (z. B. „Notiere: …“, „Schreib dir auf …“) verwaltest du mit manage_note (anlegen, ändern, ergänzen, löschen). Passt eine Notiz eindeutig zu einem Projekt, frage kurz nach, ob sie als Besprechung ans Projekt soll.
-Grundriss: Für Maße (Türbreiten, Abstände zwischen Fenstern, Wandlängen, Raummaße) hole mit get_floor_plan die Räume, Wände und Öffnungen der Etage und trage das Maß mit add_measurement ein; Leitungslängen änderst du mit update_line. Wähle bei mehreren passenden Fenstern die naheliegendsten (gleiche Wand, nebeneinander) und sage kurz, welche du genommen hast. Nachrichten können per Spracheingabe kommen – rechne mit Erkennungsfehlern (z. B. „eins komma fünf“ = 1,5) und frage nach, wenn etwas unklar ist.
+Grundriss: Für Maße (Türbreiten, Abstände zwischen Fenstern, Wandlängen, Raummaße) hole mit get_floor_plan die Räume, Wände und Öffnungen der Etage und trage das Maß mit add_measurement ein; Leitungslängen änderst du mit update_line. Möbel stellst, änderst oder entfernst du mit manage_furniture (vorher get_floor_plan für Raum- und Wand-IDs; „an die Nordwand“ = Wand mit side Norden im Raum). Wähle bei mehreren passenden Fenstern die naheliegendsten (gleiche Wand, nebeneinander) und sage kurz, welche du genommen hast. Nachrichten können per Spracheingabe kommen – rechne mit Erkennungsfehlern (z. B. „eins komma fünf“ = 1,5) und frage nach, wenn etwas unklar ist.
 Das Feld „Hinweise“ eines Projekts ist für Abhängigkeiten, Fristen und Besonderheiten gedacht, die man beim Planen beachten muss. Abhängigkeiten können auf ein Projekt (nach dessen Ende) oder auf einen Meilenstein („Projekt-ID#Meilenstein-ID“) zeigen – für Projekte und für Meilensteine.
 
 WISSENSBASIS

@@ -136,6 +136,23 @@ function roomSide(w, at, room) {
   for (const s of [1, -1]) if (room?.poly?.length && pointInPoly(add(at, mul(n, s * (w.t / 2 + 0.12))), room.poly)) return s;
   return 0;
 }
+// part of a wall that borders a room (long outer walls run along several rooms): side and range along the wall
+function wallSpan(w, room) {
+  const { u, L } = frame(w);
+  const n = Math.max(4, Math.ceil(L / 0.25));
+  let side = 0,
+    from = null,
+    to = null;
+  for (let i = 0; i <= n; i++) {
+    const t = 0.03 * L + (0.94 * L * i) / n;
+    const sd = roomSide(w, add(w.a, mul(u, t)), room);
+    if (!sd) continue;
+    side = side || sd;
+    if (from == null) from = t;
+    to = t;
+  }
+  return side ? { side, from, to } : null;
+}
 const OPENING_NAME = { window: 'Fenster', door: 'Tür', opening: 'Durchgang' };
 
 // Rooms with the walls and openings around them, described for the AI (side = where the wall lies as seen from the room).
@@ -151,10 +168,9 @@ export function floorPlanInfo(floor, north = 0) {
   };
   for (const w of floor.walls || []) {
     const { u, L } = frame(w);
-    const mid = add(w.a, mul(u, L / 2));
     rooms.forEach((r, i) => {
-      const s = roomSide(w, mid, r);
-      if (s) info[i].walls.push({ id: w.id, side: sideName(w, s), length: r3(L), exterior: !!w.ext });
+      const sp = wallSpan(w, r);
+      if (sp) info[i].walls.push({ id: w.id, side: sideName(w, sp.side), length: r3(L), ...(sp.to - sp.from < L * 0.8 ? { lengthInRoom: r3(sp.to - sp.from + 0.06 * L) } : {}), exterior: !!w.ext });
       for (const o of w.openings || []) {
         const so = roomSide(w, add(w.a, mul(u, o.pos)), r);
         if (so) info[i].openings.push({ id: o.id, type: OPENING_NAME[o.type] || o.type, width: r3(o.w), height: r3(o.h), wallId: w.id, side: sideName(w, so), exterior: !!w.ext, posOnWall: r3(o.pos) });
@@ -222,4 +238,17 @@ export function measurePoints(floor, spec) {
   }
   if (spec.type === 'points' && Array.isArray(spec.a) && Array.isArray(spec.b)) return [P3(spec.a.map(Number)), P3(spec.b.map(Number))];
   throw new Error('Unbekannter type');
+}
+
+// Point in front of a wall on the side of a room (for placing furniture by voice): middle of the wall,
+// shifted by `along` metres (positive = towards the wall end b), `inset` metres away from the wall face.
+export function wallFrontPoint(floor, wallId, roomId, along = 0, inset = 0.3) {
+  const w = (floor.walls || []).find((x) => x.id === wallId);
+  if (!w) throw new Error('Unbekannte wallId');
+  const room = (floor.rooms || []).find((r) => r.id === roomId) || null;
+  const { u, n, L } = frame(w);
+  const sp = room ? wallSpan(w, room) : { side: 1, from: 0, to: L };
+  if (!sp) throw new Error('Die Wand grenzt nicht an diesen Raum');
+  const at = add(w.a, mul(u, Math.max(sp.from, Math.min(sp.to, (sp.from + sp.to) / 2 + (Number(along) || 0)))));
+  return add(at, mul(n, sp.side * (w.t / 2 + inset)));
 }

@@ -11,6 +11,7 @@ import { roomType, projectKind, status as statusOf, ROOM_COLORS, lineKind, fixtu
 import { sortFloors, roomArea, isDone } from './metrics.js';
 import { sunPosition, sunVector, yearSteps, poa, houseGeo, shadeColor } from './solar.js';
 import { fmtFixed, fmtDayMonth, todayISO, escapeHtml } from './util.js';
+import { furnitureParts, furnType } from './furniture.js';
 
 
 
@@ -225,6 +226,52 @@ function fixtureMesh(q) {
   return grp;
 }
 
+// Furniture of one storey as a few merged meshes (one per colour). Plan rotation is clockwise, so the y rotation is negated.
+function furnitureGroup(list, elevation) {
+  const baseOf = typeof elevation === 'function' ? elevation : () => elevation;
+  const byKey = new Map();
+  for (const f of list) {
+    const t = furnType(f.type);
+    const m4 = new THREE.Matrix4().makeRotationY((-(f.rot || 0) * Math.PI) / 180).setPosition(f.x, baseOf(f) + (f.elev ?? t.elev ?? 0), f.y);
+    for (const p of furnitureParts(f)) {
+      let g;
+      if (p.shape === 'box') g = new THREE.BoxGeometry(...p.size);
+      else if (p.shape === 'cyl') g = new THREE.CylinderGeometry(p.rTop ?? p.size[0], p.size[0], p.size[1], 20);
+      else g = new THREE.SphereGeometry(p.size[0], 16, 12);
+      if (p.scaleZ) g.scale(1, 1, p.scaleZ);
+      if (p.rotX) g.rotateX(Math.PI / 2);
+      if (p.rotZ) g.rotateZ(Math.PI / 2);
+      g.translate(...p.at);
+      g.applyMatrix4(m4);
+      const key = (p.glass ? 'g' : '') + String(p.color || '#b98a5e').toLowerCase();
+      if (!byKey.has(key)) byKey.set(key, []);
+      byKey.get(key).push(g);
+    }
+  }
+  const grp = new THREE.Group();
+  const mats = [];
+  for (const [key, geos] of byKey) {
+    const glass = key.startsWith('g');
+    const hex = glass ? key.slice(1) : key;
+    // #rrggbbaa: dark seams and joints drawn semi-transparent
+    const alpha = hex.length === 9 ? parseInt(hex.slice(7), 16) / 255 : 1;
+    const mat = new THREE.MeshStandardMaterial({
+      color: hex.slice(0, 7), roughness: glass ? 0.1 : 0.78, metalness: /^#(b9bdc3|c6cbd1)/.test(hex) ? 0.45 : 0.02,
+      transparent: glass || alpha < 1, opacity: glass ? 0.32 : alpha, depthWrite: !(glass || alpha < 1),
+    });
+    const merged = mergeGeometries(geos);
+    geos.forEach((g) => g.dispose());
+    if (!merged) continue;
+    const m = new THREE.Mesh(merged, mat);
+    m.castShadow = !glass && alpha === 1;
+    m.receiveShadow = true;
+    grp.add(m);
+    mats.push(mat);
+  }
+  grp.userData.noShade = true;
+  return { grp, mats };
+}
+
 // Round pipe along a polyline of [x, y, z] plan points (y = plan y, z = height above the floor).
 const UP = new THREE.Vector3(0, 1, 0);
 function lineGeometry(pts, r) {
@@ -321,7 +368,7 @@ export class HouseScene {
   constructor(container, opts = {}) {
     this.el = container;
     this.opts = opts;
-    this.view = { mode: 'all', floorId: null, showRoof: true, showLabels: true, showLines: false };
+    this.view = { mode: 'all', floorId: null, showRoof: true, showLabels: true, showLines: false, showFurniture: true };
     this.selection = null;
     this.highlight = null;
     this.insets = { left: 0, right: 0, top: 0, bottom: 0 };
@@ -664,6 +711,19 @@ export class HouseScene {
       m.position.y = f.elevation;
       m.castShadow = m.receiveShadow = true;
       group.add(m);
+    }
+
+    // furniture
+    const furn = (f.furniture || []).filter((x) => x && Number.isFinite(x.x) && Number.isFinite(x.y));
+    if (furn.length) {
+      // garden furniture outside the house stands on the ground, not on the floor level
+      const ground = this.data?.house?.model?.groundLevel ?? 0;
+      const nearGround = !ctx && outer && Math.abs(f.elevation - ground) < 1.5;
+      const { grp, mats } = furnitureGroup(furn, (x) => (nearGround && !pointInPoly([x.x, x.y], outer) ? ground : f.elevation));
+      grp.visible = this.view.showFurniture !== false;
+      group.add(grp);
+      entry.furnGroup = grp;
+      entry.furnMats = mats;
     }
 
     // installation lines and connection points (only shown in the x-ray view)
@@ -1492,12 +1552,21 @@ export class HouseScene {
       const drawn = !neighbor && (b.walls || []).length > 0;
       if (drawn) {
         // outbuilding with its own floor plan: walls, rooms, lines like a storey
-        const pseudo = { id: b.id, name: b.name, elevation: base, height: hgt + 0.1, slab: 0.1, walls: b.walls, rooms: b.rooms || [], items: b.items || [], lines: b.lines || [], points: b.points || [] };
+        const pseudo = { id: b.id, name: b.name, elevation: base, height: hgt + 0.1, slab: 0.1, walls: b.walls, rooms: b.rooms || [], items: b.items || [], lines: b.lines || [], points: b.points || [], furniture: b.furniture || [] };
         const shade = C(b.color || '#d8cbb6');
         const entry = this.buildStorey(pseudo, { facade: shade, interior: C('#f3f1ec'), top: C('#cfd0d6'), reveal: C('#e9e8e4'), ctx: true });
         entry.group.position.y = 0;
         grp.add(entry.group);
         this.ctxEntries.push(entry);
+      } else if ((b.furniture || []).length) {
+        // e.g. a car in the carport drawn without walls
+        const { grp: fg, mats } = furnitureGroup(b.furniture, base);
+        fg.visible = this.view.showFurniture !== false;
+        grp.add(fg);
+        this.ctxEntries.push({ furnGroup: fg, furnMats: mats });
+      }
+      if (drawn) {
+        // walls built above
       } else if (b.open) {
         for (const [px, py] of [[b.x + 0.1, b.y + 0.1], [b.x + b.w - 0.1, b.y + 0.1], [b.x + b.w - 0.1, b.y + b.d - 0.1], [b.x + 0.1, b.y + b.d - 0.1]]) {
           const g = new THREE.BoxGeometry(0.12, hgt, 0.12);
@@ -1593,8 +1662,11 @@ export class HouseScene {
   // x-ray: walls, slabs and roof turn see-through so the installation lines inside are visible
   applyXray() {
     const on = !!this.view.showLines;
-    for (const e of [...this.floorEntries, ...(this.ctxEntries || [])]) if (e.lineGroup) e.lineGroup.visible = on;
-    const mats = [...this.floorEntries.flatMap((e) => e.wallMats), this.mats.slabCap, this.mats.slabSide, this.mats.glass, this.mats.frame, this.mats.door, this.mats.stairs];
+    for (const e of [...this.floorEntries, ...(this.ctxEntries || [])]) {
+      if (e.lineGroup) e.lineGroup.visible = on;
+      if (e.furnGroup) e.furnGroup.visible = this.view.showFurniture !== false;
+    }
+    const mats = [...this.floorEntries.flatMap((e) => [...e.wallMats, ...(e.furnMats || [])]), this.mats.slabCap, this.mats.slabSide, this.mats.glass, this.mats.frame, this.mats.door, this.mats.stairs];
     if (this.roofTopMat) mats.push(this.roofTopMat, this.mats.roofSide);
     if (this.roofEntry?.gableMat) mats.push(this.roofEntry.gableMat);
     if (this.roofEntry?.group) this.roofEntry.group.traverse((o) => o.isMesh && [].concat(o.material).forEach((m) => !mats.includes(m) && mats.push(m)));

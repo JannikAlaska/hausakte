@@ -15,6 +15,8 @@ import {
 import { putDoc, deleteDoc, updateHouse, getAssets, blobUrl, getState } from '../store.js';
 import { lineLength, linePlanPts, fixtureAnchor, dedup3, relink, roomOfPoint, resizeLine, dimLength } from '../planops.js';
 import { uid, deepClone, fmtFixed, fmtNum, parseNum } from '../util.js';
+import { furnType, furnSize, furnToPlan, hitFurniture, placeFurniture, snapToWalls } from '../furniture.js';
+import { PlanFurniture, FurnitureSymbol, FurnitureHandles, furnHandles, FurnitureToolProps, FurnitureProps, FurnitureSummary, normRot } from './furniture.jsx';
 
 const { useState, useRef, useEffect, useMemo, useCallback } = React;
 
@@ -468,8 +470,10 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
   const [calib, setCalib] = useState(null); // {pts:[]}
   const [lineOpts, setLineOpts] = useState({ kind: 'strom', zone: 'unten', z: 0.3, status: 'bestand', rFrom: 0, rTo: null });
   const [fixOpts, setFixOpts] = useState({ kind: 'steckdose', z: null, status: 'bestand', count: 1 });
+  const [furnKey, setFurnKey] = useState('sofa3');
   const ui = useUI();
   const showLines = ui.planLines !== false || tool === 'line' || tool === 'riser' || tool === 'fixture';
+  const showFurn = ui.planFurniture !== false || tool === 'furniture';
   const hist = useRef({ undo: [], redo: [] });
   const floorRef = useRef(floor);
   floorRef.current = floor;
@@ -477,6 +481,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
   const lines = floor.lines || [];
   const points = floor.points || [];
   const dims = floor.dims || [];
+  const furniture = floor.furniture || [];
   const fitPts = useCallback(() => walls.flatMap((w) => [w.a, w.b]).concat(guide ? [[guide.x - 1, guide.y - 1], [guide.x + guide.w + 1, guide.y + guide.d + 1]] : []).concat(floor.underlay ? [[floor.underlay.x, floor.underlay.y], [floor.underlay.x + floor.underlay.w, floor.underlay.y + floor.underlay.w * (floor.underlay.aspect || 0.7)]] : []), [floor.id]);
   const { size, view, setView, fit } = useViewport(boxRef, fitPts, floor.id);
   const { pointers, pinch } = usePanZoom(svgRef, view, setView);
@@ -536,8 +541,11 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
     if (sel.kind === 'line') mutate((f) => ({ ...f, lines: (f.lines || []).filter((l) => l.id !== sel.id) }), { refresh: false });
     if (sel.kind === 'dim') mutate((f) => ({ ...f, dims: (f.dims || []).filter((d) => d.id !== sel.id) }), { refresh: false });
     if (sel.kind === 'point') mutate((f) => ({ ...f, points: (f.points || []).filter((q) => q.id !== sel.id), lines: (f.lines || []).filter((l) => l.stubFor !== sel.id) }), { refresh: false });
+    if (sel.kind === 'furn') mutate((f) => ({ ...f, furniture: (f.furniture || []).filter((x) => x.id !== sel.id) }), { refresh: false });
     setSel(null);
   };
+
+  const setFurn = (id, patch) => mutate((f) => ({ ...f, furniture: (f.furniture || []).map((x) => (x.id === id ? { ...x, ...patch } : x)) }), { refresh: false });
 
   // adds a point to the line being drawn; a changed height first adds a vertical piece
   const lineStep = (pts, sp, z) => {
@@ -602,6 +610,19 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
         deleteSelection();
       }
       if (e.key === 'Enter' && chain) finishChain();
+      if (sel?.kind === 'furn' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        const fi = furniture.find((x) => x.id === sel.id);
+        if (!fi) return;
+        const step = e.shiftKey ? 0.1 : 0.01;
+        const mv = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[e.key];
+        if (e.key.toLowerCase() === 'r') {
+          e.preventDefault();
+          setFurn(fi.id, { rot: normRot((fi.rot || 0) + (e.shiftKey ? -90 : 90)) });
+        } else if (mv) {
+          e.preventDefault();
+          setFurn(fi.id, { x: r3(fi.x + mv[0]), y: r3(fi.y + mv[1]) });
+        }
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -622,6 +643,28 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
     if (e.button === 1 || e.button === 2 || tool === 'hand') {
       if (e.button === 2 && chain) return finishChain();
       setDrag({ kind: 'pan', x0: e.clientX, y0: e.clientY, view: { ...view } });
+      return;
+    }
+    const selF = sel?.kind === 'furn' && showFurn && (tool === 'select' || tool === 'furniture') ? furniture.find((x) => x.id === sel.id) : null;
+    if (selF) {
+      const hh = furnHandles(selF, view.s);
+      if (dist(p, hh.rot) < 12 / view.s) return setDrag({ kind: 'furnRot', id: selF.id, from: deepClone(floor) });
+      if (dist(p, hh.size) < 10 / view.s) {
+        const { w, d } = furnSize(selF);
+        return setDrag({ kind: 'furnSize', id: selF.id, anchor: furnToPlan(selF, -w / 2, -d / 2), from: deepClone(floor) });
+      }
+    }
+    if (tool === 'furniture') {
+      const hf = hitFurniture(p, furniture);
+      if (hf) {
+        setSel({ kind: 'furn', id: hf.id });
+        setDrag({ kind: 'furnMove', id: hf.id, p0: p, x0: hf.x, y0: hf.y, from: deepClone(floor) });
+        return;
+      }
+      const nf = { id: uid('fu'), ...placeFurniture(furnKey, p, walls, grid) };
+      mutate((f) => ({ ...f, furniture: [...(f.furniture || []), nf] }), { refresh: false });
+      setSel({ kind: 'furn', id: nf.id });
+      setCursor(null);
       return;
     }
     if (tool === 'line') {
@@ -782,6 +825,14 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
           }
       }
     }
+    if (showFurn && !hitWall(p, walls, 0)) {
+      const hf = hitFurniture(p, furniture);
+      if (hf) {
+        setSel({ kind: 'furn', id: hf.id });
+        setDrag({ kind: 'furnMove', id: hf.id, p0: p, x0: hf.x, y0: hf.y, from: deepClone(floor) });
+        return;
+      }
+    }
     const ho = hitOpening(p, walls, tolM);
     if (ho) {
       setSel({ kind: 'opening', id: ho.opening.id, wallId: ho.wall.id });
@@ -832,6 +883,8 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
       } else if (tool === 'window' || tool === 'door' || tool === 'opening') {
         const w = hitWall(p, walls, 0.35);
         setCursor(w ? { p, wall: w } : null);
+      } else if (tool === 'furniture' && e.pointerType !== 'touch') {
+        setCursor(hitFurniture(p, furniture) ? null : { p, furn: { id: 'ghost', ...placeFurniture(furnKey, p, walls, grid) } });
       } else if (cursor) setCursor(null);
       return;
     }
@@ -928,6 +981,49 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
       if (!dx && !dy && !drag.moved) return;
       l.pts = drag.pts0.map((q) => [r3(q[0] + dx), r3(q[1] + dy), q[2] ?? 0]);
       l.auto = false;
+      save(f, { undo: false, refresh: false });
+      drag.moved = true;
+      return;
+    }
+    if (drag.kind === 'furnMove') {
+      const it = (f.furniture || []).find((x) => x.id === drag.id);
+      if (!it) return;
+      const nx = r3(Math.round((drag.x0 + p[0] - drag.p0[0]) / grid) * grid),
+        ny = r3(Math.round((drag.y0 + p[1] - drag.p0[1]) / grid) * grid);
+      if (!drag.moved && Math.hypot(nx - drag.x0, ny - drag.y0) < 0.02) return;
+      Object.assign(it, { x: nx, y: ny });
+      // magnetic walls; hold Alt to place freely
+      if (!e.altKey) {
+        const sn = snapToWalls(it, f.walls || []);
+        Object.assign(it, { x: sn.x, y: sn.y });
+      }
+      save(f, { undo: false, refresh: false });
+      drag.moved = true;
+      return;
+    }
+    if (drag.kind === 'furnRot') {
+      const it = (f.furniture || []).find((x) => x.id === drag.id);
+      if (!it) return;
+      const dx = p[0] - it.x,
+        dy = p[1] - it.y;
+      if (Math.hypot(dx, dy) < 0.05) return;
+      const step = e.shiftKey ? 1 : 15;
+      it.rot = normRot(Math.round(((Math.atan2(-dx, dy) * 180) / Math.PI) / step) * step);
+      save(f, { undo: false, refresh: false });
+      drag.moved = true;
+      return;
+    }
+    if (drag.kind === 'furnSize') {
+      const it = (f.furniture || []).find((x) => x.id === drag.id);
+      if (!it) return;
+      const r = ((it.rot || 0) * Math.PI) / 180;
+      const ux = [Math.cos(r), Math.sin(r)],
+        uy = [-Math.sin(r), Math.cos(r)];
+      const rel = sub(p, drag.anchor);
+      const step = Math.min(grid, 0.05);
+      const w = Math.max(0.05, r3(Math.round((rel[0] * ux[0] + rel[1] * ux[1]) / step) * step));
+      const d = Math.max(0.05, r3(Math.round((rel[0] * uy[0] + rel[1] * uy[1]) / step) * step));
+      Object.assign(it, { w, d, x: r3(drag.anchor[0] + (ux[0] * w) / 2 + (uy[0] * d) / 2), y: r3(drag.anchor[1] + (ux[1] * w) / 2 + (uy[1] * d) / 2) });
       save(f, { undo: false, refresh: false });
       drag.moved = true;
       return;
@@ -1073,8 +1169,10 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
   const selLine = sel?.kind === 'line' ? lines.find((l) => l.id === sel.id) : null;
   const selPoint = sel?.kind === 'point' ? points.find((q) => q.id === sel.id) : null;
   const selDim = sel?.kind === 'dim' ? dims.find((d) => d.id === sel.id) : null;
+  const selFurn = sel?.kind === 'furn' ? furniture.find((x) => x.id === sel.id) : null;
   const hints = {
-    select: 'Klicken wählt Wände, Öffnungen, Räume und Treppen. Wand ziehen verschiebt sie, Endpunkte ziehen ändert die Länge. Leere Fläche ziehen verschiebt die Ansicht.',
+    select: selFurn ? 'Möbel ziehen verschiebt es (rastet an Wänden ein, Alt = frei), runder Griff dreht, Eckquadrat ändert die Größe. R dreht um 90°, Pfeiltasten verschieben um 1 cm.' : 'Klicken wählt Wände, Öffnungen, Räume, Treppen und Möbel. Wand ziehen verschiebt sie, Endpunkte ziehen ändert die Länge. Leere Fläche ziehen verschiebt die Ansicht.',
+    furniture: `${furnType(furnKey).name} (${Math.round(furnType(furnKey).w * 100)} × ${Math.round(furnType(furnKey).d * 100)} cm): in den Grundriss klicken zum Platzieren. Ziehen verschiebt, runder Griff dreht, Eckquadrat ändert die Größe.`,
     wall: chain ? 'Weiter klicken für die nächste Wand · Länge eintippen + Enter · Esc oder Doppelklick beendet' : 'Startpunkt klicken. Punkte rasten an Wandenden und auf Wänden ein.',
     room: 'In einen geschlossenen Bereich klicken – der Raum wird aus den Wänden erkannt.',
     roomPoly: 'Eckpunkte klicken, ersten Punkt erneut klicken oder Enter zum Schließen.',
@@ -1113,6 +1211,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
               { value: 'door', icon: 'door', title: 'Tür' },
               { value: 'opening', icon: 'split', title: 'Durchgang' },
               { value: 'stairs', icon: 'stairs', title: 'Treppe' },
+              { value: 'furniture', icon: 'sofa', title: 'Möbel' },
               { value: 'line', icon: 'pipe', title: 'Leitung (Kabel, Rohr)' },
               { value: 'riser', icon: 'riser', title: 'Steigleitung (senkrecht)' },
               { value: 'fixture', icon: 'socket', title: 'Anschluss (Steckdose, Schalter, Lampe, Netzwerk, Wasser, Gas)' },
@@ -1125,6 +1224,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
         <div className="plan-canvas" ref={boxRef}>
           <div className="plan-quick">
             <IconBtn icon={showLines ? 'eye' : 'eyeOff'} label={showLines ? 'Leitungen und Anschlüsse ausblenden' : 'Leitungen und Anschlüsse einblenden'} active={showLines && lines.length + points.length > 0} onClick={() => setUI({ planLines: !showLines })} />
+            <IconBtn icon="sofa" className={showFurn ? '' : 'is-struck'} label={showFurn ? 'Möbel ausblenden' : 'Möbel einblenden'} active={showFurn && furniture.length > 0} aria-pressed={showFurn} onClick={() => { if (showFurn && selFurn) setSel(null); setUI({ planFurniture: !showFurn }); }} />
             <IconBtn icon="undo" label="Rückgängig (Strg+Z)" onClick={undo} disabled={!hist.current.undo.length} />
             <IconBtn icon="redo" label="Wiederholen (Strg+Y)" onClick={redo} disabled={!hist.current.redo.length} />
             <FullBtn />
@@ -1165,6 +1265,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
               {(floor.rooms || []).map((r) => (
                 <polygon key={r.id} points={ptsAttr(r.poly || [])} fill={ROOM_COLORS[r.type] || ROOM_COLORS.sonstiges} className={`svg-room ${sel?.id === r.id ? 'sel' : ''}`} strokeWidth={sel?.id === r.id ? px(2) : 0} vectorEffect="non-scaling-stroke" />
               ))}
+              {showFurn ? <PlanFurniture list={furniture} sel={sel} px={px} /> : null}
               {(floor.items || [])
                 .filter((it) => it.type === 'stairs')
                 .map((it) => {
@@ -1248,6 +1349,8 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
               {showLines ? <PlanLines lines={lines} sel={sel} px={px} /> : null}
               {showLines ? <PlanPoints points={points} sel={sel} px={px} /> : null}
               {chain && tool === 'line' ? <LinePreview pts={chain.pts} cursor={cursor?.p} kind={lineOpts.kind} px={px} /> : null}
+              {cursor?.furn && tool === 'furniture' ? <FurnitureSymbol f={cursor.furn} px={px} ghost /> : null}
+              {selFurn && showFurn ? <FurnitureHandles f={selFurn} px={px} s={s} /> : null}
               {selWall ? <WallDims w={selWall} px={px} /> : null}
               {selWall
                 ? ['a', 'b'].map((end) => <circle key={end} cx={selWall[end][0]} cy={selWall[end][1]} r={px(6)} className="svg-handle" strokeWidth={px(2)} />)
@@ -1337,10 +1440,14 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
         </div>
       </div>
       <PropsPanel
-        title={selDim ? `Maß${selDim.label ? ': ' + selDim.label : ''}` : selWall ? 'Wand' : selOpening ? OPENING_NAMES[selOpening.type] : selRoom ? `Raum: ${selRoom.name}` : selItem ? 'Treppe' : selPoint ? fixtureKind(selPoint.kind).name : selLine ? 'Leitung' : tool === 'line' || tool === 'riser' ? 'Neue Leitung' : tool === 'fixture' ? 'Anschluss' : ctx ? 'Nebengebäude' : 'Etage & Einstellungen'}
-        openKey={sel ? sel.kind + sel.id : ['line', 'riser', 'fixture', 'wall'].includes(tool) ? tool : null}
+        title={selFurn && tool !== 'furniture' ? selFurn.label || furnType(selFurn.type).name : tool === 'furniture' ? 'Möbel' : selDim ? `Maß${selDim.label ? ': ' + selDim.label : ''}` : selWall ? 'Wand' : selOpening ? OPENING_NAMES[selOpening.type] : selRoom ? `Raum: ${selRoom.name}` : selItem ? 'Treppe' : selPoint ? fixtureKind(selPoint.kind).name : selLine ? 'Leitung' : tool === 'line' || tool === 'riser' ? 'Neue Leitung' : tool === 'fixture' ? 'Anschluss' : ctx ? 'Nebengebäude' : 'Etage & Einstellungen'}
+        openKey={sel ? sel.kind + sel.id : ['line', 'riser', 'fixture', 'wall', 'furniture'].includes(tool) ? tool : null}
       >
-        {selWall ? (
+        {tool === 'furniture' ? (
+          <FurnitureToolProps type={furnKey} setType={(k) => { setFurnKey(k); setSel(null); }} selected={selFurn} mutate={mutate} onDelete={deleteSelection} onDetails={() => setTool('select')} />
+        ) : selFurn ? (
+          <FurnitureProps f={selFurn} floor={floor} mutate={mutate} onDelete={deleteSelection} onSelect={(id) => setSel({ kind: 'furn', id })} />
+        ) : selWall ? (
           <WallProps w={selWall} mutate={mutate} onDelete={deleteSelection} onSelectOpening={(o) => setSel({ kind: 'opening', id: o.id, wallId: selWall.id })} />
         ) : selOpening ? (
           <OpeningProps o={selOpening} w={walls.find((w) => w.id === sel.wallId)} mutate={mutate} onDelete={deleteSelection} />
@@ -1359,7 +1466,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
         ) : tool === 'line' || tool === 'riser' ? (
           <LineToolProps opts={lineOpts} setOpts={changeLineOpts} floor={floor} floors={floors} riser={tool === 'riser'} />
         ) : ctx ? (
-          <CtxProps b={guide} floor={floor} grid={grid} setGrid={setGrid} ortho={ortho} setOrtho={setOrtho} mutate={mutate} lines={lines} points={points} />
+          <CtxProps b={guide} floor={floor} grid={grid} setGrid={setGrid} ortho={ortho} setOrtho={setOrtho} mutate={mutate} lines={lines} points={points} onSelectFurn={(id) => setSel({ kind: 'furn', id })} />
         ) : (
           <FloorProps
             floor={floor}
@@ -1374,6 +1481,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
             lines={lines}
             points={points}
             dims={dims}
+            onSelectFurn={(id) => { setUI({ planFurniture: true }); setSel({ kind: 'furn', id }); }}
             ulUrl={ulUrl}
             onUpload={() => fileRef.current?.click()}
             onCalibrate={() => { setTool('underlay'); setCalib({ pts: [] }); }}
@@ -2244,7 +2352,7 @@ function LineSummary({ lines, points = [] }) {
   );
 }
 
-function FloorProps({ floor, tool, defaults, setDefaults, grid, setGrid, ortho, setOrtho, mutate, ulUrl, onUpload, onCalibrate, lines = [], points = [], dims = [] }) {
+function FloorProps({ floor, tool, defaults, setDefaults, grid, setGrid, ortho, setOrtho, mutate, ulUrl, onUpload, onCalibrate, lines = [], points = [], dims = [], onSelectFurn }) {
   const set = (patch) => mutate((f) => ({ ...f, ...patch }), { refresh: false });
   const ul = floor.underlay;
   return (
@@ -2281,6 +2389,7 @@ function FloorProps({ floor, tool, defaults, setDefaults, grid, setGrid, ortho, 
       </div>
       <Toggle checked={!!floor.underRoof} onChange={(v) => set({ underRoof: v, kneeWall: v ? floor.kneeWall ?? 1.0 : floor.kneeWall })} label="Dachgeschoss (Wände unter Dachschräge)" />
       <LineSummary lines={lines} points={points} />
+      <FurnitureSummary list={floor.furniture} floor={floor} onSelect={onSelectFurn} />
       <DimSummary dims={dims} />
       <div className="divider" />
       <h4>Raster & Fang</h4>
@@ -2789,19 +2898,19 @@ function SiteEditor({ data, floors }) {
 // Floor plan of an outbuilding: the regular editor, stored inside the site entry.
 function CtxFloorEditor({ data, b }) {
   const ground = data.house?.model?.groundLevel ?? 0;
-  const floor = { id: b.id, name: b.name || 'Nebengebäude', short: 'NG', elevation: r3(ground + (b.z ?? 0)), height: b.h ?? 2.4, slab: 0, walls: b.walls || [], rooms: b.rooms || [], items: b.items || [], lines: b.lines || [], points: b.points || [], dims: b.dims || [] };
+  const floor = { id: b.id, name: b.name || 'Nebengebäude', short: 'NG', elevation: r3(ground + (b.z ?? 0)), height: b.h ?? 2.4, slab: 0, walls: b.walls || [], rooms: b.rooms || [], items: b.items || [], lines: b.lines || [], points: b.points || [], dims: b.dims || [], furniture: b.furniture || [] };
   const persist = (n, delay) =>
     updateHouse(
       (h) => ({
         ...h,
-        model: { ...h.model, context: (h.model?.context || []).map((x) => (x.id === b.id ? { ...x, walls: n.walls || [], rooms: n.rooms || [], items: n.items || [], lines: n.lines || [], points: n.points || [], dims: n.dims || [] } : x)) },
+        model: { ...h.model, context: (h.model?.context || []).map((x) => (x.id === b.id ? { ...x, walls: n.walls || [], rooms: n.rooms || [], items: n.items || [], lines: n.lines || [], points: n.points || [], dims: n.dims || [], furniture: n.furniture || [] } : x)) },
       }),
       delay,
     );
   return <FloorEditor data={data} floor={floor} floors={[floor]} persist={persist} guide={b} ctx />;
 }
 
-function CtxProps({ b, floor, grid, setGrid, ortho, setOrtho, mutate, lines, points }) {
+function CtxProps({ b, floor, grid, setGrid, ortho, setOrtho, mutate, lines, points, onSelectFurn }) {
   const [t, setT] = useState(0.24);
   const setB = (patch) => updateHouse((h) => ({ ...h, model: { ...h.model, context: (h.model?.context || []).map((x) => (x.id === b.id ? { ...x, ...patch } : x)) } }), 300);
   const outlineWalls = () => {
@@ -2844,6 +2953,7 @@ function CtxProps({ b, floor, grid, setGrid, ortho, setOrtho, mutate, lines, poi
       ) : null}
       <p className="small muted">Der gestrichelte Rahmen ist der Umriss aus dem Lageplan. Wände, Räume, Türen, Leitungen und Anschlüsse zeichnest du wie im Wohnhaus. Lage und Größe änderst du unter „Grundstück“.</p>
       <LineSummary lines={lines} points={points} />
+      <FurnitureSummary list={floor.furniture} floor={floor} onSelect={onSelectFurn} />
       <div className="divider" />
       <h4>Raster & Fang</h4>
       <Field label="Raster">

@@ -5,7 +5,9 @@ import { closeDrawer, openDrawer, toast } from './state.js';
 import { aiChat, aiErrorText, isHardAiError, AI_DISCLAIMER } from '../ai.js';
 import { createProject, patchProject, addFunding, addCost, addConstraint, addMilestone, deleteMilestone, addMeeting, addNote, updateNote, deleteNote } from '../actions.js';
 import { resolveRef, createsCycle, msRef, sortFloors } from '../metrics.js';
-import { floorPlanInfo, measurePoints, dimLength, lineLength, resizeLine, relink, r3 } from '../planops.js';
+import { floorPlanInfo, measurePoints, dimLength, lineLength, resizeLine, relink, r3, roomOfPoint, wallFrontPoint } from '../planops.js';
+import { FURNITURE, furnType, furnSize, placeFurniture } from '../furniture.js';
+import { labelPoint } from '../geometry.js';
 import { lineKind } from '../catalog.js';
 import { updateDoc } from '../store.js';
 import { pointInPoly } from '../geometry.js';
@@ -310,6 +312,10 @@ export function makeTools(log) {
           rooms: floorPlanInfo(f, getState().house?.northAngle || 0),
           dims: (f.dims || []).map((d) => ({ id: d.id, label: d.label, value: d.value, planLength: r3(dimLength(d)), room: midRoom(f, d.a, d.b)?.name || null })),
           lines: (f.lines || []).filter((l) => !l.auto).map((l) => ({ id: l.id, kind: lineKind(l.kind).name, label: l.label || '', riser: !!l.riser, length: r3(lineLength(l)), status: l.status || 'bestand', room: l.pts?.length ? midRoom(f, l.pts[0], l.pts[l.pts.length - 1])?.name || null : null })),
+          furniture: (f.furniture || []).map((x) => {
+            const { w, d, h } = furnSize(x);
+            return { id: x.id, type: x.type, name: furnType(x.type).name, label: x.label || '', size_cm: `${Math.round(w * 100)} × ${Math.round(d * 100)} × ${Math.round(h * 100)}`, rotation: x.rot || 0, status: x.status || 'bestand', room: roomOfPoint(f, { x: x.x, y: x.y })?.name || null };
+          }),
         };
       },
     },
@@ -371,6 +377,61 @@ export function makeTools(log) {
         updateDoc('floors', f.id, (x) => relink({ ...x, lines: (x.lines || []).map((y) => (y.id === l.id ? { ...y, ...patch } : y)) }), 50);
         log({ kind: 'plan', floorId: f.id, text: `Leitung geändert: ${l.label || lineKind(l.kind).name}${patch.pts ? ` – ${r3(lineLength({ pts: patch.pts }))} m` : ''}` });
         return { ok: true, length: r3(lineLength({ pts: patch.pts || l.pts })) };
+      },
+    },
+    {
+      name: 'manage_furniture',
+      description: 'Stellt Möbel in den Grundriss (erscheinen auch im 3D-Modell), ändert oder entfernt sie. add: type aus dem Katalog, roomId (aus get_floor_plan) und optional wallId einer Wand dieses Raums – das Möbel stellt sich mit der Rückseite an diese Wand (Mitte, along verschiebt entlang der Wand). Ohne wallId kommt es in die Raummitte. Maße in Zentimetern, ohne Angabe gelten Standardmaße. update/delete mit furnitureId aus get_floor_plan.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['add', 'update', 'delete'] },
+          floor: { type: 'string', description: 'Etagen-ID oder Kürzel' },
+          type: { type: 'string', enum: FURNITURE.map((x) => x.key), description: FURNITURE.map((x) => `${x.key}=${x.name}`).join(', ') },
+          roomId: { type: 'string' },
+          wallId: { type: 'string' },
+          along: { type: 'number', description: 'Verschiebung entlang der Wand in Metern ab Wandmitte' },
+          furnitureId: { type: 'string' },
+          width: { type: 'number', description: 'Breite in cm' },
+          depth: { type: 'number', description: 'Tiefe in cm' },
+          height: { type: 'number', description: 'Höhe in cm' },
+          rotation: { type: 'number', description: 'Drehung in Grad im Uhrzeigersinn (nur update)' },
+          label: { type: 'string' },
+          status: { type: 'string', enum: ['bestand', 'geplant'] },
+        },
+        required: ['action', 'floor'],
+      },
+      execute(input) {
+        const f = findFloor(input.floor);
+        const size = {};
+        for (const [k, key] of [['w', 'width'], ['d', 'depth'], ['h', 'height']]) if (Number(input[key]) >= 1 && Number(input[key]) <= 1000) size[k] = r3(Number(input[key]) / 100);
+        if (input.action === 'add') {
+          if (!FURNITURE.some((x) => x.key === input.type)) throw new Error('Unbekannter type – Katalog-Schlüssel verwenden');
+          const room = (f.rooms || []).find((r) => r.id === String(input.roomId || '')) || null;
+          if (input.roomId && !room) throw new Error('Unbekannte roomId');
+          const p = input.wallId ? wallFrontPoint(f, String(input.wallId), room?.id, input.along, (size.d ?? furnType(input.type).d) / 2) : room ? labelPoint(room.poly) : null;
+          if (!p) throw new Error('roomId oder wallId angeben');
+          const placed = placeFurniture(input.type, p, f.walls || [], 0.01);
+          const x = { id: 'fu' + Math.random().toString(36).slice(2, 10), ...placed, ...size, label: str(input.label, 80), status: input.status === 'geplant' ? 'geplant' : 'bestand', by: 'ki' };
+          updateDoc('floors', f.id, (fl) => ({ ...fl, furniture: [...(fl.furniture || []), x] }), 50);
+          log({ kind: 'plan', floorId: f.id, text: `${furnType(x.type).name} in ${roomOfPoint(f, x)?.name || f.short || f.name} gestellt` });
+          return { id: x.id, room: roomOfPoint(f, x)?.name || null, rotation: x.rot, size_cm: `${Math.round((x.w ?? 0) * 100)} × ${Math.round((x.d ?? 0) * 100)}` };
+        }
+        const cur = (f.furniture || []).find((x) => x.id === String(input.furnitureId || ''));
+        if (!cur) throw new Error('Unbekannte furnitureId');
+        const name = cur.label || furnType(cur.type).name;
+        if (input.action === 'delete') {
+          updateDoc('floors', f.id, (fl) => ({ ...fl, furniture: (fl.furniture || []).filter((x) => x.id !== cur.id) }), 50);
+          log({ kind: 'plan', floorId: f.id, text: `${name} entfernt` });
+          return 'ok';
+        }
+        const patch = { ...size };
+        if (Number.isFinite(Number(input.rotation)) && input.rotation !== null && input.rotation !== undefined) patch.rot = ((Math.round(Number(input.rotation)) % 360) + 360) % 360;
+        if (typeof input.label === 'string') patch.label = str(input.label, 80);
+        if (['bestand', 'geplant'].includes(input.status)) patch.status = input.status;
+        updateDoc('floors', f.id, (fl) => ({ ...fl, furniture: (fl.furniture || []).map((x) => (x.id === cur.id ? { ...x, ...patch } : x)) }), 50);
+        log({ kind: 'plan', floorId: f.id, text: `${name} geändert` });
+        return 'ok';
       },
     },
     {

@@ -80,6 +80,7 @@ export function SceneToolbar({ sceneRef }) {
       <IconBtn icon="home" label="Ansicht zurücksetzen" onClick={() => { setUI({ mode: 'all', floorId: null }); s()?.resetView(); }} />
       <span className="tb-sep tb-opt" />
       <IconBtn icon={ui.showRoof ? 'roof' : 'eyeOff'} label={ui.showRoof ? 'Dach ausblenden' : 'Dach einblenden'} active={!ui.showRoof} onClick={() => setUI({ showRoof: !ui.showRoof })} />
+      <IconBtn icon="sofa" label={ui.showFurniture !== false ? 'Möbel ausblenden' : 'Möbel einblenden'} active={ui.showFurniture === false} onClick={() => setUI({ showFurniture: ui.showFurniture === false })} />
       <IconBtn icon="tag" label={ui.showLabels ? 'Beschriftung ausblenden' : 'Beschriftung einblenden'} active={!ui.showLabels} onClick={() => setUI({ showLabels: !ui.showLabels })} />
       <IconBtn icon="sun" label={ui.sunOn ? 'Sonnenstand ausblenden' : 'Sonnenstand und Schatten'} active={!!ui.sunOn} onClick={() => setUI({ sunOn: !ui.sunOn })} />
     </div>
@@ -92,6 +93,8 @@ export function FloorPanel({ data, compact }) {
   const storeys = [...floors, ...(data.house?.model?.context || [])];
   const lineCount = storeys.reduce((n, f) => n + (f.lines || []).filter((l) => !l.auto).length, 0);
   const pointCount = storeys.reduce((n, f) => n + (f.points || []).length, 0);
+  const furnCount = storeys.reduce((n, f) => n + (f.furniture || []).length, 0);
+  const furnOn = ui.showFurniture !== false;
   return (
     <div className={`floorpanel ${compact ? 'is-compact' : ''}`}>
       <div className="fp-head">
@@ -134,6 +137,20 @@ export function FloorPanel({ data, compact }) {
             </span>
             <span className="fp-aside">
               <Icon name={ui.showLines === true ? 'eye' : 'eyeOff'} size={15} />
+            </span>
+          </button>
+        </li>
+        <li>
+          <button className={`fp-row ${furnOn && furnCount ? '' : 'is-dim'}`} aria-pressed={furnOn} onClick={() => setUI({ showFurniture: !furnOn })} title="Möbel im 3D-Modell ein- oder ausblenden">
+            <span className="fp-short">
+              <Icon name="sofa" size={15} />
+            </span>
+            <span className="fp-name">
+              <b>Möbel</b>
+              <span>{furnCount ? `${furnCount} ${furnCount === 1 ? 'Möbelstück' : 'Möbelstücke'} · ${furnOn ? 'sichtbar' : 'ausgeblendet'}` : 'im Grundriss einrichten'}</span>
+            </span>
+            <span className="fp-aside">
+              <Icon name={furnOn ? 'eye' : 'eyeOff'} size={15} />
             </span>
           </button>
         </li>

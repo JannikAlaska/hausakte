@@ -80,10 +80,11 @@ function SceneView({ data, sceneRef }) {
     if (ui.view === 'grundriss') {
       const fid = ui.floorId && ui.floorId !== 'roof' && ui.floorId !== 'site' && !String(ui.floorId).startsWith('ctx:') ? ui.floorId : null;
       const showLines = ui.floorId !== 'site' && ui.planLines !== false;
-      if (fid) s.setView({ mode: 'floor', floorId: fid, showRoof: ui.showRoof, showLabels: ui.showLabels, showLines });
-      else s.setView({ mode: 'all', floorId: null, showRoof: true, showLabels: ui.showLabels, showLines });
-    } else s.setView({ mode: ui.mode, floorId: ui.floorId, showRoof: ui.showRoof, showLabels: ui.showLabels, showLines: ui.showLines === true });
-  }, [ui.view, ui.mode, ui.floorId, ui.showRoof, ui.showLabels, ui.showLines, ui.planLines, data.house]);
+      const showFurniture = ui.planFurniture !== false;
+      if (fid) s.setView({ mode: 'floor', floorId: fid, showRoof: ui.showRoof, showLabels: ui.showLabels, showLines, showFurniture });
+      else s.setView({ mode: 'all', floorId: null, showRoof: true, showLabels: ui.showLabels, showLines, showFurniture });
+    } else s.setView({ mode: ui.mode, floorId: ui.floorId, showRoof: ui.showRoof, showLabels: ui.showLabels, showLines: ui.showLines === true, showFurniture: ui.showFurniture !== false });
+  }, [ui.view, ui.mode, ui.floorId, ui.showRoof, ui.showLabels, ui.showLines, ui.planLines, ui.showFurniture, ui.planFurniture, data.house]);
 
   useEffect(() => {
     sceneRef.current?.setSelection(ui.selection);
