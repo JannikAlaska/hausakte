@@ -167,6 +167,8 @@ function SearchBox({ data }) {
       if (p.title.toLowerCase().includes(s)) out.push({ icon: projectKind(p.kind).icon, title: p.title, sub: p.archived ? 'Projekt · deaktiviert' : 'Projekt', go: () => openDrawer({ type: 'project', id: p.id }) });
     for (const c of Object.values(data.components))
       if (`${c.name} ${c.material}`.toLowerCase().includes(s)) out.push({ icon: gewerk(c.gewerk).icon, title: c.name, sub: `${gewerk(c.gewerk).name} · ${c.material || ''}`, go: () => openDrawer({ type: 'component', id: c.id }) });
+    for (const n of Object.values(data.notes || {}))
+      if (`${n.title} ${n.text}`.toLowerCase().includes(s)) out.push({ icon: 'edit', title: n.title || 'Notiz', sub: `Notiz · ${n.date || ''}`, go: () => { setUI({ docTab: 'notizen' }); go('dokumente'); } });
     for (const d of Object.values(data.documents))
       if ((d.name || '').toLowerCase().includes(s)) out.push({ icon: 'file', title: d.name, sub: 'Dokument', go: () => go('dokumente') });
     return out.slice(0, 12);

@@ -183,3 +183,22 @@ export function addMeeting(projectId, r, { transcript = '', date, source = 'ki' 
   patchProject(projectId, (p) => ({ ...p, meetings: [meeting, ...(p.meetings || [])], milestones: [...(p.milestones || []), ...milestones], constraints: [...(p.constraints || []), ...todos] }));
   return { id, milestones: milestones.length, todos: todos.length };
 }
+
+// ---------- general notes (not tied to a project) ----------
+// first sentence (abbreviations like "Nr." do not end it) or the first words
+function autoTitle(t) {
+  const first = t.split('\n')[0];
+  const m = first.match(/^(.{12,70}?[^A-ZÄÖÜa-zäöü.][.!?]|.{12,70}?[a-zäöüß]{3}[.!?])(\s|$)/);
+  if (m) return m[1].replace(/[.!?]$/, '');
+  if (first.length <= 60) return first || 'Notiz';
+  return first.slice(0, 60).replace(/\s+\S*$/, '') + ' …';
+}
+export function addNote({ title = '', text = '', date, source = 'manuell' } = {}) {
+  const id = uid('n-');
+  const now = Date.now();
+  const t = String(text || '').trim();
+  putDoc('notes', id, { id, title: String(title || '').trim().slice(0, 140) || autoTitle(t), text: t.slice(0, 20000), date: date || todayISO(), source, createdAt: now, updatedAt: now }, 50);
+  return id;
+}
+export const updateNote = (id, patch) => updateDoc('notes', id, (n) => ({ ...n, ...patch, updatedAt: Date.now() }), 300);
+export const deleteNote = (id) => deleteDoc('notes', id);

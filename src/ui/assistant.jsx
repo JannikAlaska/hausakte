@@ -3,7 +3,7 @@ import { Btn, IconBtn, Drawer } from './common.jsx';
 import { Md, useAiAvailable, AiUnavailable } from './ai-ui.jsx';
 import { closeDrawer, openDrawer, toast } from './state.js';
 import { aiChat, aiErrorText, isHardAiError, AI_DISCLAIMER } from '../ai.js';
-import { createProject, patchProject, addFunding, addCost, addConstraint, addMilestone, deleteMilestone, addMeeting } from '../actions.js';
+import { createProject, patchProject, addFunding, addCost, addConstraint, addMilestone, deleteMilestone, addMeeting, addNote, updateNote, deleteNote } from '../actions.js';
 import { resolveRef, createsCycle, msRef, sortFloors } from '../metrics.js';
 import { floorPlanInfo, measurePoints, dimLength, lineLength, resizeLine, relink, r3 } from '../planops.js';
 import { lineKind } from '../catalog.js';
@@ -26,8 +26,8 @@ const SUGGESTIONS = [
 
 let memory = []; // survives closing the drawer within this visit
 
-const ITEM_LISTS = { milestone: 'milestones', cost: 'costs', constraint: 'constraints', funding: 'funding' };
-const ITEM_NAMES = { milestone: 'Meilenstein', cost: 'Kostenposition', constraint: 'Rahmenbedingung', funding: 'Förderung' };
+const ITEM_LISTS = { milestone: 'milestones', cost: 'costs', constraint: 'constraints', funding: 'funding', meeting: 'meetings' };
+const ITEM_NAMES = { milestone: 'Meilenstein', cost: 'Kostenposition', constraint: 'Rahmenbedingung / To-do', funding: 'Förderung', meeting: 'Besprechung' };
 const num = (v) => (v === null ? null : Number.isFinite(Number(v)) ? Number(v) : undefined);
 const str = (v, n = 2000) => String(v ?? '').slice(0, n);
 
@@ -86,6 +86,7 @@ export function makeTools(log) {
           costs: (p.costs || []).map((k) => ({ id: k.id, label: k.label, estimate: k.estimate, offer: k.offer, actual: k.actual, vendor: k.vendor || '' })),
           constraints: (p.constraints || []).map((c) => ({ id: c.id, text: c.text, kind: c.kind, done: !!c.done })),
           funding: (p.funding || []).map((f) => ({ id: f.id, program: f.program, provider: f.provider, type: f.type, status: f.status, rate: f.rate, amount: f.amount, deadline: f.deadline })),
+          meetings: (p.meetings || []).map((m) => ({ id: m.id, date: m.date, title: m.title, summary: m.summary, milestoneIds: m.milestoneIds || [], todoIds: m.todoIds || [] })),
         };
       },
     },
@@ -166,6 +167,74 @@ export function makeTools(log) {
       },
     },
     {
+      name: 'add_meeting_note',
+      description: 'Legt an einem Projekt eine Besprechungsnotiz an (z. B. nach einem Termin mit einem Handwerker) und trägt die daraus abgeleiteten Termine als Meilensteine und die To-dos als Aufgaben ein. Relative Datumsangaben vorher in YYYY-MM-DD umrechnen.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          projectId: { type: 'string' },
+          title: { type: 'string' },
+          date: { type: 'string', description: 'Datum der Besprechung YYYY-MM-DD' },
+          participants: { type: 'array', items: { type: 'string' } },
+          summary: { type: 'string', description: '2–4 Sätze' },
+          points: { type: 'array', items: { type: 'string' } },
+          decisions: { type: 'array', items: { type: 'string' } },
+          openQuestions: { type: 'array', items: { type: 'string' } },
+          appointments: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' }, date: { type: 'string' }, time: { type: 'string' }, note: { type: 'string' } }, required: ['title'] } },
+          todos: { type: 'array', items: { type: 'object', properties: { text: { type: 'string' }, who: { type: 'string' }, due: { type: 'string' }, kind: { type: 'string', enum: CONSTRAINT_KINDS.map((k) => k.key) } }, required: ['text'] } },
+          transcript: { type: 'string', description: 'Wortlaut der Nachricht des Nutzers' },
+        },
+        required: ['projectId', 'summary'],
+      },
+      execute(input) {
+        const p = getProject(input.projectId);
+        const r = addMeeting(p.id, input, { transcript: str(input.transcript, 20000), date: isISO(input.date) ? input.date : undefined });
+        log({ kind: 'project', id: p.id, tab: 'besprechungen', text: `Besprechung bei „${p.title}“${r.milestones ? ` · ${r.milestones} Termin${r.milestones > 1 ? 'e' : ''}` : ''}${r.todos ? ` · ${r.todos} To-do${r.todos > 1 ? 's' : ''}` : ''}` });
+        return r;
+      },
+    },
+    {
+      name: 'manage_note',
+      description: 'Allgemeine Notizen, die zu keinem Projekt gehören: anlegen (action add), ändern oder ergänzen (update, mit appendText zum Anhängen) und löschen (delete). IDs der vorhandenen Notizen stehen in den Hausdaten unter NOTIZEN.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['add', 'update', 'delete'] },
+          noteId: { type: 'string', description: 'bei update und delete' },
+          title: { type: 'string', description: 'kurzer Titel' },
+          text: { type: 'string', description: 'Inhalt (bei update: ersetzt den Text)' },
+          appendText: { type: 'string', description: 'bei update: wird an den Text angehängt' },
+          date: { type: 'string', description: 'YYYY-MM-DD, Standard heute' },
+        },
+        required: ['action'],
+      },
+      execute(input) {
+        const notes = getState().notes || {};
+        if (input.action === 'add') {
+          if (!str(input.text).trim() && !str(input.title).trim()) throw new Error('Leere Notiz');
+          const id = addNote({ title: str(input.title, 140), text: str(input.text, 20000), date: isISO(input.date) ? input.date : undefined, source: 'ki' });
+          log({ kind: 'note', text: `Notiz angelegt: ${input.title || str(input.text, 50)}` });
+          return { id };
+        }
+        const n = notes[String(input.noteId)];
+        if (!n) throw new Error(`Unbekannte noteId. Vorhanden: ${Object.values(notes).map((x) => `${x.id} „${x.title}“`).join(', ') || 'keine'}`);
+        if (input.action === 'delete') {
+          deleteNote(n.id);
+          log({ kind: 'note', text: `Notiz gelöscht: ${n.title}` });
+          return 'ok';
+        }
+        const patch = {};
+        if (typeof input.title === 'string' && input.title.trim()) patch.title = str(input.title, 140);
+        if (typeof input.text === 'string') patch.text = str(input.text, 20000);
+        if (input.appendText) patch.text = [(patch.text ?? n.text ?? '').trim(), str(input.appendText, 5000)].filter(Boolean).join('\n');
+        if (isISO(input.date)) patch.date = input.date;
+        if (!Object.keys(patch).length) return 'Keine Änderung übergeben';
+        updateNote(n.id, patch);
+        log({ kind: 'note', text: `Notiz geändert: ${patch.title || n.title}` });
+        return 'ok';
+      },
+    },
+    {
       name: 'get_floor_plan',
       description: 'Liefert den Grundriss einer Etage: Räume mit Größe, Wänden (Lage aus Sicht des Raums als Himmelsrichtung) und Fenstern/Türen samt IDs, dazu eingetragene Maße und Leitungen. Vor add_measurement oder update_line aufrufen.',
       inputSchema: { type: 'object', properties: { floor: { type: 'string', description: 'Etagen-ID, Kürzel (z. B. EG) oder Name' } }, required: ['floor'] },
@@ -241,33 +310,6 @@ export function makeTools(log) {
       },
     },
     {
-      name: 'add_meeting_note',
-      description: 'Legt an einem Projekt eine Besprechungsnotiz an (z. B. nach einem Termin mit einem Handwerker) und trägt die daraus abgeleiteten Termine als Meilensteine und die To-dos als Aufgaben ein. Relative Datumsangaben vorher in YYYY-MM-DD umrechnen.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          projectId: { type: 'string' },
-          title: { type: 'string' },
-          date: { type: 'string', description: 'Datum der Besprechung YYYY-MM-DD' },
-          participants: { type: 'array', items: { type: 'string' } },
-          summary: { type: 'string', description: '2–4 Sätze' },
-          points: { type: 'array', items: { type: 'string' } },
-          decisions: { type: 'array', items: { type: 'string' } },
-          openQuestions: { type: 'array', items: { type: 'string' } },
-          appointments: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' }, date: { type: 'string' }, time: { type: 'string' }, note: { type: 'string' } }, required: ['title'] } },
-          todos: { type: 'array', items: { type: 'object', properties: { text: { type: 'string' }, who: { type: 'string' }, due: { type: 'string' }, kind: { type: 'string', enum: CONSTRAINT_KINDS.map((k) => k.key) } }, required: ['text'] } },
-          transcript: { type: 'string', description: 'Wortlaut der Nachricht des Nutzers' },
-        },
-        required: ['projectId', 'summary'],
-      },
-      execute(input) {
-        const p = getProject(input.projectId);
-        const r = addMeeting(p.id, input, { transcript: str(input.transcript, 20000), date: isISO(input.date) ? input.date : undefined });
-        log({ kind: 'project', id: p.id, text: `Besprechung bei „${p.title}“${r.milestones ? ` · ${r.milestones} Termin${r.milestones > 1 ? 'e' : ''}` : ''}${r.todos ? ` · ${r.todos} To-do${r.todos > 1 ? 's' : ''}` : ''}` });
-        return r;
-      },
-    },
-    {
       name: 'add_milestone',
       description: 'Fügt einem Projekt einen Termin oder Meilenstein hinzu. Gibt die Meilenstein-Referenz zurück.',
       inputSchema: { type: 'object', properties: { projectId: { type: 'string' }, title: { type: 'string' }, date: { type: 'string', description: 'YYYY-MM-DD' }, dependsOn: depProps.dependsOn }, required: ['projectId', 'title'] },
@@ -281,15 +323,18 @@ export function makeTools(log) {
     },
     {
       name: 'update_item',
-      description: 'Ändert einen Meilenstein, eine Kostenposition, Rahmenbedingung oder Förderung eines Projekts (IDs aus get_project). Nur übergebene Felder werden geändert.',
+      description: 'Ändert einen Meilenstein, eine Kostenposition, Rahmenbedingung/To-do, Förderung oder Besprechung eines Projekts (IDs aus get_project). Nur übergebene Felder werden geändert.',
       inputSchema: {
         type: 'object',
         properties: {
           projectId: { type: 'string' },
           type: { type: 'string', enum: Object.keys(ITEM_LISTS) },
           itemId: { type: 'string' },
-          title: { type: 'string', description: 'Meilenstein' },
-          date: { type: 'string', description: 'Meilenstein: YYYY-MM-DD' },
+          title: { type: 'string', description: 'Meilenstein oder Besprechung' },
+          date: { type: 'string', description: 'Meilenstein oder Besprechung: YYYY-MM-DD' },
+          summary: { type: 'string', description: 'Besprechung: Zusammenfassung' },
+          due: { type: 'string', description: 'To-do: fällig am YYYY-MM-DD' },
+          who: { type: 'string', description: 'To-do: zuständig' },
           done: { type: 'boolean', description: 'Meilenstein oder Rahmenbedingung erledigt' },
           label: { type: 'string', description: 'Kostenposition' },
           estimate: { type: 'number', description: 'Kostenposition: Schätzung in €' },
@@ -311,12 +356,13 @@ export function makeTools(log) {
         if (!key) throw new Error('Unbekannter type');
         const item = (p[key] || []).find((x) => x.id === String(input.itemId));
         if (!item) throw new Error(`Unbekannte itemId für ${input.type}`);
-        const allowed = { milestone: ['title', 'date', 'done'], cost: ['label', 'estimate', 'offer', 'actual'], constraint: ['text', 'done'], funding: ['program', 'status', 'amount', 'rate', 'deadline'] }[input.type];
+        const allowed = { milestone: ['title', 'date', 'done'], cost: ['label', 'estimate', 'offer', 'actual'], constraint: ['text', 'done', 'due', 'who'], funding: ['program', 'status', 'amount', 'rate', 'deadline'], meeting: ['title', 'date', 'summary'] }[input.type];
         const patch = {};
         for (const f of allowed) {
           if (!(f in input)) continue;
           const v = input[f];
-          if (f === 'date' || f === 'deadline') patch[f] = isISO(v) ? v : null;
+          if (f === 'date' || f === 'deadline' || f === 'due') patch[f] = isISO(v) ? v : input.type === 'meeting' ? item.date : null;
+          else if (f === 'summary') patch[f] = str(v, 2000);
           else if (f === 'done') patch[f] = !!v;
           else if (['estimate', 'offer', 'actual', 'amount', 'rate'].includes(f)) { if (num(v) !== undefined) patch[f] = num(v); }
           else if (f === 'status') { if (FUNDING_STATUS.some((x) => x.key === v)) patch[f] = v; }
@@ -331,15 +377,20 @@ export function makeTools(log) {
     },
     {
       name: 'delete_item',
-      description: 'Löscht einen Meilenstein, eine Kostenposition, Rahmenbedingung oder Förderung eines Projekts (IDs aus get_project).',
-      inputSchema: { type: 'object', properties: { projectId: { type: 'string' }, type: { type: 'string', enum: Object.keys(ITEM_LISTS) }, itemId: { type: 'string' } }, required: ['projectId', 'type', 'itemId'] },
+      description: 'Löscht einen Meilenstein, eine Kostenposition, Rahmenbedingung/To-do, Förderung oder Besprechung eines Projekts (IDs aus get_project). Bei Besprechungen löscht withDerived auch die daraus angelegten Termine und To-dos.',
+      inputSchema: { type: 'object', properties: { projectId: { type: 'string' }, type: { type: 'string', enum: Object.keys(ITEM_LISTS) }, itemId: { type: 'string' }, withDerived: { type: 'boolean' } }, required: ['projectId', 'type', 'itemId'] },
       execute(input) {
         const p = getProject(input.projectId);
         const key = ITEM_LISTS[input.type];
         const item = key && (p[key] || []).find((x) => x.id === String(input.itemId));
         if (!item) throw new Error(`Unbekannte itemId für ${input.type}`);
         if (input.type === 'milestone') deleteMilestone(p.id, item.id);
-        else patchProject(p.id, (x) => ({ ...x, [key]: (x[key] || []).filter((y) => y.id !== item.id) }));
+        else if (input.type === 'meeting' && input.withDerived) {
+          const ms = new Set(item.milestoneIds || []),
+            td = new Set(item.todoIds || []);
+          ms.forEach((mid) => deleteMilestone(p.id, mid));
+          patchProject(p.id, (x) => ({ ...x, meetings: (x.meetings || []).filter((y) => y.id !== item.id), constraints: (x.constraints || []).filter((c) => !td.has(c.id)) }));
+        } else patchProject(p.id, (x) => ({ ...x, [key]: (x[key] || []).filter((y) => y.id !== item.id) }));
         log({ kind: 'project', id: p.id, text: `${ITEM_NAMES[input.type]} gelöscht: ${item.title || item.label || item.text || item.program}` });
         return 'ok';
       },
@@ -537,6 +588,7 @@ export function AssistantDrawer({ data, drawer }) {
             <div className="msg msg-ai">
               <p>Hallo! Ich kenne die Daten deiner Hausakte und helfe dir bei Förderung, Reihenfolge, Kosten und Pflichten rund um die Modernisierung.</p>
               <p>Ich kann auch Projekte, Förderungen, Kostenpositionen und Termine für dich anlegen und bestehende Projekte ändern – z. B. Termine verschieben, Status setzen, Hinweise ergänzen oder Abhängigkeiten festlegen.</p>
+              <p>Besprechungsnotizen an Projekten und allgemeine Notizen lege ich auf Zuruf an, ändere oder lösche sie – z. B. „Notiere: Schornsteinfeger kommt am 12. November“.</p>
               <p>Im Grundriss trage ich Maße ein und passe Leitungslängen an – z. B. „Erfasse den Abstand zwischen den zwei Fenstern im Wohnzimmer: 1,5 Meter“. Tippe aufs Mikrofon, um mir das einfach zu sagen.</p>
             </div>
             <div className="suggest">
@@ -562,7 +614,11 @@ export function AssistantDrawer({ data, drawer }) {
                   closeDrawer();
                   setUI({ floorId: m.floorId, planFull: false });
                   go('grundriss');
-                } else if (m.id) openDrawer({ type: 'project', id: m.id });
+                } else if (m.kind === 'note') {
+                  closeDrawer();
+                  setUI({ docTab: 'notizen' });
+                  go('dokumente');
+                } else if (m.id) openDrawer({ type: 'project', id: m.id, tab: m.tab });
               }}
               style={{ border: 0 }}
             >

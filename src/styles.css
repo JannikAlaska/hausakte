@@ -901,3 +901,11 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .prow.is-archived { opacity: 0.62; }
 .prow.is-archived:hover { opacity: 1; }
 .archived-callout b { display: block; margin-bottom: 2px; }
+
+/* general notes */
+.note-card { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--line); border-radius: 12px; padding: 14px; background: var(--surface); }
+.note-card .meet-head { display: flex; align-items: flex-start; gap: 10px; }
+.note-card .pill { margin-top: 3px; }
+.note-text { margin: 0; white-space: pre-wrap; font-size: 13.5px; line-height: 1.5; }
+.search-inline { display: flex; align-items: center; gap: 8px; color: var(--ink-3); }
+.search-inline .input { flex: 1; }

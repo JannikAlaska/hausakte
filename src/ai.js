@@ -175,6 +175,12 @@ export function houseContext(d, { withProjects = true, withComponents = true, wi
     const hi = heatingIndex(Object.values(d.readings || {}), st.living);
     if (hi.last?.perM2) L.push(`Heizenergie ${hi.last.year}: ca. ${fmtNum(hi.last.perM2, 0)} kWh/m²a (Klasse ${hi.cls?.c})`);
   }
+  const notes = Object.values(d.notes || {}).sort((a, b) => (a.date < b.date ? 1 : -1));
+  if (notes.length) {
+    L.push('');
+    L.push('NOTIZEN (allgemein, ohne Projekt)');
+    for (const n of notes.slice(0, 30)) L.push(`- [${n.id}] ${n.date} ${n.title}: ${String(n.text || '').replace(/\s+/g, ' ').slice(0, 160)}`);
+  }
   if (withProjects) {
     L.push('');
     L.push('PROJEKTE');
@@ -506,7 +512,8 @@ export function chatRules(d) {
 Antworte auf Deutsch, konkret und knapp (höchstens ca. 200 Wörter, wenn nicht anders gewünscht). Nutze kurze Absätze oder Aufzählungen mit "- ". Fett mit **…** sparsam.
 Beziehe dich auf die Hausdaten unten. Bei Förderungen nutze die Wissensbasis und weise auf Prüfung bei KfW/BAFA hin. Erfinde keine Daten zum Haus; frage nach, wenn etwas fehlt.
 Wenn der Nutzer etwas anlegen oder ändern möchte (Projekt, Termine, Status, Hinweise, Abhängigkeiten, Förderung, Kostenposition, Rahmenbedingung, Meilenstein), nutze die verfügbaren Werkzeuge und sage danach kurz, was du geändert hast. Hole dir vor dem Ändern einzelner Positionen die IDs mit get_project. Ganze Projekte löschst du nicht. Auf Wunsch deaktivierst du ein Projekt mit update_project (archived: true); endgültig löschen kann der Nutzer ein deaktiviertes Projekt nur selbst in der App.
-Besprechungen: Erzählt der Nutzer von einem Termin oder Gespräch zu einem Projekt (z. B. „Notiz zur PV: Elektriker war da …“), lege mit add_meeting_note eine Besprechungsnotiz mit Terminen und To-dos an.
+Besprechungen: Erzählt der Nutzer von einem Termin oder Gespräch zu einem Projekt (z. B. „Notiz zur PV: Elektriker war da …“), lege mit add_meeting_note eine Besprechungsnotiz mit Terminen und To-dos an. Ändern und löschen kannst du Besprechungen mit update_item bzw. delete_item (type meeting, IDs aus get_project); frage beim Löschen nach, ob die daraus angelegten Termine und To-dos mit weg sollen, wenn der Nutzer das nicht gesagt hat.
+Allgemeine Notizen ohne Projektbezug (z. B. „Notiere: …“, „Schreib dir auf …“) verwaltest du mit manage_note (anlegen, ändern, ergänzen, löschen). Passt eine Notiz eindeutig zu einem Projekt, frage kurz nach, ob sie als Besprechung ans Projekt soll.
 Grundriss: Für Maße (Türbreiten, Abstände zwischen Fenstern, Wandlängen, Raummaße) hole mit get_floor_plan die Räume, Wände und Öffnungen der Etage und trage das Maß mit add_measurement ein; Leitungslängen änderst du mit update_line. Wähle bei mehreren passenden Fenstern die naheliegendsten (gleiche Wand, nebeneinander) und sage kurz, welche du genommen hast. Nachrichten können per Spracheingabe kommen – rechne mit Erkennungsfehlern (z. B. „eins komma fünf“ = 1,5) und frage nach, wenn etwas unklar ist.
 Das Feld „Hinweise“ eines Projekts ist für Abhängigkeiten, Fristen und Besonderheiten gedacht, die man beim Planen beachten muss. Abhängigkeiten können auf ein Projekt (nach dessen Ende) oder auf einen Meilenstein („Projekt-ID#Meilenstein-ID“) zeigen – für Projekte und für Meilensteine.
 

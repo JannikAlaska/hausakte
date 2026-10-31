@@ -1,7 +1,8 @@
 import { Icon } from './icons.jsx';
+import { NotesPanel } from './notes.jsx';
 import { Btn, IconBtn, Select, Sheet, Empty, ConfirmBtn, Pill, Field, TextInput } from './common.jsx';
 import { AiRunner } from './ai-ui.jsx';
-import { toast, go, openDrawer } from './state.js';
+import { toast, go, openDrawer, useUI, setUI } from './state.js';
 import { DOC_TYPES } from '../catalog.js';
 import { putDoc, updateDoc, deleteDoc, getAssets, fileUrl, getState, exportData, clearAll, loadDataset } from '../store.js';
 import { aiReadImage } from '../ai.js';
@@ -559,12 +560,28 @@ function Account() {
 }
 
 export function DocumentsSheet({ data }) {
+  const ui = useUI();
+  const tab = ui.docTab === 'notizen' ? 'notizen' : 'dateien';
   const [type, setType] = useState('alle');
   const [over, setOver] = useState(false);
   const docs = Object.values(data.documents);
+  const notes = Object.values(data.notes || {});
   const counts = Object.fromEntries(DOC_TYPES.map((t) => [t.key, docs.filter((d) => d.type === t.key).length]));
   return (
-    <Sheet title="Dokumente" icon="folder" eyebrow={`${docs.length} Dateien`} onClose={() => go('modell')} actions={<UploadButton />}>
+    <Sheet
+      title="Dokumente & Notizen"
+      icon="folder"
+      eyebrow={`${docs.length} Dateien · ${notes.length} Notizen`}
+      onClose={() => go('modell')}
+      actions={tab === 'dateien' ? <UploadButton /> : null}
+      tabs={[
+        { key: 'dateien', label: 'Dateien', icon: 'file', count: docs.length },
+        { key: 'notizen', label: 'Notizen', icon: 'edit', count: notes.length },
+      ]}
+      tab={tab}
+      onTab={(t) => setUI({ docTab: t })}
+    >
+      {tab === 'notizen' ? <NotesPanel data={data} /> : (
       <div className="stack">
         <div
           className={`dropzone ${over ? 'is-over' : ''}`}
@@ -597,6 +614,7 @@ export function DocumentsSheet({ data }) {
         <Backup data={data} />
         {isSupabaseMode() ? <Account /> : null}
       </div>
+      )}
     </Sheet>
   );
 }
