@@ -863,7 +863,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .drawer-tabs[data-more] { -webkit-mask-image: linear-gradient(to right, #000 82%, transparent); mask-image: linear-gradient(to right, #000 82%, transparent); }
 .drawer-tabs[data-less] { -webkit-mask-image: linear-gradient(to right, transparent, #000 18%); mask-image: linear-gradient(to right, transparent, #000 18%); }
 .drawer-tabs[data-more][data-less] { -webkit-mask-image: linear-gradient(to right, transparent, #000 15%, #000 85%, transparent); mask-image: linear-gradient(to right, transparent, #000 15%, #000 85%, transparent); }
-.meet-intro { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px; border: 1px dashed var(--line-2); border-radius: 12px; background: var(--surface-2); }
+.meet-intro { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px; border: 1px dashed var(--line-2); border-radius: 12px; background: var(--surface-2); flex-wrap: wrap; }
+.meet-intro > div:first-child { flex: 1 1 240px; }
 .meet-intro p { margin: 3px 0 0; }
 .meet-rec { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
 .meet-rec h3 { font-size: 15px; }
@@ -909,3 +910,42 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .note-text { margin: 0; white-space: pre-wrap; font-size: 13.5px; line-height: 1.5; }
 .search-inline { display: flex; align-items: center; gap: 8px; color: var(--ink-3); }
 .search-inline .input { flex: 1; }
+
+/* contacts as business cards */
+.bcard-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
+.bcard { position: relative; display: flex; flex-direction: column; gap: 10px; min-height: 150px; padding: 14px 14px 12px 18px; border-radius: 12px; border: 1px solid var(--line); background: linear-gradient(135deg, var(--surface) 0%, var(--surface-2) 100%); box-shadow: var(--shadow); overflow: hidden; text-align: left; color: var(--ink); }
+.bcard.is-click { cursor: pointer; transition: transform 0.12s ease, box-shadow 0.12s ease; }
+.bcard.is-click:hover { transform: translateY(-1px); box-shadow: var(--shadow-lg); }
+.bcard.is-pending { justify-content: center; align-items: center; border-style: dashed; box-shadow: none; }
+.bcard-stripe { position: absolute; left: 0; top: 0; bottom: 0; width: 5px; }
+.bcard-top { display: flex; align-items: center; gap: 10px; }
+.bcard-logo { display: grid; place-items: center; flex: none; border-radius: 10px; background: #fff; border: 1px solid var(--line); overflow: hidden; }
+.bcard-logo img { width: 100%; height: 100%; object-fit: contain; padding: 4px; }
+.bcard-logo.is-initials { color: #fff; font-weight: 700; font-family: var(--font-display); font-size: 15px; border: 0; }
+.bcard-co { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.bcard-co b { font-size: 14.5px; font-family: var(--font-display); line-height: 1.25; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.bcard-co span { font-size: 11.5px; color: var(--ink-3); display: inline-flex; gap: 4px; align-items: center; }
+.bcard-rating { flex: none; align-self: flex-start; font-size: 11.5px; font-weight: 700; color: var(--warn-ink); background: var(--warn-soft); border-radius: 99px; padding: 2px 7px; }
+.bcard-person { display: flex; flex-direction: column; gap: 1px; padding-top: 8px; border-top: 1px dashed var(--line-2); }
+.bcard-person b { font-size: 13.5px; }
+.bcard-person span { font-size: 12px; color: var(--ink-2); }
+.bcard-lines { display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; }
+.bcard-lines a { color: var(--ink-2); text-decoration: none; display: inline-flex; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bcard-lines a:hover { color: var(--accent-ink); }
+.bcard-busy { color: var(--accent-ink); display: flex; align-items: center; gap: 6px; }
+.bcard-why { display: flex; flex-wrap: wrap; gap: 4px; }
+.bcard-why .pill { font-size: 10.5px; font-weight: 600; }
+.bcard-actions { position: absolute; bottom: 6px; right: 6px; }
+.contact-add { display: flex; gap: 8px; flex-wrap: wrap; flex: none; }
+.contact-drawer .drawer-body > .bcard { margin-top: 12px; min-height: 0; }
+.card-photo { width: 100%; border-radius: 10px; border: 1px solid var(--line); }
+.link-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.link-list li { display: flex; align-items: center; gap: 7px; }
+.link-list li > .ico { color: var(--ink-3); flex: none; }
+.link-list li.is-done .link { text-decoration: line-through; }
+.link-list li .link { flex: 1; min-width: 0; text-align: left; display: block; line-height: 1.4; }
+@media (max-width: 760px) {
+  .bcard-grid { grid-template-columns: minmax(0, 1fr); }
+  .contact-add { width: 100%; }
+  .contact-add .btn { flex: 1; justify-content: center; }
+}

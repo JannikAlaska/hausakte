@@ -3,6 +3,8 @@ import { HeatHint } from './energy.jsx';
 import { PvHint } from './solar.jsx';
 import { OfferCompare } from './offers.jsx';
 import { Meetings } from './meetings.jsx';
+import { ProjectContacts } from './contacts.jsx';
+import { projectContacts } from '../contacts.js';
 import { AiVerdict } from './econ.jsx';
 import { Btn, IconBtn, Field, TextInput, NumInput, Select, DateInput, Pill, Section, Drawer, Sheet, Empty, ConfirmBtn, Seg } from './common.jsx';
 import { AiRunner, useAiAvailable, AiUnavailable } from './ai-ui.jsx';
@@ -362,6 +364,7 @@ const P_TABS = [
   { key: 'foerderung', label: 'Förderung', icon: 'flag' },
   { key: 'aufgaben', label: 'Aufgaben', icon: 'checkCircle' },
   { key: 'besprechungen', label: 'Besprechungen', icon: 'mic' },
+  { key: 'ansprechpartner', label: 'Ansprechpartner', icon: 'tag' },
   { key: 'dokumente', label: 'Dokumente', icon: 'file' },
 ];
 
@@ -390,7 +393,7 @@ export function ProjectDrawer({ data, drawer }) {
   };
   const tabs = P_TABS.map((t) => ({
     ...t,
-    count: t.key === 'zeitplan' ? (p.milestones || []).length || null : t.key === 'foerderung' ? (p.funding || []).length || null : t.key === 'aufgaben' ? cons.filter((c) => !c.done).length || null : t.key === 'dokumente' ? docs.length || null : t.key === 'besprechungen' ? (p.meetings || []).length || null : null,
+    count: t.key === 'zeitplan' ? (p.milestones || []).length || null : t.key === 'foerderung' ? (p.funding || []).length || null : t.key === 'aufgaben' ? cons.filter((c) => !c.done).length || null : t.key === 'dokumente' ? docs.length || null : t.key === 'besprechungen' ? (p.meetings || []).length || null : t.key === 'ansprechpartner' ? projectContacts(p, data).length || null : null,
     warn: t.key === 'zeitplan' && warns.some((w) => w.kind === 'dependency' || w.kind === 'dates' || w.kind === 'overdue'),
   }));
   const nextMs = [...(p.milestones || [])].filter((m) => !m.done && isISO(m.date)).sort((a, b) => (a.date < b.date ? -1 : 1))[0];
@@ -645,7 +648,7 @@ export function ProjectDrawer({ data, drawer }) {
       {tab === 'aufgaben' ? (
         <>
           <Section title="Rahmenbedingungen & Aufgaben" aside={`${cons.filter((c) => c.done).length}/${cons.length} erledigt`}>
-            <Constraints p={p} set={set} />
+            <Constraints p={p} set={set} data={data} />
           </Section>
           <AiRunner
             title="Rahmenbedingungen & Risiken"
@@ -660,6 +663,8 @@ export function ProjectDrawer({ data, drawer }) {
       ) : null}
 
       {tab === 'besprechungen' ? <Meetings p={p} data={data} /> : null}
+
+      {tab === 'ansprechpartner' ? <ProjectContacts p={p} data={data} /> : null}
 
       {tab === 'dokumente' ? (
         <Section title="Dokumente" aside={<UploadButton projectId={p.id} small />}>
@@ -867,7 +872,7 @@ function Dependencies({ p, data, set }) {
   );
 }
 
-function Constraints({ p, set }) {
+function Constraints({ p, set, data }) {
   const list = p.constraints || [];
   const upd = (id, patch) => set({ constraints: list.map((c) => (c.id === id ? { ...c, ...patch } : c)) });
   const sugg = (CONSTRAINT_SUGGEST[p.kind] || []).filter((s) => !list.some((c) => c.text === s));
@@ -888,14 +893,20 @@ function Constraints({ p, set }) {
               </select>
               <IconBtn icon="trash" label="Löschen" size={15} onClick={() => set({ constraints: list.filter((x) => x.id !== c.id) })} />
             </div>
-            {c.due || c.who || c.meetingId ? (
+            {c.due || c.who || c.meetingId || c.contactId ? (
               <div className={`todo-meta small ${!c.done && c.due && c.due < todayISO() ? 'is-late' : ''}`}>
                 {c.due ? (
                   <span>
                     <Icon name="calendar" size={12} /> bis {fmtDate(c.due)}
                   </span>
                 ) : null}
-                {c.who ? <span>{c.who}</span> : null}
+                {c.contactId && data.contacts?.[c.contactId] ? (
+                  <button type="button" className="link" onClick={() => openDrawer({ type: 'contact', id: c.contactId })}>
+                    <Icon name="tag" size={12} /> {data.contacts[c.contactId].company || data.contacts[c.contactId].name}
+                  </button>
+                ) : c.who ? (
+                  <span>{c.who}</span>
+                ) : null}
                 {c.meetingId ? <span className="muted">aus Besprechung{(() => { const d = (p.meetings || []).find((m) => m.id === c.meetingId)?.date; return isISO(d) ? ` ${fmtDayMonth(d)}` : ''; })()}</span> : null}
               </div>
             ) : null}

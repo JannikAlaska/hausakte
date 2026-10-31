@@ -13,6 +13,7 @@ import { PlanEditor } from './ui/plan.jsx';
 import { ConsumptionSheet } from './ui/consumption.jsx';
 import { DocumentsSheet } from './ui/documents.jsx';
 import { AssistantDrawer } from './ui/assistant.jsx';
+import { ContactDrawer } from './ui/contacts.jsx';
 import { projectKind, gewerk, roomType } from './catalog.js';
 import { fmtTime, fmtArea } from './util.js';
 import { portfolio, buildingStats, roomArea, liveProjects } from './metrics.js';
@@ -167,6 +168,8 @@ function SearchBox({ data }) {
       if (p.title.toLowerCase().includes(s)) out.push({ icon: projectKind(p.kind).icon, title: p.title, sub: p.archived ? 'Projekt · deaktiviert' : 'Projekt', go: () => openDrawer({ type: 'project', id: p.id }) });
     for (const c of Object.values(data.components))
       if (`${c.name} ${c.material}`.toLowerCase().includes(s)) out.push({ icon: gewerk(c.gewerk).icon, title: c.name, sub: `${gewerk(c.gewerk).name} · ${c.material || ''}`, go: () => openDrawer({ type: 'component', id: c.id }) });
+    for (const c of Object.values(data.contacts || {}))
+      if (`${c.name} ${c.company} ${c.role}`.toLowerCase().includes(s)) out.push({ icon: 'tag', title: c.company || c.name || 'Kontakt', sub: `Kontakt${c.company && c.name ? ' · ' + c.name : ''}`, go: () => openDrawer({ type: 'contact', id: c.id }) });
     for (const n of Object.values(data.notes || {}))
       if (`${n.title} ${n.text}`.toLowerCase().includes(s)) out.push({ icon: 'edit', title: n.title || 'Notiz', sub: `Notiz · ${n.date || ''}`, go: () => { setUI({ docTab: 'notizen' }); go('dokumente'); } });
     for (const d of Object.values(data.documents))
@@ -397,6 +400,7 @@ function DrawerHost({ data, sceneRef }) {
   if (d.type === 'room') return <RoomDrawer key={d.roomId} data={data} drawer={d} />;
   if (d.type === 'component') return <ComponentDrawer key={d.id} data={data} drawer={d} />;
   if (d.type === 'roadmap') return <RoadmapDrawer data={data} />;
+  if (d.type === 'contact') return <ContactDrawer key={d.id} data={data} drawer={d} />;
   if (d.type === 'assistant') return <AssistantDrawer data={data} drawer={d} sceneRef={sceneRef} />;
   return null;
 }

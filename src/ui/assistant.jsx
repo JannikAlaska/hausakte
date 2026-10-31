@@ -10,6 +10,7 @@ import { lineKind } from '../catalog.js';
 import { updateDoc } from '../store.js';
 import { pointInPoly } from '../geometry.js';
 import { setUI, go } from './state.js';
+import { createContact, updateContact, deleteContact, setContactLinks } from '../contacts.js';
 import { getState } from '../store.js';
 import { PROJECT_KINDS, CONSTRAINT_KINDS, FUNDING_TYPES, FUNDING_STATUS, STATUS, status as statusOf } from '../catalog.js';
 import { isISO } from '../util.js';
@@ -231,6 +232,69 @@ export function makeTools(log) {
         if (!Object.keys(patch).length) return 'Keine Änderung übergeben';
         updateNote(n.id, patch);
         log({ kind: 'note', text: `Notiz geändert: ${patch.title || n.title}` });
+        return 'ok';
+      },
+    },
+    {
+      name: 'manage_contact',
+      description: 'Kontakte (Handwerker, Berater, Behörden): anlegen (add), ändern (update), löschen (delete), mit Einträgen verknüpfen (link) oder Verknüpfungen lösen (unlink). IDs der Kontakte stehen in den Hausdaten unter KONTAKTE, die von Besprechungen, To-dos und Kosten liefert get_project. Verknüpfungen: projectId allein ordnet den Kontakt dem Projekt zu; projectId mit meetingId, todoId oder costId verknüpft den Eintrag; documentId ein Dokument.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['add', 'update', 'delete', 'link', 'unlink'] },
+          contactId: { type: 'string' },
+          name: { type: 'string' },
+          company: { type: 'string' },
+          role: { type: 'string' },
+          phone: { type: 'string' },
+          mobile: { type: 'string' },
+          email: { type: 'string' },
+          website: { type: 'string' },
+          address: { type: 'string' },
+          notes: { type: 'string' },
+          projectId: { type: 'string' },
+          meetingId: { type: 'string' },
+          todoId: { type: 'string' },
+          costId: { type: 'string' },
+          documentId: { type: 'string' },
+        },
+        required: ['action'],
+      },
+      execute(input) {
+        const contacts = getState().contacts || {};
+        const fields = Object.fromEntries(['name', 'company', 'role', 'phone', 'mobile', 'email', 'website', 'address', 'notes'].filter((f) => typeof input[f] === 'string').map((f) => [f, str(input[f], f === 'notes' ? 2000 : 200)]));
+        if (input.action === 'add') {
+          if (!fields.name && !fields.company) throw new Error('Name oder Firma fehlt');
+          const id = createContact({ ...fields, source: 'ki' });
+          if (input.projectId && getState().projects[input.projectId]) setContactLinks(id, { projects: [input.projectId] });
+          log({ kind: 'contact', id, text: `Kontakt angelegt: ${fields.company || fields.name}` });
+          return { id };
+        }
+        const c = contacts[String(input.contactId)];
+        if (!c) throw new Error(`Unbekannte contactId. Vorhanden: ${Object.values(contacts).map((x) => `${x.id} ${x.company || x.name}`).join(', ') || 'keine'}`);
+        const title = c.company || c.name;
+        if (input.action === 'delete') {
+          deleteContact(c.id);
+          log({ kind: 'note', text: `Kontakt gelöscht: ${title}` });
+          return 'ok';
+        }
+        if (input.action === 'update') {
+          if (!Object.keys(fields).length) return 'Keine Änderung übergeben';
+          updateContact(c.id, fields);
+          log({ kind: 'contact', id: c.id, text: `Kontakt geändert: ${fields.company || title}` });
+          return 'ok';
+        }
+        const pid = input.projectId ? String(input.projectId) : null;
+        if (pid && !getState().projects[pid]) throw new Error('Unbekannte projectId');
+        const links = { projects: [], meetings: [], todos: [], costs: [], docs: [] };
+        if (pid && input.meetingId) links.meetings.push(`${pid}/${input.meetingId}`);
+        else if (pid && input.todoId) links.todos.push(`${pid}/${input.todoId}`);
+        else if (pid && input.costId) links.costs.push(`${pid}/${input.costId}`);
+        else if (pid) links.projects.push(pid);
+        if (input.documentId) links.docs.push(String(input.documentId));
+        const n = setContactLinks(c.id, links, input.action === 'link');
+        if (!n) throw new Error('Nichts gefunden, was verknüpft werden könnte – IDs prüfen');
+        log({ kind: 'contact', id: c.id, text: `${title}: ${input.action === 'link' ? 'verknüpft' : 'Verknüpfung gelöst'}` });
         return 'ok';
       },
     },
@@ -614,6 +678,8 @@ export function AssistantDrawer({ data, drawer }) {
                   closeDrawer();
                   setUI({ floorId: m.floorId, planFull: false });
                   go('grundriss');
+                } else if (m.kind === 'contact') {
+                  openDrawer({ type: 'contact', id: m.id });
                 } else if (m.kind === 'note') {
                   closeDrawer();
                   setUI({ docTab: 'notizen' });

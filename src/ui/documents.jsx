@@ -1,5 +1,7 @@
 import { Icon } from './icons.jsx';
 import { NotesPanel } from './notes.jsx';
+import { ContactsPanel } from './contacts.jsx';
+import { matchContact } from '../contacts.js';
 import { Btn, IconBtn, Select, Sheet, Empty, ConfirmBtn, Pill, Field, TextInput } from './common.jsx';
 import { AiRunner } from './ai-ui.jsx';
 import { toast, go, openDrawer, useUI, setUI } from './state.js';
@@ -62,7 +64,7 @@ export async function uploadFiles(files, meta = {}) {
   let ok = 0;
   for (const file of files) {
     const id = uid('d-');
-    const base = { id, name: file.name, type: meta.type || guessType(file), size: file.size, contentType: file.type, projectId: meta.projectId || null, componentId: meta.componentId || null, lineId: meta.lineId || null, date: todayISO(), notes: '' };
+    const base = { id, name: file.name, type: meta.type || guessType(file), size: file.size, contentType: file.type, projectId: meta.projectId || null, componentId: meta.componentId || null, lineId: meta.lineId || null, contactId: meta.contactId || null, date: todayISO(), notes: '' };
     try {
       if (assets) {
         if (!ASSET_TYPES.includes(file.type)) {
@@ -83,12 +85,13 @@ export async function uploadFiles(files, meta = {}) {
         putDoc('documents', id, { ...base, dataUrl, contentType: blob.type || file.type }, 50);
       }
       ok++;
+      meta.ids?.push(id);
     } catch (e) {
       const msg = e?.code === 'too_large' ? 'Datei ist zu groß (max. 20 MB).' : e?.code === 'quota_or_state' ? 'Der Dateispeicher ist voll.' : e?.code === 'unsupported_type' ? 'Dateityp wird nicht unterstützt.' : 'Hochladen fehlgeschlagen.';
       toast(`„${file.name}“: ${msg}`, 'err', 5000);
     }
   }
-  if (ok) toast(ok === 1 ? 'Dokument abgelegt' : `${ok} Dokumente abgelegt`);
+  if (ok && !meta.silent) toast(ok === 1 ? 'Dokument abgelegt' : `${ok} Dokumente abgelegt`);
   return ok;
 }
 
@@ -193,7 +196,7 @@ function DocAi({ doc, data }) {
         const blob = await res.blob();
         return aiReadImage(blob, 'document', { signal });
       }}
-      onSave={(rec) => updateDoc('documents', doc.id, (d) => ({ ...d, ai: rec, type: rec.data?.docType && DOC_TYPES.some((t) => t.key === rec.data.docType) ? rec.data.docType : d.type }))}
+      onSave={(rec) => updateDoc('documents', doc.id, (d) => ({ ...d, ai: rec, type: rec.data?.docType && DOC_TYPES.some((t) => t.key === rec.data.docType) ? rec.data.docType : d.type, contactId: d.contactId || (rec.data?.vendor ? matchContact(rec.data.vendor) : null) }))}
       render={(r) => (
         <div className="stack" style={{ gap: 8 }}>
           {r.summary ? <p className="ai-summary">{r.summary}</p> : null}
@@ -561,27 +564,29 @@ function Account() {
 
 export function DocumentsSheet({ data }) {
   const ui = useUI();
-  const tab = ui.docTab === 'notizen' ? 'notizen' : 'dateien';
+  const tab = ['notizen', 'kontakte'].includes(ui.docTab) ? ui.docTab : 'dateien';
   const [type, setType] = useState('alle');
   const [over, setOver] = useState(false);
   const docs = Object.values(data.documents);
   const notes = Object.values(data.notes || {});
+  const contacts = Object.values(data.contacts || {});
   const counts = Object.fromEntries(DOC_TYPES.map((t) => [t.key, docs.filter((d) => d.type === t.key).length]));
   return (
     <Sheet
-      title="Dokumente & Notizen"
+      title="Dokumente & Kontakte"
       icon="folder"
-      eyebrow={`${docs.length} Dateien · ${notes.length} Notizen`}
+      eyebrow={`${docs.length} Dateien · ${notes.length} Notizen · ${contacts.length} Kontakte`}
       onClose={() => go('modell')}
       actions={tab === 'dateien' ? <UploadButton /> : null}
       tabs={[
         { key: 'dateien', label: 'Dateien', icon: 'file', count: docs.length },
         { key: 'notizen', label: 'Notizen', icon: 'edit', count: notes.length },
+        { key: 'kontakte', label: 'Kontakte', icon: 'tag', count: contacts.length },
       ]}
       tab={tab}
       onTab={(t) => setUI({ docTab: t })}
     >
-      {tab === 'notizen' ? <NotesPanel data={data} /> : (
+      {tab === 'kontakte' ? <ContactsPanel data={data} /> : tab === 'notizen' ? <NotesPanel data={data} /> : (
       <div className="stack">
         <div
           className={`dropzone ${over ? 'is-over' : ''}`}

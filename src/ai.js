@@ -181,6 +181,12 @@ export function houseContext(d, { withProjects = true, withComponents = true, wi
     L.push('NOTIZEN (allgemein, ohne Projekt)');
     for (const n of notes.slice(0, 30)) L.push(`- [${n.id}] ${n.date} ${n.title}: ${String(n.text || '').replace(/\s+/g, ' ').slice(0, 160)}`);
   }
+  const contacts = Object.values(d.contacts || {});
+  if (contacts.length) {
+    L.push('');
+    L.push('KONTAKTE');
+    for (const c of contacts.slice(0, 60)) L.push(`- ${contactLine(c)}${c.phone || c.mobile ? ` · Tel. ${c.phone || c.mobile}` : ''}${c.email ? ` · ${c.email}` : ''}`);
+  }
   if (withProjects) {
     L.push('');
     L.push('PROJEKTE');
@@ -237,7 +243,7 @@ const JSON_RULES = 'Antworte ausschließlich mit gültigem JSON ohne Erklärtext
 async function askJSON(prompt, opts = {}) {
   const sample = await getSample();
   if (!sample) throw { code: 'not_granted', message: 'sample unavailable' };
-  return sample.json(prompt, { modelTier: opts.tier || 'default', signal: opts.signal, onText: opts.onText, cache: opts.cache ?? false });
+  return sample.json(prompt, { modelTier: opts.tier || 'default', signal: opts.signal, onText: opts.onText, cache: opts.cache ?? false, ...(opts.web ? { web: true } : {}) });
 }
 
 // ---------- project analyses ----------
@@ -380,6 +386,7 @@ Format:
 export async function aiMeeting(p, transcript, d, { date, signal } = {}) {
   const ms = (p.milestones || []).map((m) => `- ${m.title} (${m.date || 'ohne Datum'}${m.done ? ', erledigt' : ''})`).join('\n') || 'keine';
   const todos = (p.constraints || []).filter((c) => !c.done).map((c) => `- ${c.text}${c.due ? ` (bis ${c.due})` : ''}`).join('\n') || 'keine';
+  const contacts = Object.values(d.contacts || {});
   const prompt = `Du hilfst bei der Modernisierung eines Wohnhauses. Aus einer gesprochenen Notiz zu einem Termin oder Gespräch im Projekt erstellst du eine knappe Besprechungsnotiz und leitest Termine und Aufgaben ab.
 Die Notiz wurde automatisch aus Sprache in Text umgewandelt und kann Erkennungsfehler enthalten – korrigiere offensichtlich falsch erkannte Fachbegriffe (z. B. „Wechsel Richter“ = Wechselrichter, „Zähler Schrank“ = Zählerschrank).
 Datum der Besprechung: ${date || todayISO()} (heute ist ${todayISO()}). Rechne relative Angaben wie „nächsten Dienstag“, „in zwei Wochen“ oder „Ende November“ von diesem Datum aus in YYYY-MM-DD um.
@@ -396,12 +403,15 @@ ${ms}
 OFFENE AUFGABEN
 ${todos}
 
+BEKANNTE KONTAKTE (ordne Teilnehmer und Zuständige über die ID zu, wenn eindeutig)
+${contacts.map(contactLine).join('\n') || 'keine'}
+
 GESPROCHENE NOTIZ
 """${String(transcript).slice(0, 40000)}"""
 
 ${JSON_RULES}
 Format:
-{"title":"Kurzer Titel, z. B. Vor-Ort-Termin Elektriker PV","date":"YYYY-MM-DD","participants":["Person oder Firma"],"summary":"2–4 Sätze","points":["Besprochener Punkt"],"decisions":["Entscheidung oder Vereinbarung"],"openQuestions":["Offene Frage"],"appointments":[{"title":"Termin","date":"YYYY-MM-DD","time":"HH:MM oder null","note":"kurz"}],"todos":[{"text":"Was ist zu tun","who":"ich|Firma|Person","due":"YYYY-MM-DD oder null","kind":"${CONSTRAINT_KINDS.map((k) => k.key).join('|')}"}],"costs":[{"label":"Position","amount":1234}]}`;
+{"title":"Kurzer Titel, z. B. Vor-Ort-Termin Elektriker PV","date":"YYYY-MM-DD","participants":["Person oder Firma"],"contactIds":["Kontakt-ID der Teilnehmer"],"summary":"2–4 Sätze","points":["Besprochener Punkt"],"decisions":["Entscheidung oder Vereinbarung"],"openQuestions":["Offene Frage"],"appointments":[{"title":"Termin","date":"YYYY-MM-DD","time":"HH:MM oder null","note":"kurz"}],"todos":[{"text":"Was ist zu tun","who":"ich|Firma|Person","contactId":"Kontakt-ID oder null","due":"YYYY-MM-DD oder null","kind":"${CONSTRAINT_KINDS.map((k) => k.key).join('|')}"}],"costs":[{"label":"Position","amount":1234}]}`;
   return askJSON(prompt, { signal });
 }
 
@@ -492,7 +502,12 @@ export async function aiReadImage(file, purpose, opts = {}) {
   const lim = await getLimits();
   if (!lim?.images) throw { code: 'images_unavailable' };
   let prompt;
-  if (purpose === 'component') {
+  if (purpose === 'contact') {
+    prompt = `Das Bild zeigt eine Visitenkarte, eine E-Mail-Signatur, einen Briefkopf oder einen Screenshot (z. B. Webseite, Google-Eintrag, Chat) mit Kontaktdaten einer Firma oder Person rund um Hausbau, Handwerk, Behörde oder Beratung. Lies die Kontaktdaten aus. Telefonnummern im internationalen oder deutschen Format so wie abgebildet. Erfinde nichts.
+${JSON_RULES}
+Format:
+{"name":"Vor- und Nachname oder leer","company":"Firma","role":"Funktion, z. B. Elektromeister, Geschäftsführer, Sachbearbeiter","trade":"${['rohbau', 'dach', 'fassade', 'fenster', 'keller', 'heizung', 'lueftung', 'sanitaer', 'elektro', 'solar', 'innenausbau', 'boden', 'maler', 'sicherheit', 'aussen', 'schadstoffe', 'beratung', 'behoerde', 'sonstiges'].join('|')}","phone":"Festnetz","mobile":"Mobil","email":"E-Mail","website":"Webseite","address":"Straße, PLZ Ort","notes":"weitere Angaben, z. B. Fax, Steuernummer, Öffnungszeiten"}`;
+  } else if (purpose === 'component') {
     prompt = `Das Bild zeigt ein Bauteil eines Wohnhauses oder sein Typenschild (z. B. Heizkessel, Wärmepumpe, Zählerschrank, Fenster, Wechselrichter). Lies alle erkennbaren Angaben aus.
 ${JSON_RULES}
 Format:
@@ -513,6 +528,7 @@ Antworte auf Deutsch, konkret und knapp (höchstens ca. 200 Wörter, wenn nicht 
 Beziehe dich auf die Hausdaten unten. Bei Förderungen nutze die Wissensbasis und weise auf Prüfung bei KfW/BAFA hin. Erfinde keine Daten zum Haus; frage nach, wenn etwas fehlt.
 Wenn der Nutzer etwas anlegen oder ändern möchte (Projekt, Termine, Status, Hinweise, Abhängigkeiten, Förderung, Kostenposition, Rahmenbedingung, Meilenstein), nutze die verfügbaren Werkzeuge und sage danach kurz, was du geändert hast. Hole dir vor dem Ändern einzelner Positionen die IDs mit get_project. Ganze Projekte löschst du nicht. Auf Wunsch deaktivierst du ein Projekt mit update_project (archived: true); endgültig löschen kann der Nutzer ein deaktiviertes Projekt nur selbst in der App.
 Besprechungen: Erzählt der Nutzer von einem Termin oder Gespräch zu einem Projekt (z. B. „Notiz zur PV: Elektriker war da …“), lege mit add_meeting_note eine Besprechungsnotiz mit Terminen und To-dos an. Ändern und löschen kannst du Besprechungen mit update_item bzw. delete_item (type meeting, IDs aus get_project); frage beim Löschen nach, ob die daraus angelegten Termine und To-dos mit weg sollen, wenn der Nutzer das nicht gesagt hat.
+Kontakte (Handwerker, Berater, Behörden) verwaltest und verknüpfst du mit manage_contact; Fotos von Visitenkarten lädt der Nutzer unter Dokumente › Kontakte oder im Projekt-Reiter „Ansprechpartner“ hoch.
 Allgemeine Notizen ohne Projektbezug (z. B. „Notiere: …“, „Schreib dir auf …“) verwaltest du mit manage_note (anlegen, ändern, ergänzen, löschen). Passt eine Notiz eindeutig zu einem Projekt, frage kurz nach, ob sie als Besprechung ans Projekt soll.
 Grundriss: Für Maße (Türbreiten, Abstände zwischen Fenstern, Wandlängen, Raummaße) hole mit get_floor_plan die Räume, Wände und Öffnungen der Etage und trage das Maß mit add_measurement ein; Leitungslängen änderst du mit update_line. Wähle bei mehreren passenden Fenstern die naheliegendsten (gleiche Wand, nebeneinander) und sage kurz, welche du genommen hast. Nachrichten können per Spracheingabe kommen – rechne mit Erkennungsfehlern (z. B. „eins komma fünf“ = 1,5) und frage nach, wenn etwas unklar ist.
 Das Feld „Hinweise“ eines Projekts ist für Abhängigkeiten, Fristen und Besonderheiten gedacht, die man beim Planen beachten muss. Abhängigkeiten können auf ein Projekt (nach dessen Ende) oder auf einen Meilenstein („Projekt-ID#Meilenstein-ID“) zeigen – für Projekte und für Meilensteine.
@@ -532,4 +548,53 @@ export async function aiChat(turns, d, { signal, onText, tools } = {}) {
   const options = { signal, onText, cache: false, modelTier: 'default' };
   if (tools && lim?.tools) options.tools = tools.slice(0, lim.tools.maxCount || tools.length);
   return sample(input, options);
+}
+
+// ---------- contacts ----------
+const contactLine = (c) => `[${c.id}] ${c.name || '–'} · ${c.company || '–'}${c.role ? ` · ${c.role}` : ''}${c.trade ? ` · Gewerk ${c.trade}` : ''}`;
+
+// Looks the company up on the web (server-side search, Supabase only) and returns what it found.
+export async function aiEnrichContact(c, d, opts = {}) {
+  const h = d.house || {};
+  const prompt = `Recherchiere im Internet zu diesem Kontakt. Es geht um einen Betrieb oder eine Stelle, mit der ein Hauseigentümer in ${[h.zip, h.city].filter(Boolean).join(' ') || 'Deutschland'} seine Modernisierung plant (Handwerker, Energieberater, Behörde, Lieferant).
+Gesucht: offizielle Webseite, direkter https-Link auf das Firmenlogo als Bilddatei (von der offiziellen Webseite, z. B. Logo-Grafik oder og:image – keine Suchmaschinen-Thumbnails), Adresse, Telefon, E-Mail, kurze Beschreibung, Leistungen, Öffnungszeiten, Bewertung (z. B. Google oder Handwerkerportale, mit Anzahl), Zertifizierungen/Mitgliedschaften (z. B. Meisterbetrieb, Innung, Fachbetrieb, Energieeffizienz-Expertenliste).
+Gibt es mehrere Betriebe gleichen Namens, nimm den, der zu Adresse, Telefonvorwahl oder Region passt. Bist du nicht sicher, setze found auf false und erkläre es in note. Erfinde nichts; leere Felder lieber weglassen.
+
+KONTAKT
+Name: ${c.name || '–'}
+Firma: ${c.company || '–'}
+Funktion: ${c.role || '–'}
+Telefon: ${[c.phone, c.mobile].filter(Boolean).join(', ') || '–'}
+E-Mail: ${c.email || '–'}
+Webseite: ${c.website || '–'}
+Adresse: ${c.address || '–'}
+
+${JSON_RULES}
+Format:
+{"found":true,"website":"https://…","logoUrl":"https://…/logo.png","description":"2–3 Sätze","services":["Leistung"],"address":"Straße, PLZ Ort","phone":"…","email":"…","hours":"Mo–Fr 7–16 Uhr","rating":{"value":4.7,"count":38,"source":"Google"},"certifications":["Meisterbetrieb"],"sources":[{"title":"Seitentitel","url":"https://…"}],"confidence":"hoch|mittel|niedrig","note":"Unsicherheiten"}`;
+  return askJSON(prompt, { ...opts, web: true });
+}
+
+// Finds existing meetings, to-dos, costs and documents that belong to a contact.
+export async function aiLinkContact(c, d, opts = {}) {
+  const L = [];
+  for (const p of Object.values(d.projects || {})) {
+    L.push(`PROJEKT [${p.id}] ${p.title}${p.archived ? ' (deaktiviert)' : ''}${p.notes ? ` – Notizen: ${String(p.notes).slice(0, 200)}` : ''}${p.hints ? ` – Hinweise: ${String(p.hints).slice(0, 160)}` : ''}`);
+    for (const m of p.meetings || []) L.push(`  BESPRECHUNG [${p.id}/${m.id}] ${m.date} ${m.title}; Teilnehmer: ${(m.participants || []).join(', ') || '–'}; ${String(m.summary || m.transcript || '').slice(0, 220)}`);
+    for (const t of p.constraints || []) L.push(`  TODO [${p.id}/${t.id}] ${t.text}${t.who ? ` (zuständig: ${t.who})` : ''}`);
+    for (const k of p.costs || []) L.push(`  KOSTEN [${p.id}/${k.id}] ${k.label}${k.vendor ? ` – Anbieter: ${k.vendor}` : ''}`);
+  }
+  for (const doc of Object.values(d.documents || {})) L.push(`DOKUMENT [${doc.id}] ${doc.name} (${doc.type})${doc.ai?.data?.vendor ? ` – Absender: ${doc.ai.data.vendor}` : ''}${doc.ai?.data?.summary ? ` – ${String(doc.ai.data.summary).slice(0, 160)}` : ''}`);
+  const prompt = `Ordne einen Kontakt den Einträgen einer Hausakte zu. Wähle nur Einträge, bei denen der Kontakt eindeutig beteiligt ist (genannt als Teilnehmer, Absender, Anbieter, Zuständiger oder klar beschrieben). Ein Projekt (projects) nur, wenn der Kontakt dort ausdrücklich als Ansprechpartner genannt wird. Lieber weglassen als raten.
+
+KONTAKT
+${contactLine(c)}${c.email ? ` · ${c.email}` : ''}${c.website ? ` · ${c.website}` : ''}
+
+EINTRÄGE
+${L.join('\n').slice(0, 60000) || 'keine'}
+
+${JSON_RULES}
+Format (IDs genau wie in eckigen Klammern):
+{"projects":["projektId"],"meetings":["projektId/besprechungId"],"todos":["projektId/todoId"],"costs":["projektId/kostenId"],"documents":["dokumentId"]}`;
+  return askJSON(prompt, opts);
 }

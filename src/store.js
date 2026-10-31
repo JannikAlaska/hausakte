@@ -4,7 +4,7 @@
 import { deepClone } from './util.js';
 import { isSupabaseMode, supaDb, supaAssets, cachedFileUrl, onFileUrls } from './supa.js';
 
-export const COLLECTIONS = ['house', 'floors', 'components', 'projects', 'readings', 'documents', 'underlays', 'notes'];
+export const COLLECTIONS = ['house', 'floors', 'components', 'projects', 'readings', 'documents', 'underlays', 'notes', 'contacts'];
 const LS_KEY = 'hausakte-v1';
 
 let state = {
@@ -19,6 +19,7 @@ let state = {
   documents: {},
   underlays: {},
   notes: {},
+  contacts: {},
   saving: 0,
   lastSaved: null,
   error: null,

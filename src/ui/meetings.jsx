@@ -3,7 +3,7 @@
 import { Icon } from './icons.jsx';
 import { Btn, IconBtn, Field, TextInput, DateInput, Pill, ConfirmBtn } from './common.jsx';
 import { useAiAvailable } from './ai-ui.jsx';
-import { toast } from './state.js';
+import { toast, openDrawer } from './state.js';
 import { aiMeeting, aiErrorText } from '../ai.js';
 import { addMeeting, addCost, patchProject } from '../actions.js';
 import { fmtDate, fmtEuro, todayISO, isISO } from '../util.js';
@@ -105,7 +105,7 @@ export function Meetings({ p, data }) {
           </Btn>
         </div>
       )}
-      {list.length ? list.map((m) => <MeetingCard key={m.id} m={m} p={p} />) : !open ? <p className="small muted">Noch keine Besprechungen.</p> : null}
+      {list.length ? list.map((m) => <MeetingCard key={m.id} m={m} p={p} data={data} />) : !open ? <p className="small muted">Noch keine Besprechungen.</p> : null}
     </div>
   );
 }
@@ -192,7 +192,7 @@ function Recorder({ p, data, onClose }) {
   );
 }
 
-function MeetingCard({ m, p }) {
+function MeetingCard({ m, p, data }) {
   const [edit, setEdit] = useState(false);
   const set = (patch) => patchProject(p.id, (x) => ({ ...x, meetings: (x.meetings || []).map((y) => (y.id === m.id ? { ...y, ...patch } : y)) }));
   const ms = (p.milestones || []).filter((x) => x.meetingId === m.id);
@@ -226,6 +226,15 @@ function MeetingCard({ m, p }) {
         <div style={{ flex: 1, minWidth: 0 }}>
           {edit ? <TextInput id={'mt-title-' + m.id} value={m.title} onChange={(v) => set({ title: v })} /> : <h3>{m.title}</h3>}
           {m.participants?.length ? <div className="small muted">{m.participants.join(' · ')}</div> : null}
+          {(m.contactIds || []).filter((id) => data?.contacts?.[id]).length ? (
+            <div className="chips" style={{ marginTop: 4 }}>
+              {m.contactIds.filter((id) => data.contacts[id]).map((id) => (
+                <button key={id} type="button" className="chip" onClick={() => openDrawer({ type: 'contact', id })}>
+                  <Icon name="tag" size={12} /> {data.contacts[id].company || data.contacts[id].name}
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
         <IconBtn icon={edit ? 'check' : 'edit'} label={edit ? 'Fertig' : 'Bearbeiten'} size={16} onClick={() => setEdit(!edit)} />
       </header>

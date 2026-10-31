@@ -3,6 +3,7 @@ import { putDoc, updateDoc, getState, deleteDoc } from './store.js';
 import { uid, todayISO, addDays, parseISO, toISO, diffDays } from './util.js';
 import { projectKind, PROJECT_KINDS, CONSTRAINT_KINDS, FUNDING_TYPES } from './catalog.js';
 import { resolveRef } from './metrics.js';
+import { matchContact } from './contacts.js';
 
 export function nextMonday(iso, minDays = 0) {
   const d = parseISO(addDays(iso, minDays));
@@ -83,7 +84,7 @@ export function addFunding(projectId, f) {
 }
 
 export function addCost(projectId, c) {
-  const entry = { id: uid('k'), label: c.label || 'Position', estimate: c.estimate ?? null, offer: c.offer ?? null, actual: c.actual ?? null, vendor: c.vendor || '', note: c.note || '' };
+  const entry = { id: uid('k'), label: c.label || 'Position', estimate: c.estimate ?? null, offer: c.offer ?? null, actual: c.actual ?? null, vendor: c.vendor || '', note: c.note || '', contactId: c.contactId || (c.vendor ? matchContact(c.vendor) : null) };
   patchProject(projectId, (p) => ({ ...p, costs: [...(p.costs || []), entry] }));
 }
 
@@ -160,15 +161,20 @@ export function addMeeting(projectId, r, { transcript = '', date, source = 'ki' 
     .slice(0, 12)
     .map((a) => ({ id: uid('m'), title: txt(a.title, 160), date: iso(a.date), time: /^\d{1,2}:\d{2}$/.test(a.time || '') ? a.time.padStart(5, '0') : null, note: txt(a.note, 300), done: false, dependsOn: [], meetingId: id }));
   const kinds = CONSTRAINT_KINDS.map((k) => k.key);
+  // contacts: ids named by the AI if they exist, otherwise found by name
+  const known = getState().contacts || {};
+  const cidOf = (id, text) => (id && known[id] ? id : text ? matchContact(text) : null);
+  const contactIds = [...new Set([...(Array.isArray(r.contactIds) ? r.contactIds : []).filter((x) => known[x]), ...(Array.isArray(r.participants) ? r.participants : []).map((x) => matchContact(x)).filter(Boolean)])];
   const todos = (Array.isArray(r.todos) ? r.todos : [])
     .filter((t) => t && txt(t.text))
     .slice(0, 20)
-    .map((t) => ({ id: uid('b'), text: txt(t.text, 240), kind: kinds.includes(t.kind) ? t.kind : 'organisatorisch', done: false, due: iso(t.due), who: txt(t.who, 60), meetingId: id }));
+    .map((t) => ({ id: uid('b'), text: txt(t.text, 240), kind: kinds.includes(t.kind) ? t.kind : 'organisatorisch', done: false, due: iso(t.due), who: txt(t.who, 60), contactId: /^ich$/i.test(String(t.who || '').trim()) ? null : cidOf(t.contactId, t.who), meetingId: id }));
   const meeting = {
     id,
     date: iso(r.date) || iso(date) || todayISO(),
     title: txt(r.title, 140) || 'Besprechung',
     participants: list(r.participants, 10),
+    contactIds,
     summary: txt(r.summary, 2000),
     points: list(r.points),
     decisions: list(r.decisions),

@@ -37,7 +37,7 @@ Deno.serve(async (req) => {
 
   const raw = await req.text();
   if (raw.length > 12_000_000) return reply({ code: "prompt_too_large", message: "request too large" }, 413);
-  let body: { messages?: Anthropic.Beta.BetaMessageParam[]; tools?: Anthropic.Beta.BetaTool[]; tier?: string; json?: boolean };
+  let body: { messages?: Anthropic.Beta.BetaMessageParam[]; tools?: Anthropic.Beta.BetaTool[]; tier?: string; json?: boolean; web?: boolean };
   try {
     body = JSON.parse(raw);
   } catch {
@@ -52,21 +52,39 @@ Deno.serve(async (req) => {
     .filter((t) => /^[a-zA-Z0-9_-]{1,64}$/.test(t?.name ?? "") && t.input_schema?.type === "object")
     .map((t) => ({ name: t.name, description: String(t.description ?? "").slice(0, 2000), input_schema: t.input_schema }));
 
-  const client = new Anthropic({ apiKey, maxRetries: 1, timeout: 120_000 });
+  // Web search and fetch run on Anthropic's side (contact enrichment); the browser only sees the final answer.
+  const webTools = body.web
+    ? [
+        { type: "web_search_20260209", name: "web_search", max_uses: 6, user_location: { type: "approximate", country: "DE" } },
+        { type: "web_fetch_20260209", name: "web_fetch", max_uses: 4 },
+      ]
+    : [];
+  const allTools = [...tools, ...webTools] as Anthropic.Beta.BetaToolUnion[];
+
+  const client = new Anthropic({ apiKey, maxRetries: 1, timeout: 140_000 });
   try {
-    const msg = await client.beta.messages.create({
-      model: MODEL,
-      max_tokens: 16000,
-      betas: ["server-side-fallback-2026-07-01"],
-      fallbacks: "default",
-      cache_control: { type: "ephemeral" },
-      output_config: { effort: EFFORT[body.tier ?? "default"] ?? "medium" },
-      system: SYSTEM + (body.json ? JSON_SYSTEM : ""),
-      messages,
-      ...(tools.length ? { tools } : {}),
-    });
+    let turn = messages;
+    const content: Anthropic.Beta.BetaContentBlock[] = [];
+    let msg: Anthropic.Beta.BetaMessage | null = null;
+    // a long server-side search loop pauses; resending the turn lets it continue where it stopped
+    for (let i = 0; i < 4; i++) {
+      msg = await client.beta.messages.create({
+        model: MODEL,
+        max_tokens: 16000,
+        betas: ["server-side-fallback-2026-07-01"],
+        fallbacks: "default",
+        cache_control: { type: "ephemeral" },
+        output_config: { effort: EFFORT[body.tier ?? "default"] ?? "medium" },
+        system: SYSTEM + (body.json ? JSON_SYSTEM : ""),
+        messages: turn,
+        ...(allTools.length ? { tools: allTools } : {}),
+      });
+      content.push(...msg.content);
+      if (msg.stop_reason !== "pause_turn") break;
+      turn = [...turn, { role: "assistant", content: msg.content }];
+    }
     // The whole content goes back (thinking blocks included) so the browser can replay it unchanged in the tool loop.
-    return reply({ content: msg.content, stop_reason: msg.stop_reason, model: msg.model });
+    return reply({ content, stop_reason: msg!.stop_reason, model: msg!.model });
   } catch (e) {
     if (e instanceof Anthropic.RateLimitError) return reply({ code: "rate_limited", message: e.message }, 429);
     if (e instanceof Anthropic.AuthenticationError || e instanceof Anthropic.PermissionDeniedError) {

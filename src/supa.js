@@ -294,10 +294,12 @@ export function makeSupaSample() {
     const toolDefs = tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.inputSchema || { type: 'object', properties: {} } }));
     let text = '';
     for (let round = 0; round < 6; round++) {
-      const res = await callAi({ messages, tools: toolDefs, tier: opts.modelTier || 'default', json: !!opts.json }, opts.signal);
+      const res = await callAi({ messages, tools: toolDefs, tier: opts.modelTier || 'default', json: !!opts.json, web: !!opts.web }, opts.signal);
       if (res.stop_reason === 'refusal') throw { code: 'refused', message: 'refused' };
       const blocks = res.content || [];
-      const t = blocks.filter((b) => b.type === 'text').map((b) => b.text).join('');
+      // with web search the answer is the text after the last search or fetch result
+      const lastResult = blocks.map((b) => /_tool_result$/.test(b.type || '')).lastIndexOf(true);
+      const t = blocks.slice(lastResult + 1).filter((b) => b.type === 'text').map((b) => b.text).join('');
       if (t) {
         text = text ? text + '\n\n' + t : t;
         opts.onText?.({ text, delta: t });
@@ -323,6 +325,6 @@ export function makeSupaSample() {
   }
   const sample = (input, opts) => run(input, opts);
   sample.json = async (input, opts = {}) => extractJson((await run(input, { ...opts, json: true })).text);
-  sample.limits = async () => ({ maxPromptBytes: 262144, images: { maxCount: 5, maxInputBytes: 20 * 1024 * 1024, mediaTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf'] }, tools: { maxCount: 16 } });
+  sample.limits = async () => ({ maxPromptBytes: 262144, images: { maxCount: 5, maxInputBytes: 20 * 1024 * 1024, mediaTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf'] }, tools: { maxCount: 16 }, web: true });
   return sample;
 }
