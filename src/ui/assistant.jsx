@@ -6,7 +6,7 @@ import { aiChat, aiErrorText, isHardAiError, AI_DISCLAIMER } from '../ai.js';
 import { createProject, patchProject, addFunding, addCost, addConstraint, addMilestone, deleteMilestone, addMeeting, addNote, updateNote, deleteNote } from '../actions.js';
 import { resolveRef, createsCycle, msRef, sortFloors } from '../metrics.js';
 import { floorPlanInfo, measurePoints, dimLength, lineLength, resizeLine, relink, r3, roomOfPoint, wallFrontPoint } from '../planops.js';
-import { FURNITURE, furnType, furnSize, placeFurniture } from '../furniture.js';
+import { FURNITURE, RAD_TYPES, furnType, furnSize, placeFurniture, snapToWalls, radiatorOutput, furnName } from '../furniture.js';
 import { labelPoint } from '../geometry.js';
 import { lineKind } from '../catalog.js';
 import { updateDoc } from '../store.js';
@@ -314,7 +314,8 @@ export function makeTools(log) {
           lines: (f.lines || []).filter((l) => !l.auto).map((l) => ({ id: l.id, kind: lineKind(l.kind).name, label: l.label || '', riser: !!l.riser, length: r3(lineLength(l)), status: l.status || 'bestand', room: l.pts?.length ? midRoom(f, l.pts[0], l.pts[l.pts.length - 1])?.name || null : null })),
           furniture: (f.furniture || []).map((x) => {
             const { w, d, h } = furnSize(x);
-            return { id: x.id, type: x.type, name: furnType(x.type).name, label: x.label || '', size_cm: `${Math.round(w * 100)} × ${Math.round(d * 100)} × ${Math.round(h * 100)}`, rotation: x.rot || 0, status: x.status || 'bestand', room: roomOfPoint(f, { x: x.x, y: x.y })?.name || null };
+            const out = radiatorOutput(x);
+            return { id: x.id, type: x.type, name: furnName(x), label: x.label || '', size_cm: `${Math.round(w * 100)} × ${Math.round(d * 100)} × ${Math.round(h * 100)}`, rotation: x.rot || 0, status: x.status || 'bestand', room: roomOfPoint(f, { x: x.x, y: x.y })?.name || null, ...(out ? { heatOutput_W: out } : {}) };
           }),
         };
       },
@@ -396,6 +397,7 @@ export function makeTools(log) {
           depth: { type: 'number', description: 'Tiefe in cm' },
           height: { type: 'number', description: 'Höhe in cm' },
           rotation: { type: 'number', description: 'Drehung in Grad im Uhrzeigersinn (nur update)' },
+          radiatorType: { type: 'string', enum: RAD_TYPES.map((x) => x.key), description: 'Bauart bei Plattenheizkörpern (z. B. 22); setzt auch die Tiefe' },
           label: { type: 'string' },
           status: { type: 'string', enum: ['bestand', 'geplant'] },
         },
@@ -404,6 +406,8 @@ export function makeTools(log) {
       execute(input) {
         const f = findFloor(input.floor);
         const size = {};
+        const rt = RAD_TYPES.find((x) => x.key === String(input.radiatorType || ''));
+        if (rt) Object.assign(size, { rtype: rt.key, d: rt.d });
         for (const [k, key] of [['w', 'width'], ['d', 'depth'], ['h', 'height']]) if (Number(input[key]) >= 1 && Number(input[key]) <= 1000) size[k] = r3(Number(input[key]) / 100);
         if (input.action === 'add') {
           if (!FURNITURE.some((x) => x.key === input.type)) throw new Error('Unbekannter type – Katalog-Schlüssel verwenden');
@@ -413,9 +417,11 @@ export function makeTools(log) {
           if (!p) throw new Error('roomId oder wallId angeben');
           const placed = placeFurniture(input.type, p, f.walls || [], 0.01);
           const x = { id: 'fu' + Math.random().toString(36).slice(2, 10), ...placed, ...size, label: str(input.label, 80), status: input.status === 'geplant' ? 'geplant' : 'bestand', by: 'ki' };
+          // own sizes: stay flush with the wall
+          if (Object.keys(size).length) Object.assign(x, (({ x: sx, y: sy }) => ({ x: sx, y: sy }))(snapToWalls(x, f.walls || [])));
           updateDoc('floors', f.id, (fl) => ({ ...fl, furniture: [...(fl.furniture || []), x] }), 50);
           log({ kind: 'plan', floorId: f.id, text: `${furnType(x.type).name} in ${roomOfPoint(f, x)?.name || f.short || f.name} gestellt` });
-          return { id: x.id, room: roomOfPoint(f, x)?.name || null, rotation: x.rot, size_cm: `${Math.round((x.w ?? 0) * 100)} × ${Math.round((x.d ?? 0) * 100)}` };
+          return { id: x.id, room: roomOfPoint(f, x)?.name || null, rotation: x.rot, size_cm: `${Math.round((x.w ?? 0) * 100)} × ${Math.round((x.d ?? 0) * 100)}`, ...(radiatorOutput(x) ? { heatOutput_W: radiatorOutput(x) } : {}) };
         }
         const cur = (f.furniture || []).find((x) => x.id === String(input.furnitureId || ''));
         if (!cur) throw new Error('Unbekannte furnitureId');

@@ -1,7 +1,7 @@
 // Furniture in the floor plan: plan symbols (scaled to the entered size), catalog with previews and the properties panel.
 import { Icon } from './icons.jsx';
 import { Btn, Field, TextInput, NumInput, Select, Seg, ConfirmBtn } from './common.jsx';
-import { FURNITURE, FURN_CATS, FURN_SWATCHES, furnType, furnColor, furnSize, furnToPlan, wallAlign, snapToWalls, standsAtWall } from '../furniture.js';
+import { FURNITURE, FURN_CATS, FURN_SWATCHES, RAD_TYPES, furnType, furnColor, furnSize, furnToPlan, wallAlign, snapToWalls, standsAtWall, radType, radiatorOutput, furnName, isRadiator } from '../furniture.js';
 import { roomOfPoint } from '../planops.js';
 import { uid } from '../util.js';
 
@@ -237,6 +237,32 @@ export function FurnitureSymbol({ f, px, sel, ghost }) {
               </g>
             );
           })}
+        </>
+      );
+      break;
+    }
+    case 'radiator': {
+      // one line per panel, thermostat valve at the right end
+      const n = Math.max(1, Math.min(3, Number(radType(f)[0]) || 2));
+      el = (
+        <>
+          {R(x0, y0, w, d, { ...body, fillOpacity: ghost ? 0.3 : 0.75 })}
+          {Array.from({ length: n }, (_, i) => {
+            const y = n === 1 ? 0 : y0 + (d / (n + 1)) * (i + 1);
+            return <line key={i} x1={x0 + 0.02} x2={x1 - 0.02} y1={y} y2={y} {...det} />;
+          })}
+          {C(x1 + 0.035, 0, 0.03, solid)}
+        </>
+      );
+      break;
+    }
+    case 'columnRad': {
+      const n = Math.max(2, Math.min(45, Math.round(w / 0.06)));
+      el = (
+        <>
+          {R(x0, y0, w, d, { ...body, fillOpacity: ghost ? 0.3 : 0.7 })}
+          {Array.from({ length: n - 1 }, (_, i) => <line key={i} x1={x0 + (w / n) * (i + 1)} x2={x0 + (w / n) * (i + 1)} y1={y0 + d * 0.15} y2={y1 - d * 0.15} {...det} />)}
+          {C(x1 + 0.035, 0, 0.03, solid)}
         </>
       );
       break;
@@ -488,18 +514,21 @@ export function FurnitureCatalog({ value, onPick }) {
 }
 
 // ---------- properties ----------
+// new size with the back left corner kept in place, so a piece stays against its wall
+function keepBack(f, patch) {
+  const { w, d } = furnSize(f);
+  const nw = patch.w ?? w,
+    nd = patch.d ?? d;
+  const anchor = furnToPlan(f, -w / 2, -d / 2);
+  const off = furnToPlan({ ...f, w: nw, d: nd, x: 0, y: 0 }, nw / 2, nd / 2);
+  return { ...patch, x: r3(anchor[0] + off[0]), y: r3(anchor[1] + off[1]) };
+}
+
 function SizeFields({ f, set, compact }) {
   const t = furnType(f.type);
   const { w, d, h } = furnSize(f);
   // the piece grows from its back left corner, so it stays against the wall it stands at
-  const resize = (patch) => {
-    const nw = patch.w ?? w,
-      nd = patch.d ?? d;
-    const anchor = furnToPlan(f, -w / 2, -d / 2);
-    const g = { ...f, w: nw, d: nd, x: 0, y: 0 };
-    const off = furnToPlan(g, nw / 2, nd / 2);
-    set({ ...patch, x: r3(anchor[0] + off[0]), y: r3(anchor[1] + off[1]) });
-  };
+  const resize = (patch) => set(keepBack(f, patch));
   return (
     <div className="grid3 furn-size">
       <Field label="Breite">
@@ -563,7 +592,7 @@ export function FurnitureToolProps({ type, setType, selected, mutate, onDelete, 
           <div className="spread">
             <span className="hstack" style={{ gap: 6 }}>
               <Icon name="sofa" size={16} />
-              <b className="small">{selected.label || st.name}</b>
+              <b className="small">{selected.label || furnName(selected)}</b>
             </span>
             <ConfirmBtn onConfirm={onDelete}>{''}</ConfirmBtn>
           </div>
@@ -595,7 +624,7 @@ export function FurnitureProps({ f, floor, mutate, onDelete, onSelect }) {
       <div className="spread">
         <h4 className="hstack" style={{ gap: 8 }}>
           <FurniturePreview type={f.type} size={40} color={f.color} />
-          {f.label || t.name}
+          {f.label || furnName(f)}
         </h4>
         <ConfirmBtn onConfirm={onDelete}>{''}</ConfirmBtn>
       </div>
@@ -626,6 +655,7 @@ export function FurnitureProps({ f, floor, mutate, onDelete, onSelect }) {
           <NumInput value={cm(f.elev ?? t.elev ?? 0)} onChange={(v) => v != null && v >= 0 && set({ elev: v / 100 })} unit="cm" digits={0} />
         </Field>
       ) : null}
+      {isRadiator(f) ? <RadiatorFields f={f} set={set} /> : null}
       <Field label="Drehung">
         <RotateButtons f={f} set={set} />
       </Field>
@@ -688,6 +718,44 @@ export function FurnitureProps({ f, floor, mutate, onDelete, onSelect }) {
   );
 }
 
+const fmtW = (v) => `${Math.round(v).toLocaleString('de-DE')} W`;
+function RadiatorFields({ f, set }) {
+  const t = furnType(f.type);
+  const out = radiatorOutput(f);
+  return (
+    <div className="panel rad-panel">
+      {t.kind === 'radiator' ? (
+        <Field label="Bauart" hint="Typ = Anzahl Platten und Konvektorlagen, z. B. 22 = 2 Platten, 2 Lagen">
+          <Seg
+            small
+            value={radType(f)}
+            onChange={(v) => set(keepBack(f, { rtype: v, d: RAD_TYPES.find((x) => x.key === v)?.d ?? furnSize(f).d }))}
+            options={RAD_TYPES.map((x) => ({ value: x.key, label: x.key, title: `Typ ${x.key}, ca. ${Math.round(x.d * 1000)} mm tief` }))}
+          />
+        </Field>
+      ) : null}
+      {out ? (
+        <div className="rad-out">
+          <span className="field-label">Wärmeleistung (Schätzung)</span>
+          <div className="kv">
+            <span>bei 75/65 °C (Normwert)</span>
+            <b>{fmtW(out.nominal)}</b>
+          </div>
+          <div className="kv">
+            <span>bei 55/45 °C</span>
+            <b>{fmtW(out.at55)}</b>
+          </div>
+          <div className="kv">
+            <span>bei 45/35 °C (Wärmepumpe)</span>
+            <b>{fmtW(out.at45)}</b>
+          </div>
+          <p className="small muted">Aus Bauart und Maßen geschätzt (EN 442, Raum 20 °C). Den genauen Wert findest du auf dem Typenschild oder im Herstellerkatalog.</p>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 // short list on the floor panel: which pieces stand where
 export function FurnitureSummary({ list, floor, onSelect }) {
   if (!list?.length) return null;
@@ -703,11 +771,19 @@ export function FurnitureSummary({ list, floor, onSelect }) {
       <h4>Möbel ({list.length})</h4>
       {[...byRoom].map(([room, items]) => (
         <div key={room} className="furn-sum">
-          <span className="field-label">{room}</span>
+          <span className="field-label">
+            {room}
+            {(() => {
+              const outs = items.map(radiatorOutput).filter(Boolean);
+              if (!outs.length) return null;
+              const sum = (k) => outs.reduce((a, o) => a + o[k], 0);
+              return <span className="rad-sum"> · Heizkörper ca. {fmtW(sum('nominal'))} (75/65) / {fmtW(sum('at55'))} (55/45)</span>;
+            })()}
+          </span>
           <div className="chips">
             {items.map((f) => (
               <button key={f.id} type="button" className="chip" onClick={() => onSelect(f.id)}>
-                {f.label || furnType(f.type).name}
+                {f.label || furnName(f)}
               </button>
             ))}
           </div>

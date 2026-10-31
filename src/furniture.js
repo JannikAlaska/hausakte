@@ -9,6 +9,7 @@ export const FURN_CATS = [
   { key: 'bad', name: 'Bad & Wäsche' },
   { key: 'arbeiten', name: 'Arbeiten' },
   { key: 'flur', name: 'Flur & Stauraum' },
+  { key: 'heizung', name: 'Heizung' },
   { key: 'technik', name: 'Technik & Garage' },
   { key: 'garten', name: 'Garten' },
 ];
@@ -71,7 +72,6 @@ export const FURNITURE = [
   F('washbasin', 'Waschtisch', 'bad', 0.8, 0.48, 0.85, 'washbasin', 'ceramic'),
   F('washbasin2', 'Doppelwaschtisch', 'bad', 1.4, 0.5, 0.85, 'washbasin', 'ceramic', { basins: 2 }),
   F('mirrorcab', 'Spiegelschrank', 'bad', 0.8, 0.15, 0.7, 'wallCab', 'white', { elev: 1.2 }),
-  F('towelrad', 'Handtuchheizkörper', 'bad', 0.5, 0.1, 1.2, 'towelRad', 'white', { elev: 0.2 }),
   F('washer', 'Waschmaschine', 'bad', 0.6, 0.6, 0.85, 'washer', 'white'),
   F('dryer', 'Trockner', 'bad', 0.6, 0.6, 0.85, 'washer', 'white'),
   // work
@@ -83,10 +83,19 @@ export const FURNITURE = [
   F('coatrack', 'Garderobe', 'flur', 1.0, 0.35, 1.9, 'coatRack', 'oak'),
   F('shoecab', 'Schuhschrank', 'flur', 0.8, 0.3, 1.0, 'cabinet', 'white'),
   F('storageshelf', 'Schwerlastregal', 'flur', 1.2, 0.5, 2.0, 'shelf', 'steel'),
+  // heating (rtype = panel radiator type: panels + convector layers, e.g. 22)
+  F('rad22', 'Heizkörper Typ 22', 'heizung', 1.0, 0.1, 0.6, 'radiator', 'white', { elev: 0.15, rtype: '22' }),
+  F('rad11', 'Heizkörper Typ 11 (flach)', 'heizung', 0.8, 0.065, 0.6, 'radiator', 'white', { elev: 0.15, rtype: '11' }),
+  F('rad33', 'Heizkörper Typ 33 (groß)', 'heizung', 1.4, 0.155, 0.6, 'radiator', 'white', { elev: 0.15, rtype: '33' }),
+  F('radlow', 'Niedriger Heizkörper', 'heizung', 1.2, 0.1, 0.3, 'radiator', 'white', { elev: 0.12, rtype: '22' }),
+  F('radhigh', 'Hoher Heizkörper', 'heizung', 0.8, 0.1, 0.9, 'radiator', 'white', { elev: 0.12, rtype: '22' }),
+  F('radvert', 'Vertikaler Heizkörper', 'heizung', 0.5, 0.1, 1.8, 'radiator', 'white', { elev: 0.1, rtype: '21' }),
+  F('radcast', 'Gliederheizkörper (Rippen)', 'heizung', 0.9, 0.16, 0.6, 'columnRad', 'cream', { elev: 0.12 }),
+  F('towelrad', 'Badheizkörper (Handtuch)', 'heizung', 0.5, 0.1, 1.2, 'towelRad', 'white', { elev: 0.2 }),
+  F('boiler', 'Heizkessel', 'heizung', 0.6, 0.6, 1.5, 'boiler', 'white'),
+  F('heatpump', 'Wärmepumpe (Außengerät)', 'heizung', 1.1, 0.5, 1.0, 'heatpump', 'grey'),
+  F('tank', 'Öltank', 'heizung', 1.6, 0.75, 1.6, 'cabinet', 'grey'),
   // technical & garage
-  F('boiler', 'Heizkessel', 'technik', 0.6, 0.6, 1.5, 'boiler', 'white'),
-  F('heatpump', 'Wärmepumpe (Außengerät)', 'technik', 1.1, 0.5, 1.0, 'heatpump', 'grey'),
-  F('tank', 'Öltank', 'technik', 1.6, 0.75, 1.6, 'cabinet', 'grey'),
   F('workbench', 'Werkbank', 'technik', 1.5, 0.7, 0.9, 'table', 'wood'),
   F('car', 'Auto', 'technik', 1.8, 4.5, 1.5, 'car', 'blue'),
   F('bike', 'Fahrrad', 'technik', 0.6, 1.8, 1.0, 'bike', 'dark'),
@@ -98,6 +107,35 @@ export const FURNITURE = [
   F('mower', 'Rasenmäher', 'garten', 0.55, 1.4, 1.0, 'mower', 'red'),
 ];
 export const furnType = (k) => FURNITURE.find((f) => f.key === k) || FURNITURE[0];
+export const RAD_TYPES = [
+  { key: '10', d: 0.047 }, { key: '11', d: 0.065 }, { key: '20', d: 0.072 }, { key: '21', d: 0.08 }, { key: '22', d: 0.1 }, { key: '33', d: 0.155 },
+];
+export const radType = (f) => String(f.rtype || furnType(f.type).rtype || '22');
+// catalog name; panel radiators show their current type ("Heizkörper Typ 33")
+export function furnName(f) {
+  const t = furnType(f.type);
+  if (t.kind !== 'radiator') return t.name;
+  const rt = radType(f);
+  return /Typ \d\d/.test(t.name) ? t.name.replace(/Typ \d\d/, `Typ ${rt}`) : `${t.name} (Typ ${rt})`;
+}
+export const isRadiator = (f) => ['radiator', 'columnRad', 'towelRad'].includes(furnType(f.type).kind);
+// rough heat output in watts after EN 442 tables (75/65/20 °C) and at lower flow temperatures (exponent 1.3)
+const W_PER_M = { 10: 650, 11: 1000, 20: 1100, 21: 1400, 22: 1800, 33: 2600 }; // at 600 mm height
+export function radiatorOutput(f) {
+  const t = furnType(f.type);
+  const w = f.w ?? t.w,
+    d = f.d ?? t.d,
+    h = f.h ?? t.h;
+  let nominal;
+  if (t.kind === 'radiator') nominal = (W_PER_M[radType(f)] || 1800) * w * Math.pow(h / 0.6, 0.83);
+  else if (t.kind === 'columnRad') nominal = 1600 * w * Math.pow(d / 0.16, 0.9) * Math.pow(h / 0.6, 0.85);
+  else if (t.kind === 'towelRad') nominal = 650 * w * h;
+  else return null;
+  const lmtd = (vl, rl) => (vl - rl) / Math.log((vl - 20) / (rl - 20));
+  const at = (vl, rl) => nominal * Math.pow(lmtd(vl, rl) / lmtd(75, 65), 1.3);
+  const round = (v) => Math.round(v / 10) * 10;
+  return { nominal: round(nominal), at55: round(at(55, 45)), at45: round(at(45, 35)) };
+}
 export const furnColor = (f) => f.color || FURN_COLORS[furnType(f.type).color] || '#b98a5e';
 
 // ---------- 3D shapes ----------
@@ -117,6 +155,11 @@ export function furnitureParts(f) {
     for (const [sx, sz] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) cyl(r, lh, sx * (w / 2 - inset - r), 0, sz * (d / 2 - inset - r), color);
   };
   const front = d / 2;
+  // supply and return pipes from the floor, thermostat valve at the top side
+  const radiatorPipes = (rw, rd, elev, rh) => {
+    for (const x of [rw / 2 - 0.05, -rw / 2 + 0.05]) if (elev > 0.02) cyl(0.008, elev + 0.03, x, -elev, -rd / 2 + 0.025, '#c6cbd1');
+    P.push({ shape: 'cyl', size: [0.024, 0.07], at: [rw / 2 + 0.035, rh - 0.08, 0], color: '#f4f4f2', rotZ: true });
+  };
   switch (t.kind) {
     case 'sofa':
     case 'armchair': {
@@ -253,6 +296,28 @@ export function furnitureParts(f) {
       }
       break;
     }
+    case 'radiator': {
+      const rt = radType(f);
+      const n = Math.max(1, Math.min(3, Number(rt[0]) || 2));
+      const pt = 0.02;
+      const step = n > 1 ? (d - pt) / (n - 1) : 0;
+      for (let i = 0; i < n; i++) box(w, h, pt, 0, 0, front - pt / 2 - i * step);
+      // convector fins between the panels show as a darker core, the profile as grooves on the front
+      if (n > 1) box(w - 0.02, h - 0.03, Math.max(0.005, d - 2 * pt), 0, 0.015, 0, '#c9cbcf');
+      if (n > 1 && Number(rt[1]) > 0) box(w, 0.006, d, 0, h - 0.006, 0, '#e4e4e1');
+      const grooves = Math.min(70, Math.floor(w / 0.033));
+      for (let i = 1; i < grooves; i++) box(0.004, h * 0.86, 0.003, -w / 2 + (w / grooves) * i, h * 0.07, front + 0.0015, '#00000018');
+      radiatorPipes(w, d, f.elev ?? t.elev ?? 0.15, h);
+      break;
+    }
+    case 'columnRad': {
+      const n = Math.max(2, Math.min(45, Math.round(w / 0.06)));
+      const sw = w / n;
+      for (let i = 0; i < n; i++) box(sw * 0.72, h - 0.02, d * 0.92, -w / 2 + sw * (i + 0.5), 0.01, 0);
+      for (const y of [0.05, h - 0.05]) P.push({ shape: 'cyl', size: [0.022, w], at: [0, y, 0], color: c, rotZ: true });
+      radiatorPipes(w, d, f.elev ?? t.elev ?? 0.12, h);
+      break;
+    }
     case 'towelRad':
       for (const s of [-1, 1]) box(0.03, h, 0.03, s * (w / 2 - 0.015), 0, 0);
       for (let i = 0; i < 10; i++) box(w, 0.02, 0.02, 0, (h / 10) * i + 0.03, 0);
@@ -359,7 +424,8 @@ export function hitFurniture(p, list, tol = 0) {
   for (const f of list || []) {
     const { w, d } = furnSize(f);
     const [lx, ly] = planToFurn(f, p);
-    if (Math.abs(lx) <= w / 2 + tol && Math.abs(ly) <= d / 2 + tol && (!best || w * d < best.a)) best = { f, a: w * d };
+    // tol = minimum half size, so thin pieces like radiators stay easy to hit
+    if (Math.abs(lx) <= Math.max(w / 2, tol) && Math.abs(ly) <= Math.max(d / 2, tol) && (!best || w * d < best.a)) best = { f, a: w * d };
   }
   return best?.f || null;
 }
@@ -450,6 +516,8 @@ export function placeFurniture(type, p, walls, grid = 0.05) {
 // "Doppelbett 180 (Schlafzimmer)" style one-liners for the AI context
 export function furnLabel(f) {
   const t = furnType(f.type);
-  const { w, d } = furnSize(f);
+  const { w, d, h } = furnSize(f);
+  const out = radiatorOutput(f);
+  if (out) return `${f.label || furnName(f)} ${Math.round(w * 100)}×${Math.round(h * 100)} cm (ca. ${out.nominal} W bei 75/65 °C, ${out.at55} W bei 55/45 °C)`;
   return `${f.label || t.name} ${Math.round(w * 100)}×${Math.round(d * 100)} cm`;
 }

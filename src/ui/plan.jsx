@@ -15,7 +15,7 @@ import {
 import { putDoc, deleteDoc, updateHouse, getAssets, blobUrl, getState } from '../store.js';
 import { lineLength, linePlanPts, fixtureAnchor, dedup3, relink, roomOfPoint, resizeLine, dimLength } from '../planops.js';
 import { uid, deepClone, fmtFixed, fmtNum, parseNum } from '../util.js';
-import { furnType, furnSize, furnToPlan, hitFurniture, placeFurniture, snapToWalls } from '../furniture.js';
+import { furnType, furnSize, furnToPlan, hitFurniture, placeFurniture, snapToWalls, furnName } from '../furniture.js';
 import { PlanFurniture, FurnitureSymbol, FurnitureHandles, furnHandles, FurnitureToolProps, FurnitureProps, FurnitureSummary, normRot } from './furniture.jsx';
 
 const { useState, useRef, useEffect, useMemo, useCallback } = React;
@@ -655,7 +655,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
       }
     }
     if (tool === 'furniture') {
-      const hf = hitFurniture(p, furniture);
+      const hf = hitFurniture(p, furniture, 6 / view.s);
       if (hf) {
         setSel({ kind: 'furn', id: hf.id });
         setDrag({ kind: 'furnMove', id: hf.id, p0: p, x0: hf.x, y0: hf.y, from: deepClone(floor) });
@@ -807,6 +807,15 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
         }
       }
     }
+    // a click right inside a piece of furniture beats a line running next to or under it
+    if (showFurn && !hitWall(p, walls, 0)) {
+      const hf = hitFurniture(p, furniture, 0);
+      if (hf) {
+        setSel({ kind: 'furn', id: hf.id });
+        setDrag({ kind: 'furnMove', id: hf.id, p0: p, x0: hf.x, y0: hf.y, from: deepClone(floor) });
+        return;
+      }
+    }
     if (showLines) {
       const hl = hitLine(p, lines, tolM);
       if (hl) {
@@ -826,7 +835,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
       }
     }
     if (showFurn && !hitWall(p, walls, 0)) {
-      const hf = hitFurniture(p, furniture);
+      const hf = hitFurniture(p, furniture, 6 / view.s);
       if (hf) {
         setSel({ kind: 'furn', id: hf.id });
         setDrag({ kind: 'furnMove', id: hf.id, p0: p, x0: hf.x, y0: hf.y, from: deepClone(floor) });
@@ -884,7 +893,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
         const w = hitWall(p, walls, 0.35);
         setCursor(w ? { p, wall: w } : null);
       } else if (tool === 'furniture' && e.pointerType !== 'touch') {
-        setCursor(hitFurniture(p, furniture) ? null : { p, furn: { id: 'ghost', ...placeFurniture(furnKey, p, walls, grid) } });
+        setCursor(hitFurniture(p, furniture, 6 / view.s) ? null : { p, furn: { id: 'ghost', ...placeFurniture(furnKey, p, walls, grid) } });
       } else if (cursor) setCursor(null);
       return;
     }
@@ -1440,7 +1449,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
         </div>
       </div>
       <PropsPanel
-        title={selFurn && tool !== 'furniture' ? selFurn.label || furnType(selFurn.type).name : tool === 'furniture' ? 'Möbel' : selDim ? `Maß${selDim.label ? ': ' + selDim.label : ''}` : selWall ? 'Wand' : selOpening ? OPENING_NAMES[selOpening.type] : selRoom ? `Raum: ${selRoom.name}` : selItem ? 'Treppe' : selPoint ? fixtureKind(selPoint.kind).name : selLine ? 'Leitung' : tool === 'line' || tool === 'riser' ? 'Neue Leitung' : tool === 'fixture' ? 'Anschluss' : ctx ? 'Nebengebäude' : 'Etage & Einstellungen'}
+        title={selFurn && tool !== 'furniture' ? selFurn.label || furnName(selFurn) : tool === 'furniture' ? 'Möbel' : selDim ? `Maß${selDim.label ? ': ' + selDim.label : ''}` : selWall ? 'Wand' : selOpening ? OPENING_NAMES[selOpening.type] : selRoom ? `Raum: ${selRoom.name}` : selItem ? 'Treppe' : selPoint ? fixtureKind(selPoint.kind).name : selLine ? 'Leitung' : tool === 'line' || tool === 'riser' ? 'Neue Leitung' : tool === 'fixture' ? 'Anschluss' : ctx ? 'Nebengebäude' : 'Etage & Einstellungen'}
         openKey={sel ? sel.kind + sel.id : ['line', 'riser', 'fixture', 'wall', 'furniture'].includes(tool) ? tool : null}
       >
         {tool === 'furniture' ? (
