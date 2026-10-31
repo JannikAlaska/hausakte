@@ -1,5 +1,5 @@
 import { HouseScene } from './scene.js';
-import { initStore, loadDataset, clearAll, exportData, getState } from './store.js';
+import { initStore, loadDataset, clearAll, exportData, getState, resync, canResync, flushAll } from './store.js';
 import { createTemplate, createEmptyHouse } from './template.js';
 import { useUI, useData, setUI, go, openDrawer, closeDrawer, toast, getUI, sceneHandle } from './ui/state.js';
 import { SunPanel, solarResult } from './ui/solar.jsx';
@@ -17,7 +17,7 @@ import { ContactDrawer } from './ui/contacts.jsx';
 import { projectKind, gewerk, roomType } from './catalog.js';
 import { fmtTime, fmtArea } from './util.js';
 import { portfolio, buildingStats, roomArea, liveProjects } from './metrics.js';
-import { isSupabaseMode, getSession, onAuth, signIn, signUp, resetPassword, updatePassword, authErrorText } from './supa.js';
+import { isSupabaseMode, getSession, onAuth, signIn, signUp, resetPassword, updatePassword, authErrorText, realtimeStatus, onRealtime } from './supa.js';
 
 const { useEffect, useRef, useMemo, useState, useLayoutEffect } = React;
 
@@ -244,10 +244,7 @@ function TopBar({ data }) {
       </nav>
       <span className="top-spacer" />
       <SearchBox data={data} />
-      <span className="sync" title={data.mode === 'local' ? 'Daten liegen nur in diesem Browser' : data.lastSaved ? 'Zuletzt gespeichert ' + fmtTime(data.lastSaved) : 'Gespeichert in der Hausakte'}>
-        <span className={`sync-dot ${busy ? 'is-busy' : data.mode === 'local' ? 'is-local' : ''}`} />
-        <span>{busy ? 'Speichert …' : data.mode === 'local' ? 'Nur lokal' : data.lastSaved ? 'Gespeichert' : 'Synchron'}</span>
-      </span>
+      <SyncButton data={data} />
       {typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition) ? (
         <button className="voice-btn" aria-label="Sprachbefehl an den Assistenten" title="Sprachbefehl" onClick={() => openDrawer({ type: 'assistant', voice: Date.now() })}>
           <Icon name="mic" size={18} />
@@ -258,6 +255,72 @@ function TopBar({ data }) {
         <span>Assistent</span>
       </button>
     </header>
+  );
+}
+
+// Save and sync state; tapping it saves pending changes and fetches what other devices changed.
+function SyncButton({ data }) {
+  const supaMode = isSupabaseMode();
+  const [rt, setRt] = useState(() => (supaMode ? realtimeStatus() : 'live'));
+  const [online, setOnline] = useState(() => (typeof navigator === 'undefined' ? true : navigator.onLine !== false));
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const on = () => setOnline(true),
+      off = () => setOnline(false);
+    window.addEventListener('online', on);
+    window.addEventListener('offline', off);
+    const un = supaMode ? onRealtime(setRt) : null;
+    const t = setInterval(() => tick((n) => n + 1), 30000);
+    return () => {
+      window.removeEventListener('online', on);
+      window.removeEventListener('offline', off);
+      un?.();
+      clearInterval(t);
+    };
+  }, []);
+  // a save that had to be merged with another device's changes
+  useEffect(() => {
+    if (data.syncNote) toast(data.syncNote.text, 'ok', 5000);
+  }, [data.syncNote?.at]);
+  const busy = data.saving > 0;
+  const st = !online ? 'offline' : data.mode === 'local' ? 'local' : data.syncing ? 'syncing' : busy ? 'saving' : supaMode && rt === 'down' ? 'reconnect' : 'ok';
+  const label = { offline: 'Offline', local: 'Nur lokal', syncing: 'Abgleich …', saving: 'Speichert …', reconnect: 'Abgleichen', ok: 'Synchron' }[st];
+  const ago = (t) => {
+    if (!t) return null;
+    const m = Math.round((Date.now() - t) / 60000);
+    return m < 1 ? 'gerade eben' : m < 60 ? `vor ${m} Min.` : fmtTime(t);
+  };
+  const where = data.mode === 'local' ? 'Daten liegen nur in diesem Browser.' : supaMode ? 'Daten liegen in der Hausakte-Cloud und gleichen sich zwischen allen Geräten ab.' : 'Daten liegen bei claude.ai (getrennt von der Web-Version).';
+  const title = [
+    where,
+    data.lastSync ? `Letzter Abgleich: ${ago(data.lastSync)}.` : null,
+    data.lastSaved ? `Zuletzt gespeichert: ${ago(data.lastSaved)}.` : null,
+    st === 'reconnect' ? 'Live-Verbindung unterbrochen.' : null,
+    !online ? 'Keine Internetverbindung – Änderungen werden gespeichert, sobald du wieder online bist.' : null,
+    data.mode !== 'local' ? 'Tippen zum Synchronisieren.' : null,
+  ].filter(Boolean).join(' ');
+  const run = async () => {
+    if (data.mode === 'local') return toast('Diese Version speichert nur in diesem Browser. Für den Abgleich zwischen Handy und Tablet nutze die Web-Version mit Anmeldung.', 'warn', 7000);
+    if (!online) return toast('Keine Internetverbindung. Sobald du wieder online bist, wird automatisch abgeglichen.', 'warn', 5000);
+    if (!canResync()) {
+      flushAll();
+      return toast('Gespeichert. Diese Version liegt bei claude.ai und gleicht sich nur mit anderen Geräten ab, die sie ebenfalls über claude.ai öffnen – nicht mit der Web-Version.', 'ok', 8000);
+    }
+    try {
+      const r = await resync({ manual: true });
+      toast(r.changed ? `Synchronisiert – ${r.changed} ${r.changed === 1 ? 'Änderung' : 'Änderungen'} von anderen Geräten übernommen.` : 'Synchronisiert – alles auf dem neuesten Stand.', 'ok', 3500);
+    } catch (e) {
+      toast('Abgleich fehlgeschlagen: ' + (e?.message || 'Server nicht erreichbar') + '. Versuch es gleich noch einmal.', 'err', 6000);
+    }
+  };
+  return (
+    <button type="button" className={`sync is-${st}`} onClick={run} title={title} aria-label={`${label}. ${title}`}>
+      <span className="sync-ico">
+        <Icon name="refresh" size={16} className={st === 'syncing' || st === 'saving' ? 'spin' : ''} />
+        <span className="sync-dot" />
+      </span>
+      <span className="sync-label">{label}</span>
+    </button>
   );
 }
 

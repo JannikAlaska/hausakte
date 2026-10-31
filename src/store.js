@@ -2,7 +2,7 @@
 // localStorage. Local state is authoritative while a write for a document is queued or in flight.
 
 import { deepClone } from './util.js';
-import { isSupabaseMode, supaDb, supaAssets, cachedFileUrl, onFileUrls } from './supa.js';
+import { isSupabaseMode, supaDb, supaAssets, cachedFileUrl, onFileUrls, reconnectRealtime } from './supa.js';
 
 export const COLLECTIONS = ['house', 'floors', 'components', 'projects', 'readings', 'documents', 'underlays', 'notes', 'contacts'];
 const LS_KEY = 'hausakte-v1';
@@ -24,6 +24,9 @@ let state = {
   lastSaved: null,
   error: null,
   fileTick: 0, // bumps when signed file URLs arrive (Supabase mode)
+  syncing: false,
+  lastSync: null, // last successful check against the server (Supabase mode)
+  syncNote: null, // { text, at } - e.g. changes from another device merged into a save
 };
 const listeners = new Set();
 export const getState = () => state;
@@ -46,6 +49,53 @@ const inflight = new Set();
 const chains = new Map();
 
 const pathOf = (col, id) => `${col}/${id}`;
+// Supabase mode: version stamp (updated_at) and content of each document as last seen on the server.
+// They are the base for detecting and merging concurrent edits from another device.
+const stamps = new Map();
+const bases = new Map();
+
+// JSON with sorted keys - the database returns object keys in its own order
+export function stableStr(v) {
+  if (v === undefined) return 'undefined';
+  if (v === null || typeof v !== 'object') return JSON.stringify(v);
+  if (Array.isArray(v)) return '[' + v.map(stableStr).join(',') + ']';
+  return '{' + Object.keys(v).filter((k) => v[k] !== undefined).sort().map((k) => JSON.stringify(k) + ':' + stableStr(v[k])).join(',') + '}';
+}
+const same = (a, b) => stableStr(a) === stableStr(b);
+const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
+const isIdList = (v) => Array.isArray(v) && v.every((x) => isObj(x) && x.id != null);
+
+// Three-way merge of a document: what changed only on this device or only on the other one is kept from
+// that side; lists of items with ids (walls, rooms, furniture, milestones …) are merged item by item.
+// Where both sides changed the same thing, this device wins.
+export function merge3(base, local, remote, depth = 0) {
+  if (same(local, base)) return remote;
+  if (same(remote, base) || same(local, remote)) return local;
+  if (depth < 3 && isObj(local) && isObj(remote)) {
+    const out = {};
+    for (const k of new Set([...Object.keys(local), ...Object.keys(remote)])) {
+      const v = merge3(isObj(base) ? base[k] : undefined, local[k], remote[k], depth + 1);
+      if (v !== undefined) out[k] = v;
+    }
+    return out;
+  }
+  if (depth < 3 && isIdList(local) && isIdList(remote)) {
+    const byId = (list) => new Map((isIdList(list) ? list : []).map((x) => [String(x.id), x]));
+    const b = byId(base),
+      l = byId(local),
+      r = byId(remote);
+    const out = [];
+    const take = (id) => {
+      const v = merge3(b.get(id), l.get(id), r.get(id), depth + 1);
+      if (v !== undefined) out.push(v);
+    };
+    for (const id of l.keys()) take(id);
+    // added on the other device, or deleted here but changed there
+    for (const id of r.keys()) if (!l.has(id) && (!b.has(id) || !same(b.get(id), r.get(id)))) take(id);
+    return out;
+  }
+  return local;
+}
 
 function applyLocal(col, id, data) {
   if (col === 'house') {
@@ -93,16 +143,45 @@ function flush(path) {
   const prevChain = chains.get(path) || Promise.resolve();
   const run = prevChain.then(async () => {
     const ref = db.collection(entry.col).doc(entry.id);
+    const write = async () => {
+      if (entry.data == null) {
+        await ref.delete();
+        stamps.delete(path);
+        bases.delete(path);
+        return;
+      }
+      let data = entry.data;
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const res = await ref.set(data, db.stamps ? { stamp: stamps.get(path) } : undefined);
+          if (db.stamps) {
+            if (res?.stamp) stamps.set(path, res.stamp);
+            else stamps.delete(path);
+            bases.set(path, data);
+          }
+          if (data !== entry.data) adoptMerged(entry, data);
+          return;
+        } catch (e) {
+          if (e?.code !== 'conflict' || attempt >= 4) throw e;
+          // another device saved this document in the meantime: merge both and try again on top of it
+          const cur = e.current;
+          data = cur ? merge3(bases.get(path), data, cur.data) : data;
+          if (cur) {
+            stamps.set(path, cur.updated_at);
+            bases.set(path, cur.data);
+          } else stamps.delete(path);
+        }
+      }
+    };
     try {
-      if (entry.data == null) await ref.delete();
-      else await ref.set(entry.data);
+      await write();
       setState({ lastSaved: Date.now(), error: null });
     } catch (e) {
       if (e?.code === 'unavailable') {
         await new Promise((r) => setTimeout(r, 800 + Math.random() * 800));
         try {
-          if (entry.data == null) await ref.delete();
-          else await ref.set(entry.data);
+          await write();
+          setState({ lastSaved: Date.now(), error: null });
           return;
         } catch (e2) {
           e = e2;
@@ -123,6 +202,15 @@ function flush(path) {
     if (chains.get(path) === run) chains.delete(path);
     setState({ saving: pending.size + inflight.size });
   });
+}
+
+// a save was merged with changes from another device: show the merged version (and keep newer local edits)
+function adoptMerged(entry, merged) {
+  const path = pathOf(entry.col, entry.id);
+  const later = pending.get(path);
+  if (later && later.data != null) later.data = merge3(entry.data, later.data, merged);
+  applyLocal(entry.col, entry.id, later ? later.data : merged);
+  setState({ syncNote: { text: 'Änderungen von einem anderen Gerät wurden übernommen und mit deinen zusammengeführt.', at: Date.now() } });
 }
 
 export function flushAll() {
@@ -228,12 +316,23 @@ function startDb(d) {
           const id = ch.doc.id;
           const path = pathOf(col, id);
           if (pending.has(path) || inflight.has(path)) continue;
-          if (ch.type === 'removed') applyLocal(col, id, null);
-          else applyLocal(col, id, ch.doc.data());
+          if (ch.type === 'removed') {
+            applyLocal(col, id, null);
+            stamps.delete(path);
+            bases.delete(path);
+          } else {
+            const data = ch.doc.data();
+            applyLocal(col, id, data);
+            if (ch.doc.stamp) stamps.set(path, ch.doc.stamp);
+            bases.set(path, data);
+          }
           changed = true;
         }
         if (changed) emit();
-        if (!snap.metadata?.fromCache) markLoaded(col);
+        if (!snap.metadata?.fromCache) {
+          markLoaded(col);
+          if (db.stamps && !state.lastSync) state = { ...state, lastSync: Date.now() };
+        }
         if (loaded.size === COLLECTIONS.length) clearTimeout(failSafe);
       },
       (err) => {
@@ -244,13 +343,116 @@ function startDb(d) {
   }
 }
 
+// ---------- catching up with other devices (Supabase mode) ----------
+// Compare version stamps of all documents with the server (a few KB) and load only what changed.
+// Runs when the app comes back to the foreground, goes online again, after a lost live connection,
+// every minute as a safety net and when the sync button is pressed.
+const stampKey = (s) => {
+  if (!s) return null;
+  const m = /^(\d{4}-\d\d-\d\d)[T ](\d\d:\d\d:\d\d)(?:\.(\d+))?(Z|[+-]\d\d(?::?\d\d)?)?$/.exec(String(s).trim());
+  if (!m) return String(s);
+  let tz = m[4] || 'Z';
+  if (/^[+-]\d\d$/.test(tz)) tz += ':00';
+  return Date.parse(`${m[1]}T${m[2]}${tz}`) * 1000 + Number((m[3] || '').padEnd(6, '0').slice(0, 6));
+};
+let syncRun = null;
+export function canResync() {
+  return state.mode === 'db' && !!db?.fetchStamps;
+}
+export function resync({ manual = false } = {}) {
+  if (!canResync()) return Promise.resolve({ changed: 0, supported: false });
+  if (syncRun) return syncRun;
+  syncRun = (async () => {
+    setState({ syncing: true });
+    try {
+      if (manual) {
+        flushAll();
+        await Promise.allSettled([...chains.values()]);
+      }
+      const rows = await db.fetchStamps();
+      const server = new Map(rows.map((r) => [pathOf(r.collection, r.id), r]));
+      const busy = (path) => pending.has(path) || inflight.has(path);
+      const want = new Map(); // collection -> ids to load
+      for (const [path, r] of server) {
+        if (!COLLECTIONS.includes(r.collection) || busy(path)) continue;
+        const known = stamps.get(path);
+        const local = r.collection === 'house' ? state.house : state[r.collection]?.[r.id];
+        if (known && stampKey(known) === stampKey(r.updated_at) && local) continue;
+        if (!want.has(r.collection)) want.set(r.collection, []);
+        want.get(r.collection).push(r.id);
+      }
+      let changed = 0;
+      for (const [col, ids] of want) {
+        for (const r of await db.fetchDocs(col, ids)) {
+          const path = pathOf(col, r.id);
+          if (busy(path)) continue;
+          const local = col === 'house' ? state.house : state[col][r.id];
+          if (!same(local, r.data)) {
+            applyLocal(col, r.id, r.data);
+            changed++;
+          }
+          stamps.set(path, r.updated_at);
+          bases.set(path, r.data);
+        }
+      }
+      // deleted on another device
+      for (const col of COLLECTIONS) {
+        const ids = col === 'house' ? (state.house ? ['main'] : []) : Object.keys(state[col] || {});
+        for (const id of ids) {
+          const path = pathOf(col, id);
+          if (server.has(path) || busy(path)) continue;
+          applyLocal(col, id, null);
+          stamps.delete(path);
+          bases.delete(path);
+          changed++;
+        }
+      }
+      setState({ syncing: false, lastSync: Date.now() });
+      return { changed, supported: true };
+    } catch (e) {
+      setState({ syncing: false });
+      throw e;
+    } finally {
+      syncRun = null;
+    }
+  })();
+  return syncRun;
+}
+
+let hiddenAt = 0;
+let lastAuto = 0;
+function autoSync(reason) {
+  if (!canResync() || (typeof navigator !== 'undefined' && navigator.onLine === false)) return;
+  if (reason === 'focus' && Date.now() - lastAuto < 15000) return;
+  lastAuto = Date.now();
+  resync().catch(() => {});
+}
+function startAutoSync() {
+  db.onReconnect?.(() => autoSync('reconnect'));
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') hiddenAt = Date.now();
+    else if (Date.now() - hiddenAt > 1500) {
+      reconnectRealtime();
+      autoSync('visible');
+    }
+  });
+  window.addEventListener('online', () => {
+    reconnectRealtime();
+    autoSync('online');
+  });
+  window.addEventListener('focus', () => autoSync('focus'));
+  window.addEventListener('pageshow', (e) => e.persisted && autoSync('visible'));
+  setInterval(() => document.visibilityState === 'visible' && autoSync('interval'), 60000);
+}
+
 let started = false;
 export async function initStore() {
   if (started) return;
   started = true;
   if (isSupabaseMode()) {
     onFileUrls(() => setState({ fileTick: state.fileTick + 1 }));
-    return startDb(supaDb());
+    startDb(supaDb());
+    return startAutoSync();
   }
   const hasClaude = typeof window !== 'undefined' && window.claude && typeof window.claude.use === 'function';
   if (!hasClaude) return startLocal();

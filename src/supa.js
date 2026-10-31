@@ -67,30 +67,94 @@ export async function updatePassword(password) {
 }
 
 // ---------- document store with the same surface store.js uses from the artifact db ----------
+// Every row carries updated_at (set by a trigger). It is used as a version stamp: writes only go through
+// when the row still has the stamp this device last saw, otherwise store.js merges and retries.
 function snapshotOf(changes, fromCache = false) {
   return { docChanges: () => changes, metadata: { fromCache, hasPendingWrites: false } };
 }
-const docSnap = (row) => ({ id: row.id, exists: true, data: () => row.data });
+const docSnap = (row) => ({ id: row.id, exists: true, data: () => row.data, stamp: row.updated_at || null });
 
 const handlers = new Map(); // collection -> Set(fn)
+const reconnectFns = new Set();
+const rtFns = new Set();
 let channel = null;
+let rtStatus = 'connecting'; // 'connecting' | 'live' | 'down'
+let everLive = false;
+let rejoinTimer = null;
+export const realtimeStatus = () => rtStatus;
+export const onRealtime = (fn) => (rtFns.add(fn), () => rtFns.delete(fn));
+function setRt(st) {
+  if (rtStatus === st) return;
+  rtStatus = st;
+  for (const fn of rtFns) fn(st);
+}
 function ensureChannel(sb) {
   if (channel) return;
-  channel = sb
-    .channel('hausakte-docs')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'hausakte_docs' }, (p) => {
-      const row = p.eventType === 'DELETE' ? p.old : p.new;
-      const fns = handlers.get(row?.collection);
-      if (!fns) return;
-      const change = p.eventType === 'DELETE' ? { type: 'removed', doc: docSnap(row) } : { type: p.eventType === 'INSERT' ? 'added' : 'modified', doc: docSnap(row) };
-      for (const fn of fns) fn(snapshotOf([change]));
-    })
-    .subscribe();
+  const ch = sb.channel('hausakte-docs-' + Math.random().toString(36).slice(2, 8));
+  channel = ch;
+  ch.on('postgres_changes', { event: '*', schema: 'public', table: 'hausakte_docs' }, (p) => {
+    const row = p.eventType === 'DELETE' ? p.old : p.new;
+    const fns = handlers.get(row?.collection);
+    if (!fns) return;
+    const change = p.eventType === 'DELETE' ? { type: 'removed', doc: docSnap(row) } : { type: p.eventType === 'INSERT' ? 'added' : 'modified', doc: docSnap(row) };
+    for (const fn of fns) fn(snapshotOf([change]));
+  }).subscribe((status) => {
+    if (channel !== ch) return;
+    if (status === 'SUBSCRIBED') {
+      const again = everLive;
+      everLive = true;
+      setRt('live');
+      // events sent while the connection was gone are lost - fetch what changed
+      if (again) for (const fn of reconnectFns) fn();
+    } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+      setRt('down');
+      clearTimeout(rejoinTimer);
+      rejoinTimer = setTimeout(() => {
+        if (channel !== ch || rtStatus === 'live') return;
+        channel = null;
+        sb.removeChannel(ch);
+        ensureChannel(sb);
+      }, 8000);
+    }
+  });
+}
+// a phone that slept for a while: start a fresh connection instead of waiting for the old one to time out
+export function reconnectRealtime() {
+  const sb = supa();
+  if (!sb || !channel || rtStatus === 'live') return;
+  const ch = channel;
+  channel = null;
+  sb.removeChannel(ch);
+  ensureChannel(sb);
+}
+
+async function pages(build) {
+  const rows = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await build().range(from, from + 999);
+    if (error) throw { code: 'unavailable', message: error.message };
+    rows.push(...data);
+    if (data.length < 1000) break;
+  }
+  return rows;
 }
 
 export function supaDb() {
   const sb = supa();
   return {
+    stamps: true,
+    onReconnect: (fn) => (reconnectFns.add(fn), () => reconnectFns.delete(fn)),
+    // collection, id and version of every document (a few KB) - to find out cheaply what changed
+    fetchStamps: () => pages(() => sb.from('hausakte_docs').select('collection,id,updated_at').order('collection').order('id')),
+    async fetchDocs(col, ids) {
+      const out = [];
+      for (let i = 0; i < ids.length; i += 80) {
+        const { data, error } = await sb.from('hausakte_docs').select('id,data,updated_at').eq('collection', col).in('id', ids.slice(i, i + 80));
+        if (error) throw { code: 'unavailable', message: error.message };
+        out.push(...data);
+      }
+      return out;
+    },
     collection(col) {
       return {
         onSnapshot(next, onError) {
@@ -100,12 +164,11 @@ export function supaDb() {
           handlers.get(col).add(fn);
           ensureChannel(sb);
           (async () => {
-            const rows = [];
-            for (let from = 0; ; from += 1000) {
-              const { data, error } = await sb.from('hausakte_docs').select('id,data').eq('collection', col).order('id').range(from, from + 999);
-              if (error) return onError?.({ code: 'unavailable', message: error.message });
-              rows.push(...data);
-              if (data.length < 1000) break;
+            let rows;
+            try {
+              rows = await pages(() => sb.from('hausakte_docs').select('id,data,updated_at').eq('collection', col).order('id'));
+            } catch (e) {
+              return onError?.(e);
             }
             if (alive) next(snapshotOf(rows.map((r) => ({ type: 'added', doc: docSnap(r) }))));
           })();
@@ -115,10 +178,22 @@ export function supaDb() {
           };
         },
         doc(id) {
+          const fail = (error) => ({ code: error.code === '42501' ? 'invalid_argument' : 'unavailable', message: error.message });
           return {
-            async set(data) {
-              const { error } = await sb.from('hausakte_docs').upsert({ collection: col, id, data });
-              if (error) throw { code: error.code === '42501' ? 'invalid_argument' : 'unavailable', message: error.message };
+            // with opts.stamp the write only succeeds if nobody changed the row since; otherwise
+            // it throws { code: 'conflict', current: { data, updated_at } | null }
+            async set(data, opts = {}) {
+              if (opts.stamp) {
+                const { data: rows, error } = await sb.from('hausakte_docs').update({ data }).eq('collection', col).eq('id', id).eq('updated_at', opts.stamp).select('updated_at');
+                if (error) throw fail(error);
+                if (rows?.length) return { stamp: rows[0].updated_at };
+                const { data: cur, error: e2 } = await sb.from('hausakte_docs').select('data,updated_at').eq('collection', col).eq('id', id).maybeSingle();
+                if (e2) throw fail(e2);
+                throw { code: 'conflict', current: cur || null };
+              }
+              const { data: rows, error } = await sb.from('hausakte_docs').upsert({ collection: col, id, data }).select('updated_at');
+              if (error) throw fail(error);
+              return { stamp: rows?.[0]?.updated_at || null };
             },
             async delete() {
               const { error } = await sb.from('hausakte_docs').delete().eq('collection', col).eq('id', id);
