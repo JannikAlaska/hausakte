@@ -2,6 +2,7 @@
 import { dist, distToSeg, same, perp, norm, sub, add, mul, pointInPoly, polyArea, bbox } from './geometry.js';
 import { fixtureKind } from './catalog.js';
 import { bearing, bearingName } from './roof.js';
+import { uid } from './util.js';
 
 export const r3 = (v) => Math.round(v * 1000) / 1000;
 const P3 = (p) => [r3(p[0]), r3(p[1])];
@@ -251,4 +252,219 @@ export function wallFrontPoint(floor, wallId, roomId, along = 0, inset = 0.3) {
   if (!sp) throw new Error('Die Wand grenzt nicht an diesen Raum');
   const at = add(w.a, mul(u, Math.max(sp.from, Math.min(sp.to, (sp.from + sp.to) / 2 + (Number(along) || 0)))));
   return add(at, mul(n, sp.side * (w.t / 2 + inset)));
+}
+
+
+// ---------- room side lengths ----------
+// A room side is changed by moving the wall at one of its ends (the side perpendicular to it). Only the
+// part of that wall which borders the room moves: a wall running past several rooms is split at the room
+// corners first, so the neighbouring rooms keep their walls. Walls ending on the moved piece follow it,
+// connection points and furniture standing at the moved piece move with it.
+const dot2 = (a, b) => a[0] * b[0] + a[1] * b[1];
+const cross2 = (a, b) => a[0] * b[1] - a[1] * b[0];
+const wdir = (w) => norm(sub(w.b, w.a));
+const at = (P, i) => P[((i % P.length) + P.length) % P.length];
+
+// point slightly inside the room next to the edge p→q
+function insideNear(P, p, q) {
+  const e = norm(sub(q, p));
+  const mid = mul(add(p, q), 0.5);
+  const n = [-e[1], e[0]];
+  const a = add(mid, mul(n, 0.05));
+  return pointInPoly(a, P) ? a : add(mid, mul(n, -0.05));
+}
+
+// walls whose face lies along the room edge p→q, on the outside of the room
+export function wallsOnEdge(walls, P, p, q) {
+  const e = norm(sub(q, p));
+  const L = dist(p, q);
+  const n = [-e[1], e[0]];
+  const inSide = dot2(sub(insideNear(P, p, q), p), n);
+  return (walls || []).filter((w) => {
+    if (dist(w.a, w.b) < 0.01 || Math.abs(cross2(wdir(w), e)) > 0.02) return false;
+    const off = dot2(sub(w.a, p), n);
+    if (Math.abs(Math.abs(off) - w.t / 2) > 0.025 || Math.sign(off) === Math.sign(inSide)) return false;
+    const s0 = dot2(sub(w.a, p), e),
+      s1 = dot2(sub(w.b, p), e);
+    return Math.min(Math.max(s0, s1), L) - Math.max(Math.min(s0, s1), 0) > 0.05;
+  });
+}
+
+// splits a wall at the given points (openings go to the piece they sit in)
+export function splitWallAt(walls, id, pts) {
+  const w = walls.find((x) => x.id === id);
+  if (!w) return walls;
+  const L = dist(w.a, w.b);
+  const u = wdir(w);
+  const ts = pts
+    .filter((p) => distToSeg(p, w.a, w.b).d < 0.03)
+    .map((p) => dot2(sub(p, w.a), u))
+    .filter((t) => t > 0.02 && t < L - 0.02)
+    .sort((a, b) => a - b)
+    .filter((t, i, arr) => i === 0 || t - arr[i - 1] > 0.02);
+  if (!ts.length) return walls;
+  const cuts = [0, ...ts, L];
+  const pieces = cuts.slice(0, -1).map((t0, k) => {
+    const t1 = cuts[k + 1];
+    const openings = (w.openings || []).filter((o) => o.pos >= t0 && (o.pos < t1 || k === cuts.length - 2)).map((o) => ({ ...o, pos: r3(o.pos - t0) }));
+    return { ...w, id: k === 0 ? w.id : uid('w'), a: P3(add(w.a, mul(u, t0))), b: P3(add(w.a, mul(u, t1))), openings };
+  });
+  return walls.flatMap((x) => (x.id === id ? pieces : [x]));
+}
+
+// splits a wall wherever another wall ends on it or crosses it
+export function splitAtJunctions(walls, id) {
+  const w = walls.find((x) => x.id === id);
+  if (!w) return walls;
+  const pts = [];
+  for (const o of walls) {
+    if (o.id === id) continue;
+    for (const p of [o.a, o.b]) if (distToSeg(p, w.a, w.b).d < 0.005) pts.push(p);
+    const d1 = sub(w.b, w.a),
+      d2 = sub(o.b, o.a);
+    const den = cross2(d1, d2);
+    if (Math.abs(den) > 1e-9) {
+      const t = cross2(sub(o.a, w.a), d2) / den,
+        v = cross2(sub(o.a, w.a), d1) / den;
+      if (t > 0 && t < 1 && v > 0.001 && v < 0.999) pts.push(add(w.a, mul(d1, t)));
+    }
+  }
+  return splitWallAt(walls, id, pts);
+}
+
+// what happens at one end of a room side: the wall there and what lies behind it
+function sideEnd(floor, room, i, end) {
+  const P = room.poly;
+  const p = at(P, i),
+    q = at(P, i + 1);
+  const e = norm(sub(q, p));
+  const [c1, c2, beyond] = end === 'end' ? [q, at(P, i + 2), [at(P, i + 2), at(P, i + 3)]] : [p, at(P, i - 1), [at(P, i - 2), at(P, i - 1)]];
+  if (Math.abs(dot2(norm(sub(c2, c1)), e)) > 0.06) return { end, ok: false, reason: 'Die angrenzende Seite ist nicht rechtwinklig.' };
+  const walls = floor.walls || [];
+  const K = wallsOnEdge(walls, P, c1, c2);
+  if (!K.length) return { end, ok: false, reason: 'An dieser Seite steht keine Wand.', manual: !!room.manual, c1, c2 };
+  const eE = norm(sub(c2, c1));
+  let out = [-eE[1], eE[0]];
+  if (pointInPoly(add(mul(add(c1, c2), 0.5), mul(out, 0.05)), P)) out = mul(out, -1);
+  // rooms behind that wall along this side (they change too)
+  const names = [];
+  const L = dist(c1, c2);
+  for (let s = 0.15; s < L; s += 0.3) {
+    const pt = add(add(c1, mul(eE, s)), mul(out, K[0].t + 0.2));
+    const other = (floor.rooms || []).find((r) => r.id !== room.id && r.poly?.length && pointInPoly(pt, r.poly));
+    if (other && !names.includes(other.name)) names.push(other.name);
+  }
+  const ext = K.some((w) => w.ext);
+  return { end, ok: true, K, c1, c2, eE, beyond, ext, label: names.length ? `Wand zu ${names.join(', ')}` : ext ? 'Außenwand' : 'Wand dahinter' };
+}
+
+// sides of a room with length, compass direction and the walls that can move to change it
+export function roomSides(floor, room, north = 0) {
+  const P = room.poly || [];
+  return P.map((p, i) => {
+    const q = at(P, i + 1);
+    const e = norm(sub(q, p));
+    let n = [-e[1], e[0]];
+    if (pointInPoly(add(mul(add(p, q), 0.5), mul(n, 0.05)), P)) n = mul(n, -1);
+    const ends = ['end', 'start'].map((end) => {
+      const x = sideEnd(floor, room, i, end);
+      return { end, ok: x.ok, label: x.label, ext: x.ext, reason: x.reason, wallIds: x.K ? x.K.map((w) => w.id) : [] };
+    });
+    return { i, a: p, b: q, length: dist(p, q), dir: bearingName(bearing(n[0], n[1], north)), ends };
+  });
+}
+
+export function setRoomSide(floor, roomId, i, newLength, end) {
+  const room = (floor.rooms || []).find((r) => r.id === roomId);
+  if (!room?.poly?.length) throw new Error('Raum nicht gefunden');
+  const P = room.poly;
+  const p = at(P, i),
+    q = at(P, i + 1);
+  const e = norm(sub(q, p));
+  const d = newLength - dist(p, q);
+  if (Math.abs(d) < 0.002) return floor;
+  const delta = mul(e, end === 'end' ? d : -d);
+  const x = sideEnd(floor, room, i, end);
+  if (!x.ok) {
+    // a room drawn as polygon without walls: move its two corners
+    if (x.manual) {
+      const moved = P.map((v) => (same(v, x.c1, 0.002) || same(v, x.c2, 0.002) ? P3(add(v, delta)) : v));
+      return { ...floor, rooms: floor.rooms.map((r) => (r.id === roomId ? { ...r, poly: moved } : r)) };
+    }
+    throw new Error(x.reason);
+  }
+  const { K, c1, c2, eE, beyond } = x;
+  const walls0 = floor.walls || [];
+  const k0 = K[0];
+  const ke = wdir(k0);
+  const kn = [-ke[1], ke[0]];
+  const onK = (w) => dist(w.a, w.b) > 0.005 && Math.abs(cross2(wdir(w), ke)) < 0.02 && Math.abs(dot2(sub(w.a, k0.a), kn)) < 0.006;
+  const project = (pt) => add(k0.a, mul(ke, dot2(sub(pt, k0.a), ke)));
+  // junctions on the wall's centre line: room corners pushed out by half the thickness of the walls along the room
+  const sideWall = wallsOnEdge(walls0, P, p, q)[0] || null;
+  const beyondWall = wallsOnEdge(walls0, P, beyond[0], beyond[1])[0] || null;
+  const J1 = add(project(c1), mul(eE, -(sideWall?.t || 0) / 2));
+  const J2 = add(project(c2), mul(eE, (beyondWall?.t || 0) / 2));
+  let ws = walls0.map((w) => ({ ...w, openings: (w.openings || []).map((o) => ({ ...o })) }));
+  for (const k of K) ws = splitWallAt(ws, k.id, [J1, J2]);
+  const span = dist(J1, J2);
+  const M = ws.filter((w) => {
+    if (!onK(w)) return false;
+    const s = dot2(sub(mul(add(w.a, w.b), 0.5), J1), eE);
+    return s > 0.005 && s < span - 0.005;
+  });
+  if (!M.length) throw new Error('Die Wand an dieser Seite wurde nicht gefunden.');
+  const Mids = new Set(M.map((w) => w.id));
+  const oldM = M.map((w) => ({ a: w.a, b: w.b, t: w.t }));
+  const onMoved = (pt) => oldM.some((m) => distToSeg(pt, m.a, m.b).d < 0.006);
+  const kept = [];
+  ws = ws.map((w) => {
+    if (Mids.has(w.id)) return { ...w, a: P3(add(w.a, delta)), b: P3(add(w.b, delta)) };
+    const collinear = onK(w);
+    let a = w.a,
+      b = w.b,
+      shiftA = 0,
+      changed = false;
+    for (const key of ['a', 'b']) {
+      if (!onMoved(w[key])) continue;
+      // the rest of the same wall line stays where it is (it now ends at a step)
+      if (collinear) {
+        kept.push({ pt: w[key] });
+        continue;
+      }
+      const np = P3(add(w[key], delta));
+      if (key === 'a') {
+        shiftA = dot2(sub(np, w.a), wdir(w));
+        a = np;
+      } else b = np;
+      changed = true;
+    }
+    if (!changed) return w;
+    const Lw = dist(a, b);
+    return { ...w, a, b, openings: (w.openings || []).map((o) => ({ ...o, pos: r3(Math.max(o.w / 2, Math.min(Lw - o.w / 2, o.pos - shiftA))) })) };
+  });
+  // close a step that is not covered by another wall
+  for (const { pt } of kept) {
+    if (ws.some((w) => !onK(w) && distToSeg(pt, w.a, w.b).d < 0.006)) continue;
+    const near = dist(pt, J1) < dist(pt, J2) ? sideWall : beyondWall;
+    ws.push({ id: uid('w'), a: P3(pt), b: P3(add(pt, delta)), t: near?.t || k0.t, ext: !!near?.ext, ...(near?.color ? { color: near.color } : {}), openings: [] });
+  }
+  // connection points and furniture at the moved piece move with it
+  const nearM = (pt, extra) => oldM.some((m) => {
+    const r = distToSeg(pt, m.a, m.b);
+    return r.t > -0.001 && r.t < 1.001 && r.d < m.t / 2 + extra;
+  });
+  const points = (floor.points || []).map((pt) => (pt.rot != null && nearM([pt.x, pt.y], 0.03) ? { ...pt, x: r3(pt.x + delta[0]), y: r3(pt.y + delta[1]) } : pt));
+  const furniture = (floor.furniture || []).map((f) => {
+    const t = furnBack(f);
+    return t && nearM(t, 0.05) ? { ...f, x: r3(f.x + delta[0]), y: r3(f.y + delta[1]) } : f;
+  });
+  return { ...floor, walls: ws, points, furniture };
+}
+
+// middle of the back edge of a piece of furniture (plan rotation clockwise, back at -d/2)
+function furnBack(f) {
+  if (!Number.isFinite(f.x) || !Number.isFinite(f.d)) return null;
+  const r = ((f.rot || 0) * Math.PI) / 180;
+  return [f.x + (Math.sin(r) * f.d) / 2, f.y - (Math.cos(r) * f.d) / 2];
 }

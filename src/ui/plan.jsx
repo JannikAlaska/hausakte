@@ -14,7 +14,7 @@ import {
 } from '../geometry.js';
 import { putDoc, deleteDoc, updateHouse, getAssets, blobUrl, getState } from '../store.js';
 import { isSupabaseMode, supa } from '../supa.js';
-import { lineLength, linePlanPts, fixtureAnchor, dedup3, relink, roomOfPoint, resizeLine, dimLength } from '../planops.js';
+import { lineLength, linePlanPts, fixtureAnchor, dedup3, relink, roomOfPoint, resizeLine, dimLength, roomSides, setRoomSide, splitAtJunctions } from '../planops.js';
 import { uid, deepClone, fmtFixed, fmtNum, parseNum } from '../util.js';
 import { furnType, furnSize, furnToPlan, hitFurniture, placeFurniture, snapToWalls, furnName } from '../furniture.js';
 import { PlanFurniture, FurnitureSymbol, FurnitureHandles, furnHandles, FurnitureToolProps, FurnitureProps, FurnitureSummary, normRot } from './furniture.jsx';
@@ -472,6 +472,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
   const [lineOpts, setLineOpts] = useState({ kind: 'strom', zone: 'unten', z: 0.3, status: 'bestand', rFrom: 0, rTo: null });
   const [fixOpts, setFixOpts] = useState({ kind: 'steckdose', z: null, status: 'bestand', count: 1 });
   const [furnKey, setFurnKey] = useState('sofa3');
+  const [hlSide, setHlSide] = useState(null); // {roomId, i, wallIds} while a room side length is edited
   const ui = useUI();
   const showLines = ui.planLines !== false || tool === 'line' || tool === 'riser' || tool === 'fixture';
   const showFurn = ui.planFurniture !== false || tool === 'furniture';
@@ -1180,6 +1181,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
   const selPoint = sel?.kind === 'point' ? points.find((q) => q.id === sel.id) : null;
   const selDim = sel?.kind === 'dim' ? dims.find((d) => d.id === sel.id) : null;
   const selFurn = sel?.kind === 'furn' ? furniture.find((x) => x.id === sel.id) : null;
+  const hlRoom = hlSide && selRoom?.id === hlSide.roomId ? selRoom : null;
   const hints = {
     select: selFurn ? 'Möbel ziehen verschiebt es (rastet an Wänden ein, Alt = frei), runder Griff dreht, Eckquadrat ändert die Größe. R dreht um 90°, Pfeiltasten verschieben um 1 cm.' : 'Klicken wählt Wände, Öffnungen, Räume, Treppen und Möbel. Wand ziehen verschiebt sie, Endpunkte ziehen ändert die Länge. Leere Fläche ziehen verschiebt die Ansicht.',
     furniture: `${furnType(furnKey).name} (${Math.round(furnType(furnKey).w * 100)} × ${Math.round(furnType(furnKey).d * 100)} cm): in den Grundriss klicken zum Platzieren. Ziehen verschiebt, runder Griff dreht, Eckquadrat ändert die Größe.`,
@@ -1362,6 +1364,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
               {cursor?.furn && tool === 'furniture' ? <FurnitureSymbol f={cursor.furn} px={px} ghost /> : null}
               {selFurn && showFurn ? <FurnitureHandles f={selFurn} px={px} s={s} /> : null}
               {selWall ? <WallDims w={selWall} px={px} /> : null}
+              {hlRoom && hlRoom.poly?.[hlSide.i] ? <SideHighlight room={hlRoom} i={hlSide.i} walls={walls.filter((w) => (hlSide.wallIds || []).includes(w.id))} px={px} /> : null}
               {selWall
                 ? ['a', 'b'].map((end) => <circle key={end} cx={selWall[end][0]} cy={selWall[end][1]} r={px(6)} className="svg-handle" strokeWidth={px(2)} />)
                 : null}
@@ -1458,11 +1461,11 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
         ) : selFurn ? (
           <FurnitureProps f={selFurn} floor={floor} mutate={mutate} onDelete={deleteSelection} onSelect={(id) => setSel({ kind: 'furn', id })} />
         ) : selWall ? (
-          <WallProps w={selWall} mutate={mutate} onDelete={deleteSelection} onSelectOpening={(o) => setSel({ kind: 'opening', id: o.id, wallId: selWall.id })} />
+          <WallProps w={selWall} walls={walls} mutate={mutate} onDelete={deleteSelection} onSelectOpening={(o) => setSel({ kind: 'opening', id: o.id, wallId: selWall.id })} />
         ) : selOpening ? (
           <OpeningProps o={selOpening} w={walls.find((w) => w.id === sel.wallId)} mutate={mutate} onDelete={deleteSelection} />
         ) : selRoom ? (
-          <RoomProps r={selRoom} floor={floor} mutate={mutate} onDelete={deleteSelection} focus={sel.focus} noDetails={ctx} />
+          <RoomProps r={selRoom} floor={floor} mutate={mutate} onDelete={deleteSelection} focus={sel.focus} noDetails={ctx} onHighlight={setHlSide} />
         ) : selItem ? (
           <StairProps it={selItem} mutate={mutate} onDelete={deleteSelection} />
         ) : selDim ? (
@@ -2146,8 +2149,9 @@ function CalibrationPrompt({ onApply, onCancel }) {
 }
 
 // ---------- property panels ----------
-function WallProps({ w, mutate, onDelete, onSelectOpening }) {
+function WallProps({ w, walls = [], mutate, onDelete, onSelectOpening }) {
   const { L, u } = wallFrame(w);
+  const pieces = useMemo(() => splitAtJunctions(walls, w.id).length - walls.length + 1, [walls, w.id]);
   const set = (patch, opts) => mutate((f) => ({ ...f, walls: f.walls.map((x) => (x.id === w.id ? { ...x, ...patch } : x)) }), opts);
   const setLength = (v) => {
     if (!v || v < 0.05) return;
@@ -2180,6 +2184,14 @@ function WallProps({ w, mutate, onDelete, onSelectOpening }) {
       <Field label="Länge (Achsmaß)">
         <NumInput id={'w-len-' + w.id} value={r3(L)} onChange={setLength} unit="m" digits={3} />
       </Field>
+      {pieces > 1 ? (
+        <div className="panel wall-split">
+          <span className="small">Diese Wand läuft an {pieces} Abschnitten entlang (andere Wände stoßen an). Geteilt lässt sich jeder Abschnitt einzeln auswählen und verschieben.</span>
+          <Btn small icon="split" onClick={() => mutate((f) => ({ ...f, walls: splitAtJunctions(f.walls, w.id) }))}>
+            An Raumgrenzen teilen
+          </Btn>
+        </div>
+      ) : null}
       <Field label="Dicke">
         <Select id={'w-t-' + w.id} value={preset ? String(preset.value) : 'custom'} onChange={(v) => v !== 'custom' && set({ t: Number(v) })} options={[...THICKNESS.map((t) => ({ value: String(t.value), label: t.label })), { value: 'custom', label: 'Eigene' }]} />
       </Field>
@@ -2263,7 +2275,7 @@ function OpeningProps({ o, w, mutate, onDelete }) {
   );
 }
 
-function RoomProps({ r, floor, mutate, onDelete, focus, noDetails }) {
+function RoomProps({ r, floor, mutate, onDelete, focus, noDetails, onHighlight }) {
   const set = (patch) => mutate((f) => ({ ...f, rooms: f.rooms.map((x) => (x.id === r.id ? { ...x, ...patch } : x)) }), { refresh: false });
   const ref = useRef(null);
   useEffect(() => {
@@ -2286,12 +2298,133 @@ function RoomProps({ r, floor, mutate, onDelete, focus, noDetails }) {
         <b className="mono">{fmtFixed(Math.abs(polyArea(r.poly || [])), 2)} m²</b>
       </div>
       {r.manual ? <p className="small muted">Als Polygon gezeichnet – folgt Wandänderungen nicht automatisch.</p> : <p className="small muted">Folgt automatisch den umgebenden Wänden.</p>}
+      <RoomSides r={r} floor={floor} mutate={mutate} onHighlight={onHighlight} />
       {noDetails ? null : (
         <Btn small icon="edit" onClick={() => openDrawer({ type: 'room', floorId: floor.id, roomId: r.id })}>
           Ausstattung & Details
         </Btn>
       )}
     </div>
+  );
+}
+
+// Side lengths of a room (inner dimensions). Typing a length moves the wall at one end of that side;
+// only the part of the wall along this room moves, so long walls are split at the room corners.
+function RoomSides({ r, floor, mutate, onHighlight }) {
+  const north = getState().house?.northAngle || 0;
+  const sides = useMemo(() => (r.poly?.length >= 3 ? roomSides(floor, r, north) : []), [floor.walls, floor.rooms, r.poly, north]);
+  const [ends, setEnds] = useState({});
+  useEffect(() => {
+    setEnds({});
+    return () => onHighlight?.(null);
+  }, [r.id]);
+  if (!sides.length) return null;
+  // default: move an inner wall rather than the outside wall
+  const endOf = (s) => {
+    const chosen = s.ends.find((e) => e.end === ends[s.i] && e.ok);
+    return (chosen || s.ends.find((e) => e.ok && !e.ext) || s.ends.find((e) => e.ok))?.end || null;
+  };
+  const light = (s, end = endOf(s)) => onHighlight?.({ roomId: r.id, i: s.i, wallIds: s.ends.find((e) => e.end === end)?.wallIds || [] });
+  const apply = (s, v) => {
+    const end = endOf(s);
+    if (!end) return toast(s.ends[0].reason || 'Diese Seite lässt sich nicht anpassen.', 'warn', 5000);
+    let err = null;
+    mutate((f) => {
+      try {
+        return setRoomSide(f, r.id, s.i, v, end);
+      } catch (e) {
+        err = e;
+        return f;
+      }
+    });
+    if (err) toast(err.message, 'warn', 5000);
+    else toast(`Seite ${s.dir} auf ${fmtFixed(v, 2)} m gesetzt – ${s.ends.find((e) => e.end === end).label} verschoben.`, 'ok', 4000);
+  };
+  return (
+    <div className="room-sides">
+      <span className="field-label">Seitenlängen (innen)</span>
+      {sides.map((s) => {
+        const okEnds = s.ends.filter((e) => e.ok);
+        const end = endOf(s);
+        return (
+          <div key={s.i} className="side-row" onMouseEnter={() => light(s)} onMouseLeave={() => onHighlight?.(null)}>
+            <span className="side-dir" title="Lage der Seite (Himmelsrichtung)">
+              {s.dir}
+            </span>
+            <SideLength value={s.length} disabled={!okEnds.length} onFocus={() => light(s)} onCommit={(v) => apply(s, v)} />
+            {okEnds.length > 1 ? (
+              <select
+                className="input select side-end"
+                value={end || ''}
+                onChange={(e) => {
+                  setEnds({ ...ends, [s.i]: e.target.value });
+                  light(s, e.target.value);
+                }}
+                aria-label="Welche Wand verschoben wird"
+              >
+                {okEnds.map((e) => (
+                  <option key={e.end} value={e.end}>
+                    verschiebt: {e.label}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span className="side-end-txt">{okEnds.length ? `verschiebt: ${okEnds[0].label}` : s.ends[0].reason}</span>
+            )}
+          </div>
+        );
+      })}
+      <p className="small muted">Neue Länge eintippen und Enter: Die gewählte Wand an der Seitenkante wird verschoben – nur das Stück an diesem Raum. Räume dahinter werden entsprechend kleiner, Anschlüsse und Möbel an dieser Wand wandern mit. Rückgängig mit Strg+Z oder über „Frühere Versionen“.</p>
+    </div>
+  );
+}
+
+// length field that applies on Enter or when leaving it, so the wall does not jump while typing
+function SideLength({ value, onCommit, onFocus, disabled }) {
+  const [text, setText] = useState(null);
+  const commit = () => {
+    const v = parseNum(text ?? '');
+    setText(null);
+    if (v > 0.2 && v < 40 && Math.abs(v - value) > 0.004) onCommit(v);
+  };
+  return (
+    <span className="input-wrap side-len">
+      <input
+        className="input num"
+        style={{ paddingRight: 21 }}
+        inputMode="decimal"
+        disabled={disabled}
+        value={text ?? fmtNum(value, 2)}
+        onFocus={onFocus}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            e.currentTarget.blur();
+          }
+          if (e.key === 'Escape') setText(null);
+        }}
+        aria-label="Seitenlänge in Metern"
+      />
+      <span className="input-unit">m</span>
+    </span>
+  );
+}
+
+function SideHighlight({ room, i, walls, px }) {
+  const P = room.poly;
+  const a = P[i],
+    b = P[(i + 1) % P.length];
+  return (
+    <g style={{ pointerEvents: 'none' }}>
+      {walls.map((w) => (
+        <line key={w.id} x1={w.a[0]} y1={w.a[1]} x2={w.b[0]} y2={w.b[1]} stroke="var(--warn)" strokeOpacity="0.55" strokeWidth={w.t + px(4)} strokeDasharray={`${px(8)} ${px(5)}`} />
+      ))}
+      <line x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} stroke="var(--accent)" strokeWidth={px(5)} strokeLinecap="round" />
+      <circle cx={a[0]} cy={a[1]} r={px(4)} fill="var(--accent)" />
+      <circle cx={b[0]} cy={b[1]} r={px(4)} fill="var(--accent)" />
+    </g>
   );
 }
 
