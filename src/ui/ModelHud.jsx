@@ -6,6 +6,7 @@ import { projectKind, status as statusOf, roomType } from '../catalog.js';
 import { ROOF_TYPES } from '../roof.js';
 import { fmtEuro, fmtDayMonth, fmtFixed, todayISO, fmtNum } from '../util.js';
 import { daysUntil } from '../metrics.js';
+import { invoiceDeadlines } from '../invoices.js';
 import { bearingName } from '../roof.js';
 
 const { useMemo } = React;
@@ -15,7 +16,7 @@ export function KpiRow({ data }) {
   const pf = useMemo(() => portfolio(projects), [data.projects]);
   const comps = Object.values(data.components);
   const due = comps.filter((c) => componentWear(c).state === 'faellig');
-  const next = pf.next[0];
+  const next = [...pf.next, ...invoiceDeadlines(data)].sort((a, b) => (a.date < b.date ? -1 : 1))[0];
   const dn = next ? daysUntil(next.date) : null;
   const late = pf.overdue;
   return (
@@ -43,7 +44,7 @@ export function KpiRow({ data }) {
           <span className="kpi-sub">Förderung ca. {fmtEuro(pf.funding)}</span>
         </span>
       </button>
-      <button className="kpi" role="listitem" onClick={() => next && openDrawer({ type: 'project', id: next.project.id })} disabled={!next}>
+      <button className="kpi" role="listitem" onClick={() => next && (next.kind === 'invoice' ? openDrawer({ type: 'invoice', id: next.docId }) : openDrawer({ type: 'project', id: next.project.id }))} disabled={!next}>
         <span className={`kpi-ico ${dn != null && dn <= 21 ? 'tone-warn' : 'tone-neutral'}`}>
           <Icon name="calendar" />
         </span>

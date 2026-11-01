@@ -1,4 +1,5 @@
 import { Icon } from './icons.jsx';
+import { ProjectInvoices } from './invoices.jsx';
 import { HeatHint } from './energy.jsx';
 import { PvHint } from './solar.jsx';
 import { OfferCompare } from './offers.jsx';
@@ -590,6 +591,9 @@ export function ProjectDrawer({ data, drawer }) {
             <Field label="Davon Eigenleistung" hint="Wert deiner eigenen Arbeit (für Finanzierung)">
               <NumInput id={'p-own-' + p.id} value={p.ownWork} onChange={(v) => set({ ownWork: v })} unit="€" digits={0} />
             </Field>
+          </Section>
+          <Section title="Rechnungen">
+            <ProjectInvoices p={p} data={data} />
           </Section>
           <Section title="Angebote vergleichen">
             <OfferCompare p={p} data={data} set={set} />

@@ -14,6 +14,7 @@ import { ConsumptionSheet } from './ui/consumption.jsx';
 import { DocumentsSheet } from './ui/documents.jsx';
 import { AssistantDrawer } from './ui/assistant.jsx';
 import { ContactDrawer } from './ui/contacts.jsx';
+import { InvoiceDrawer } from './ui/invoices.jsx';
 import { projectKind, gewerk, roomType } from './catalog.js';
 import { fmtTime, fmtArea } from './util.js';
 import { portfolio, buildingStats, roomArea, liveProjects } from './metrics.js';
@@ -173,8 +174,11 @@ function SearchBox({ data }) {
       if (`${c.name} ${c.company} ${c.role}`.toLowerCase().includes(s)) out.push({ icon: 'tag', title: c.company || c.name || 'Kontakt', sub: `Kontakt${c.company && c.name ? ' · ' + c.name : ''}`, go: () => openDrawer({ type: 'contact', id: c.id }) });
     for (const n of Object.values(data.notes || {}))
       if (`${n.title} ${n.text}`.toLowerCase().includes(s)) out.push({ icon: 'edit', title: n.title || 'Notiz', sub: `Notiz · ${n.date || ''}`, go: () => { setUI({ docTab: 'notizen' }); go('dokumente'); } });
-    for (const d of Object.values(data.documents))
-      if ((d.name || '').toLowerCase().includes(s)) out.push({ icon: 'file', title: d.name, sub: 'Dokument', go: () => go('dokumente') });
+    for (const d of Object.values(data.documents)) {
+      const inv = d.type === 'rechnung' ? d.inv || {} : null;
+      if (`${d.name || ''} ${inv ? `${inv.number || ''} ${inv.vendor || ''}` : ''}`.toLowerCase().includes(s))
+        out.push(inv ? { icon: 'euro', title: d.name, sub: `Rechnung${inv.number ? ' Nr. ' + inv.number : ''}`, go: () => openDrawer({ type: 'invoice', id: d.id }) } : { icon: 'file', title: d.name, sub: 'Dokument', go: () => go('dokumente') });
+    }
     return out.slice(0, 12);
   }, [q, data]);
   return (
@@ -465,6 +469,7 @@ function DrawerHost({ data, sceneRef }) {
   if (d.type === 'component') return <ComponentDrawer key={d.id} data={data} drawer={d} />;
   if (d.type === 'roadmap') return <RoadmapDrawer data={data} />;
   if (d.type === 'contact') return <ContactDrawer key={d.id} data={data} drawer={d} />;
+  if (d.type === 'invoice') return <InvoiceDrawer key={d.id} data={data} drawer={d} />;
   if (d.type === 'assistant') return <AssistantDrawer data={data} drawer={d} sceneRef={sceneRef} />;
   return null;
 }

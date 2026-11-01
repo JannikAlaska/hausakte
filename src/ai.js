@@ -5,6 +5,7 @@ import { FUNDING_KNOWLEDGE, gewerk, projectKind, status as statusOf, PROJECT_KIN
 import { pointInPoly } from './geometry.js';
 import { roomOfPoint } from './planops.js';
 import { furnLabel } from './furniture.js';
+import { invoiceDocs, invOf, invTotal, invOpen, isOverdue, invoiceSums } from './invoices.js';
 import { buildingStats, componentWear, projectCost, sortFloors, consumptionByYear, heatingIndex, roomArea, resolveRef } from './metrics.js';
 import { bearingName } from './roof.js';
 import { todayISO, fmtNum } from './util.js';
@@ -45,7 +46,7 @@ const ERR = {
   overloaded: 'Die KI ist gerade überlastet. Versuche es in ein paar Minuten noch einmal.',
   not_member: 'Dein Konto gehört nicht zu dieser Hausakte.',
   file_missing: 'Die Datei ist noch nicht hochgeladen.',
-  pdf_unsupported: 'PDFs kann die KI in dieser Ansicht nicht lesen. Öffne die Hausakte über deine eigene Adresse oder lade das Angebot als Foto hoch.',
+  pdf_unsupported: 'PDFs kann die KI in dieser Ansicht nicht lesen. Öffne die Hausakte über deine eigene Adresse oder lade das Dokument als Foto hoch.',
   too_many_files: 'Vergleiche höchstens 5 Angebote auf einmal.',
 };
 export const aiErrorText = (e) => ERR[e?.code] || 'Die KI-Anfrage ist fehlgeschlagen. Versuche es später noch einmal.';
@@ -205,6 +206,18 @@ export function houseContext(d, { withProjects = true, withComponents = true, wi
     L.push('');
     L.push('KONTAKTE');
     for (const c of contacts.slice(0, 60)) L.push(`- ${contactLine(c)}${c.phone || c.mobile ? ` · Tel. ${c.phone || c.mobile}` : ''}${c.email ? ` · ${c.email}` : ''}`);
+  }
+  // invoices: the open ones in detail, the paid ones as sum
+  const invs = invoiceDocs(d);
+  if (invs.length) {
+    const sm = invoiceSums(invs);
+    L.push('');
+    L.push(`RECHNUNGEN (${invs.length}; offen ${fmtNum(sm.open, 2)} €${sm.overdueN ? `, davon überfällig ${fmtNum(sm.overdue, 2)} €` : ''}; bezahlt ${fmtNum(sm.paid, 2)} €)`);
+    for (const x of invs.filter((x) => invOf(x).status !== 'bezahlt').slice(0, 30)) {
+      const i = invOf(x);
+      const vendor = d.contacts?.[x.contactId]?.company || i.vendor || 'unbekannt';
+      L.push(`- ${vendor}${i.number ? ` Nr. ${i.number}` : ''}${i.date ? ` vom ${i.date}` : ''}: ${fmtNum(invTotal(x), 2)} €, ${i.status === 'teilbezahlt' ? `teilbezahlt, offen ${fmtNum(invOpen(x), 2)} €` : 'offen'}${i.due ? `, fällig ${i.due}${isOverdue(x) ? ' (überfällig)' : ''}` : ''}${x.projectId && d.projects?.[x.projectId] ? `, Projekt ${d.projects[x.projectId].title}` : ', allgemein'}`);
+    }
   }
   if (withProjects) {
     L.push('');
@@ -537,6 +550,35 @@ ${JSON_RULES}
 Format:
 {"docType":"objekt|angebot|rechnung|foerderung|vertrag|plan|gutachten|genehmigung|finanzierung|sonstiges","title":"Kurzer Titel","vendor":"Firma oder Behörde","date":"YYYY-MM-DD oder null","total":12345,"items":[{"label":"Position","amount":1000}],"deadlines":[{"title":"Frist","date":"YYYY-MM-DD"}],"summary":"2 Sätze","warnings":["Auffälligkeit, z. B. fehlende Positionen"]}`;
   }
+  return sample.json(prompt, { images: [file], modelTier: 'default', signal: opts.signal, cache: false });
+}
+
+// ---------- invoices ----------
+export async function aiReadInvoice(file, d, opts = {}) {
+  const sample = await getSample();
+  if (!sample) throw { code: 'not_granted' };
+  const lim = await getLimits();
+  if (!lim?.images) throw { code: 'images_unavailable' };
+  if (file.type === 'application/pdf' && !(lim.images.mediaTypes || []).includes('application/pdf')) throw { code: 'pdf_unsupported' };
+  const projects = Object.values(d.projects || {}).filter((p) => !p.archived).map((p) => `- ${p.id}: ${p.title} (${projectKind(p.kind).name})`).join('\n');
+  const contacts = Object.values(d.contacts || {}).map(contactLine).join('\n');
+  const prompt = `Das Bild bzw. PDF zeigt eine Rechnung (auch Abschlags-, Schlussrechnung oder Gutschrift) rund um ein Wohnhaus – von Handwerkern, Lieferanten, Versorgern, Beratern oder Behörden. Lies alle Angaben genau aus.
+- total ist der zu zahlende Bruttobetrag; bei Abschlags- oder Schlussrechnungen nach Abzug bereits gezahlter Abschläge (die Abzüge in alreadyPaid).
+- Positionen so wie auf der Rechnung (höchstens 40), Betrag je Position so wie aufgeführt.
+- dueDate ist das Fälligkeitsdatum. Steht nur ein Zahlungsziel da (z. B. „zahlbar innerhalb von 14 Tagen“), rechne es ab dem Rechnungsdatum aus. Ohne Angabe: null.
+- Ordne die Rechnung einem Projekt aus der Liste zu, wenn sie eindeutig dazu passt (Gewerk, Leistung, Ort), sonst null.
+- Entspricht der Absender einem bekannten Kontakt, gib dessen ID an.
+- Erfinde nichts. Ist das Bild keine Rechnung, setze isInvoice auf false.
+
+PROJEKTE
+${projects || 'keine'}
+
+KONTAKTE
+${contacts || 'keine'}
+
+${JSON_RULES}
+Format:
+{"isInvoice":true,"kind":"rechnung|abschlag|schluss|gutschrift","vendor":{"company":"Firma","name":"Ansprechpartner oder leer","address":"Straße, PLZ Ort","phone":"","email":"","website":""},"contactId":"ID oder null","number":"Rechnungsnummer","date":"YYYY-MM-DD","dueDate":"YYYY-MM-DD oder null","paymentTerms":"z. B. 14 Tage netto, 2 % Skonto bis …","skonto":{"percent":2,"until":"YYYY-MM-DD"},"net":1000,"vatRate":19,"vat":190,"total":1190,"alreadyPaid":0,"items":[{"label":"Position","qty":1,"unit":"Stk","unitPrice":100,"amount":100}],"iban":"","projectId":"ID oder null","projectReason":"kurz, warum dieses Projekt","summary":"1 Satz, was berechnet wurde","warnings":["Auffälligkeit, z. B. Summe passt nicht zu den Positionen, Mehrwertsteuer fehlt, schon überfällig"]}`;
   return sample.json(prompt, { images: [file], modelTier: 'default', signal: opts.signal, cache: false });
 }
 
