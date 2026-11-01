@@ -13,6 +13,7 @@ import {
   planarFaces, wallSegs, roomInnerPolygon, outerOutline, same, faceAt,
 } from '../geometry.js';
 import { putDoc, deleteDoc, updateHouse, getAssets, blobUrl, getState } from '../store.js';
+import { isSupabaseMode, supa } from '../supa.js';
 import { lineLength, linePlanPts, fixtureAnchor, dedup3, relink, roomOfPoint, resizeLine, dimLength } from '../planops.js';
 import { uid, deepClone, fmtFixed, fmtNum, parseNum } from '../util.js';
 import { furnType, furnSize, furnToPlan, hitFurniture, placeFurniture, snapToWalls, furnName } from '../furniture.js';
@@ -2437,7 +2438,77 @@ function FloorProps({ floor, tool, defaults, setDefaults, grid, setGrid, ortho, 
           Grundriss-Bild laden
         </Btn>
       )}
+      {isSupabaseMode() ? <FloorHistory floor={floor} /> : null}
     </div>
+  );
+}
+
+// Earlier versions of this floor (kept by the database for 60 days); restoring one saves it as the newest
+// version, so the state before the restore stays in the list as well.
+function FloorHistory({ floor }) {
+  const [list, setList] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [more, setMore] = useState(false);
+  const load = async () => {
+    setBusy(true);
+    try {
+      const { data, error } = await supa().rpc('hausakte_history', { p_collection: 'floors', p_id: floor.id });
+      if (error) throw error;
+      setList(data || []);
+    } catch (e) {
+      toast('Verlauf konnte nicht geladen werden: ' + (e?.message || 'Server nicht erreichbar'), 'err', 6000);
+    } finally {
+      setBusy(false);
+    }
+  };
+  useEffect(() => setList(null), [floor.id]);
+  const when = (t) => new Date(t).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+  const restore = async (h) => {
+    const { data, error } = await supa().from('hausakte_docs_history').select('data').eq('hid', h.hid).maybeSingle();
+    if (error || !data?.data) return toast('Diese Version konnte nicht geladen werden.', 'err');
+    putDoc('floors', floor.id, { ...data.data, id: floor.id }, 50);
+    toast(`Stand vom ${when(h.saved_at)} wiederhergestellt. Der Stand davor bleibt im Verlauf.`, 'ok', 6000);
+    setTimeout(load, 1500);
+  };
+  const shown = (list || []).slice(0, more ? 300 : 12);
+  return (
+    <>
+      <div className="divider" />
+      <div className="spread">
+        <h4>Frühere Versionen</h4>
+        <Btn small kind="ghost" icon="clock" onClick={load} disabled={busy}>
+          {list ? 'Aktualisieren' : 'Anzeigen'}
+        </Btn>
+      </div>
+      {list ? (
+        list.length ? (
+          <div className="hist-list">
+            {shown.map((h) => (
+              <div key={h.hid} className="hist-row">
+                <span className="hist-txt">
+                  <b>{when(h.saved_at)}</b>
+                  <span>
+                    {h.rooms} Räume · {h.walls} Wände · {h.furniture} Möbel · {h.points} Anschlüsse{h.lines ? ` · ${h.lines} Leitungen` : ''}
+                  </span>
+                </span>
+                <ConfirmBtn icon="undo" confirmText="Wirklich zurückholen?" onConfirm={() => restore(h)}>
+                  Zurückholen
+                </ConfirmBtn>
+              </div>
+            ))}
+            {list.length > shown.length ? (
+              <button className="link small" onClick={() => setMore(true)}>
+                {list.length - shown.length} ältere anzeigen
+              </button>
+            ) : null}
+          </div>
+        ) : (
+          <p className="small muted">Noch keine früheren Versionen – sie entstehen ab jetzt bei jeder Änderung.</p>
+        )
+      ) : (
+        <p className="small muted">Jede Änderung an dieser Etage wird 60 Tage aufbewahrt (ältere als ein Tag stündlich). Hier kannst du einen früheren Stand zurückholen.</p>
+      )}
+    </>
   );
 }
 
