@@ -19,6 +19,8 @@ export const INV_KINDS = [
 
 const num = (v) => (v === '' || v == null || !Number.isFinite(Number(v)) ? null : Math.round(Number(v) * 100) / 100);
 export const isInvoice = (d) => d?.type === 'rechnung';
+// all pages of a scanned invoice: the document's own file first, then the added pages
+export const pagesOf = (d) => [...(d?.assetId || d?.dataUrl ? [{ assetId: d.assetId || null, dataUrl: d.dataUrl || null, contentType: d.contentType }] : []), ...(d?.pages || [])];
 export const invOf = (d) => d?.inv || {};
 export const invTotal = (d) => num(invOf(d).total) ?? (invOf(d).items || []).reduce((s, i) => s + (Number(i.amount) || 0), 0);
 export const invPaid = (d) => {
@@ -127,7 +129,7 @@ export function invoicePatch(d, r, data = getState()) {
     aiAt: Date.now(),
   };
   const name = [`Rechnung`, company, inv.number ? `Nr. ${inv.number}` : ''].filter(Boolean).join(' ');
-  return { ...d, inv, contactId, projectId, date: inv.date || d.date, name: d.noFile || /^IMG|^Scan|^scan|^image|^Foto|^photo|^\d|^Rechnung$/i.test(d.name || '') ? name : d.name, ai: { data: { docType: 'rechnung', vendor: company, date: inv.date, total: inv.total, items: items.map((i) => ({ label: i.label, amount: i.amount })), summary: inv.summary }, at: Date.now() } };
+  return { ...d, inv, contactId, projectId, date: inv.date || d.date, name: d.autoName || d.noFile || /^IMG|^Scan|^scan|^image|^Foto|^photo|^\d|^Rechnung$/i.test(d.name || '') ? name : d.name, ai: { data: { docType: 'rechnung', vendor: company, date: inv.date, total: inv.total, items: items.map((i) => ({ label: i.label, amount: i.amount })), summary: inv.summary }, at: Date.now() } };
 }
 
 // sender of an invoice as new contact (when no contact matched)

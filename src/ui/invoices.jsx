@@ -4,14 +4,14 @@ import { Icon } from './icons.jsx';
 import { Btn, IconBtn, Field, TextInput, NumInput, Select, DateInput, Pill, Drawer, Section, ConfirmBtn, Empty, Seg } from './common.jsx';
 import { useAiAvailable } from './ai-ui.jsx';
 import { toast, openDrawer, closeDrawer } from './state.js';
-import { uploadFiles, attachFile } from './documents.jsx';
+import { uploadFiles, storeFile } from './documents.jsx';
 import { aiReadInvoice, aiErrorText } from '../ai.js';
 import { getState, updateDoc, deleteDoc, fileUrl, getAssets } from '../store.js';
 import { addCost } from '../actions.js';
 import { contactTitle } from '../contacts.js';
 import {
   INV_STATUS, INV_KINDS, invOf, invTotal, invPaid, invOpen, isOverdue, invVendor, invTitle, invoiceDocs, invoiceSums, setInvoice, setInvoiceStatus,
-  createInvoice, invoicePatch, contactFromInvoice,
+  createInvoice, invoicePatch, contactFromInvoice, pagesOf,
 } from '../invoices.js';
 import { fmtDate, fmtDayMonth, todayISO, uid, diffDays, isISO } from '../util.js';
 
@@ -37,10 +37,11 @@ function useReading() {
   return reading;
 }
 
-async function readInto(id, blob) {
-  setReading(id, 'KI liest die Rechnung …');
+async function readInto(id, blobs) {
+  const list = Array.isArray(blobs) ? blobs : [blobs];
+  setReading(id, list.length > 1 ? `KI liest ${list.length} Seiten …` : 'KI liest die Rechnung …');
   try {
-    const r = await aiReadInvoice(blob, getState());
+    const r = await aiReadInvoice(list, getState());
     const d = getState().documents[id];
     if (!d) return;
     const next = invoicePatch(d, r || {});
@@ -60,58 +61,184 @@ async function readInto(id, blob) {
   }
 }
 
-// upload photos/PDFs as invoices and read each one
-export async function captureInvoices(files, { projectId = null, ai = true } = {}) {
-  const made = [];
-  for (const file of files) {
-    const ids = [];
-    await uploadFiles([file], { type: 'rechnung', projectId, ids, silent: true });
-    const id = ids[0];
-    if (!id) continue;
-    updateDoc('documents', id, (d) => ({ ...d, inv: { status: 'offen', items: [], ...(d.inv || {}) } }), 50);
-    made.push(id);
-    if (ai) readInto(id, file);
+// one invoice from one or more pages (photos or a PDF): the first page is the document's file, the others
+// are kept in doc.pages; all pages go to the AI together
+export async function captureInvoice(pages, { projectId = null, ai = true, open = true } = {}) {
+  const ids = [];
+  const multi = pages.length > 1;
+  await uploadFiles([pages[0]], { type: 'rechnung', projectId, ids, silent: true, name: multi ? `Rechnung (${pages.length} Seiten)` : undefined });
+  const id = ids[0];
+  if (!id) return null;
+  const extra = [];
+  for (const f of pages.slice(1)) {
+    const st = await storeFile(f);
+    if (st) extra.push(st);
   }
-  if (made.length && !ai) toast(made.length === 1 ? 'Rechnung abgelegt' : `${made.length} Rechnungen abgelegt`);
+  updateDoc('documents', id, (d) => ({ ...d, autoName: true, pages: extra, inv: { status: 'offen', items: [], ...(d.inv || {}) } }), 50);
+  if (ai) readInto(id, pages);
+  else toast(multi ? `Rechnung mit ${1 + extra.length} Seiten abgelegt` : 'Rechnung abgelegt');
+  if (open) openDrawer({ type: 'invoice', id });
+  return id;
+}
+
+// several files, each its own invoice
+export async function captureInvoices(files, opts = {}) {
+  const made = [];
+  for (const f of files) {
+    const id = await captureInvoice([f], { ...opts, open: false });
+    if (id) made.push(id);
+  }
   if (made.length === 1) openDrawer({ type: 'invoice', id: made[0] });
+  else if (made.length) toast(`${made.length} Rechnungen werden erfasst`);
   return made;
 }
 
+async function pageBlobs(d) {
+  const out = [];
+  for (const pg of pagesOf(d)) {
+    const url = fileUrl(pg);
+    if (!url) return null;
+    out.push(await (await fetch(url)).blob());
+  }
+  return out;
+}
+
 export async function rereadInvoice(d) {
-  const url = fileUrl(d);
-  if (!url) return toast('Die Datei wird noch geladen – bitte gleich noch einmal versuchen.', 'warn');
   try {
-    const blob = await (await fetch(url)).blob();
-    await readInto(d.id, blob);
+    const blobs = await pageBlobs(d);
+    if (!blobs?.length) return toast('Die Seiten werden noch geladen – bitte gleich noch einmal versuchen.', 'warn');
+    await readInto(d.id, blobs);
   } catch {
     toast('Die Datei konnte nicht geladen werden.', 'err');
   }
 }
 
-// ---------- capture buttons ----------
+async function addPages(d, files) {
+  const added = [];
+  for (const f of files) {
+    const st = await storeFile(f);
+    if (st) added.push(st);
+  }
+  if (!added.length) return;
+  updateDoc('documents', d.id, (x) => (x.assetId || x.dataUrl ? { ...x, pages: [...(x.pages || []), ...added] } : { ...x, ...added[0], noFile: false, pages: [...(x.pages || []), ...added.slice(1)] }), 50);
+  toast(added.length === 1 ? 'Seite hinzugefügt – mit „Neu auslesen“ liest die KI alle Seiten.' : `${added.length} Seiten hinzugefügt – mit „Neu auslesen“ liest die KI alle Seiten.`, 'ok', 5000);
+}
+
+async function removePage(d, k) {
+  const pages = pagesOf(d);
+  const pg = pages[k];
+  if (!pg) return;
+  if (pg.assetId) {
+    const a = await getAssets();
+    try {
+      await a?.delete(pg.assetId);
+    } catch {}
+  }
+  const rest = pages.filter((_, j) => j !== k);
+  updateDoc('documents', d.id, (x) => {
+    const [first, ...more] = rest;
+    return { ...x, assetId: first?.assetId || null, dataUrl: first?.dataUrl || undefined, contentType: first?.contentType || x.contentType, noFile: !first, pages: more };
+  }, 50);
+}
+
+// ---------- capture: collect pages, then read them as one invoice ----------
+function PageThumb({ file, n, onRemove }) {
+  const [url, setUrl] = useState(null);
+  useEffect(() => {
+    const u = URL.createObjectURL(file);
+    setUrl(u);
+    return () => URL.revokeObjectURL(u);
+  }, [file]);
+  return (
+    <div className="inv-page">
+      {url ? <img src={url} alt={`Seite ${n}`} /> : null}
+      <span className="inv-page-n">{n}</span>
+      <button type="button" className="inv-page-x" aria-label={`Seite ${n} entfernen`} onClick={onRemove}>
+        <Icon name="x" size={13} />
+      </button>
+    </div>
+  );
+}
+
 export function InvoiceCapture({ projectId = null, compact }) {
   const avail = useAiAvailable();
   const cam = useRef(null);
-  const file = useRef(null);
-  const pick = (e) => {
-    const f = [...e.target.files];
+  const gal = useRef(null);
+  const [pages, setPages] = useState(null); // files of the invoice being collected
+  const [split, setSplit] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const ai = avail !== false;
+  const take = (e) => {
+    const files = [...e.target.files];
     e.target.value = '';
-    if (f.length) captureInvoices(f, { projectId, ai: avail !== false });
+    if (!files.length) return;
+    // PDFs already contain all pages: each one is an invoice of its own
+    const pdfs = files.filter((f) => f.type === 'application/pdf');
+    const imgs = files.filter((f) => f.type !== 'application/pdf');
+    if (pdfs.length) captureInvoices(pdfs, { projectId, ai });
+    if (imgs.length) setPages((p) => [...(p || []), ...imgs]);
+  };
+  const done = async () => {
+    if (!pages?.length) return;
+    setBusy(true);
+    if (split && pages.length > 1) await captureInvoices(pages, { projectId, ai });
+    else await captureInvoice(pages, { projectId, ai });
+    setBusy(false);
+    setPages(null);
+    setSplit(false);
   };
   return (
     <div className={`inv-capture ${compact ? 'is-compact' : ''}`}>
-      <input ref={cam} type="file" accept="image/*" capture="environment" hidden onChange={pick} />
-      <input ref={file} type="file" accept="image/*,application/pdf" multiple hidden onChange={pick} />
-      <Btn kind="primary" icon="camera" onClick={() => cam.current?.click()}>
-        Rechnung fotografieren
-      </Btn>
-      <Btn icon="upload" onClick={() => file.current?.click()}>
-        Foto/PDF hochladen
-      </Btn>
-      <Btn kind="ghost" icon="plus" onClick={() => openDrawer({ type: 'invoice', id: createInvoice({ projectId }) })}>
-        Von Hand
-      </Btn>
-      {!compact ? <p className="small muted">{avail === false ? 'Die KI ist hier nicht verfügbar – trage die Angaben nach dem Hochladen selbst ein.' : 'Die KI liest Absender, Rechnungsnummer, Datum, Fälligkeit, Beträge und Positionen aus, ordnet einen Kontakt und – wenn eindeutig – ein Projekt zu. Prüfe die Angaben danach kurz.'}</p> : null}
+      <input ref={cam} type="file" accept="image/*" capture="environment" hidden onChange={take} />
+      <input ref={gal} type="file" accept="image/*,application/pdf" multiple hidden onChange={take} />
+      {pages ? (
+        <div className="inv-collect panel">
+          <div className="spread">
+            <b>
+              {pages.length} Seite{pages.length === 1 ? '' : 'n'} {split && pages.length > 1 ? `· ${pages.length} einzelne Rechnungen` : '· eine Rechnung'}
+            </b>
+            <button className="link small" onClick={() => setPages(null)}>
+              Abbrechen
+            </button>
+          </div>
+          <div className="inv-pages">
+            {pages.map((f, k) => (
+              <PageThumb key={k + f.name + f.size} file={f} n={k + 1} onRemove={() => setPages(pages.length > 1 ? pages.filter((_, j) => j !== k) : null)} />
+            ))}
+            <button type="button" className="inv-page inv-page-add" onClick={() => cam.current?.click()}>
+              <Icon name="camera" size={20} />
+              <span>Weitere Seite</span>
+            </button>
+          </div>
+          <div className="inv-collect-actions">
+            <Btn small icon="upload" onClick={() => gal.current?.click()}>
+              Aus Galerie ergänzen
+            </Btn>
+            {pages.length > 1 ? (
+              <label className="inv-split">
+                <input type="checkbox" checked={split} onChange={(e) => setSplit(e.target.checked)} /> Jedes Bild ist eine eigene Rechnung
+              </label>
+            ) : null}
+          </div>
+          {ai && pages.length > 5 && !split ? <p className="small muted">Die KI liest die Seiten 1–4 und die letzte Seite (mit den Summen); gespeichert werden alle Seiten.</p> : null}
+          <Btn kind="primary" icon={ai ? 'sparkles' : 'check'} disabled={busy} onClick={done}>
+            {busy ? 'Wird abgelegt …' : ai ? (split && pages.length > 1 ? `${pages.length} Rechnungen auslesen` : pages.length > 1 ? `Fertig – ${pages.length} Seiten auslesen` : 'Fertig – Rechnung auslesen') : 'Fertig – ablegen'}
+          </Btn>
+        </div>
+      ) : (
+        <>
+          <Btn kind="primary" icon="camera" onClick={() => cam.current?.click()}>
+            Rechnung fotografieren
+          </Btn>
+          <Btn icon="upload" onClick={() => gal.current?.click()}>
+            Aus Galerie / PDF
+          </Btn>
+          <Btn kind="ghost" icon="plus" onClick={() => openDrawer({ type: 'invoice', id: createInvoice({ projectId }) })}>
+            Von Hand
+          </Btn>
+          {!compact ? <p className="small muted">{ai ? 'Mehrseitige Rechnungen: Seite für Seite fotografieren oder mehrere Bilder aus der Galerie wählen – alles wird eine Rechnung. Die KI liest Absender, Rechnungsnummer, Datum, Fälligkeit, Beträge und Positionen aus und ordnet Kontakt und – wenn eindeutig – Projekt zu.' : 'Die KI ist hier nicht verfügbar – trage die Angaben nach dem Ablegen selbst ein.'}</p> : null}
+        </>
+      )}
     </div>
   );
 }
@@ -129,7 +256,10 @@ export function InvoiceRow({ d, data, showProject }) {
   const p = d.projectId ? data.projects?.[d.projectId] : null;
   return (
     <button type="button" className={`inv-row ${isOverdue(d) ? 'is-late' : ''}`} onClick={() => openDrawer({ type: 'invoice', id: d.id })}>
-      <span className="inv-thumb">{isImg && url ? <img src={url} alt="" loading="lazy" /> : <Icon name="euro" size={20} />}</span>
+      <span className="inv-thumb">
+        {isImg && url ? <img src={url} alt="" loading="lazy" /> : <Icon name="euro" size={20} />}
+        {(d.pages || []).length ? <span className="inv-thumb-n">{1 + d.pages.length} S.</span> : null}
+      </span>
       <span className="inv-main">
         <b>{busy ? 'Wird ausgelesen …' : invVendor(d, data) || 'Absender unbekannt'}</b>
         <span>
@@ -294,6 +424,55 @@ function Items({ d }) {
   );
 }
 
+// all pages of the invoice: open, add (camera or gallery), remove
+function InvoicePages({ d }) {
+  const cam = useRef(null);
+  const gal = useRef(null);
+  const pages = pagesOf(d);
+  if (!pages.length) return null;
+  const add = (e) => {
+    const f = [...e.target.files].filter((x) => x.type.startsWith('image/') || x.type === 'application/pdf');
+    e.target.value = '';
+    if (f.length) addPages(d, f);
+  };
+  return (
+    <div className="inv-pages-strip">
+      <input ref={cam} type="file" accept="image/*" capture="environment" hidden onChange={add} />
+      <input ref={gal} type="file" accept="image/*,application/pdf" multiple hidden onChange={add} />
+      <span className="field-label">
+        {pages.length} Seite{pages.length === 1 ? '' : 'n'}
+      </span>
+      <div className="inv-pages">
+        {pages.map((pg, k) => {
+          const url = fileUrl(pg);
+          const img = (pg.contentType || '').startsWith('image/');
+          return (
+            <div key={k} className="inv-page">
+              <a href={url || undefined} target="_blank" rel="noopener noreferrer" aria-label={`Seite ${k + 1} öffnen`}>
+                {img && url ? <img src={url} alt={`Seite ${k + 1}`} loading="lazy" /> : <Icon name="file" size={20} />}
+              </a>
+              <span className="inv-page-n">{k + 1}</span>
+              {pages.length > 1 ? (
+                <button type="button" className="inv-page-x" aria-label={`Seite ${k + 1} entfernen`} onClick={() => removePage(d, k)}>
+                  <Icon name="x" size={13} />
+                </button>
+              ) : null}
+            </div>
+          );
+        })}
+        <button type="button" className="inv-page inv-page-add" onClick={() => cam.current?.click()} title="Weitere Seite fotografieren">
+          <Icon name="camera" size={18} />
+          <span>Seite</span>
+        </button>
+        <button type="button" className="inv-page inv-page-add" onClick={() => gal.current?.click()} title="Seiten aus der Galerie hinzufügen">
+          <Icon name="upload" size={18} />
+          <span>Galerie</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function InvoiceDrawer({ data, drawer }) {
   const d = data.documents?.[drawer.id];
   const busy = useReading().get(drawer.id);
@@ -316,12 +495,12 @@ export function InvoiceDrawer({ data, drawer }) {
   const contacts = Object.values(data.contacts || {}).sort((a, b) => contactTitle(a).localeCompare(contactTitle(b)));
   const projects = Object.values(data.projects || {}).filter((x) => !x.archived || x.id === d.projectId);
   const remove = async () => {
-    if (d.assetId) {
-      const a = await getAssets();
-      try {
-        await a?.delete(d.assetId);
-      } catch {}
-    }
+    const a = await getAssets();
+    for (const pg of pagesOf(d))
+      if (pg.assetId)
+        try {
+          await a?.delete(pg.assetId);
+        } catch {}
     deleteDoc('documents', d.id);
     closeDrawer();
     toast('Rechnung gelöscht');
@@ -374,7 +553,7 @@ export function InvoiceDrawer({ data, drawer }) {
               <span>{hasFile ? 'Lädt …' : 'Ohne Beleg'}</span>
               {!hasFile ? (
                 <>
-                  <input ref={fileRef} type="file" accept="image/*,application/pdf" hidden onChange={async (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) { await attachFile(d, f); setDoc({ noFile: false }); if (avail !== false) readInto(d.id, f); } }} />
+                  <input ref={fileRef} type="file" accept="image/*,application/pdf" hidden onChange={async (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) { await addPages(d, [f]); if (avail !== false) readInto(d.id, [f]); } }} />
                   <button className="link small" onClick={() => fileRef.current?.click()}>
                     Beleg anhängen
                   </button>
@@ -391,6 +570,7 @@ export function InvoiceDrawer({ data, drawer }) {
           {i.skonto?.percent ? <span className="small muted">{String(i.skonto.percent).replace('.', ',')} % Skonto{i.skonto.until ? ` bis ${fmtDate(i.skonto.until)}` : ''}</span> : null}
         </div>
       </div>
+      <InvoicePages d={d} />
       {busy ? <div className="callout"><span className="spin-dot" /> {busy}</div> : null}
       {i.summary ? <p className="ai-summary">{i.summary}</p> : null}
       {(i.warnings || []).length ? (

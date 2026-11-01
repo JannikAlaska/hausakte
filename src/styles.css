@@ -1047,3 +1047,19 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .inv-item-sub { grid-column: 1 / -1; font-size: 11.5px; color: var(--ink-3); margin-top: -3px; }
 .warn-text { color: var(--warn-ink); font-weight: 600; }
 .spin-dot { display: inline-block; width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--line-2); border-top-color: var(--accent); animation: spin 0.8s linear infinite; vertical-align: -2px; }
+
+/* multi-page invoices */
+.inv-thumb { position: relative; }
+.inv-thumb-n { position: absolute; right: 2px; bottom: 2px; font-size: 9.5px; font-weight: 700; background: var(--ink); color: var(--surface); border-radius: 5px; padding: 0 4px; line-height: 15px; }
+.inv-collect { flex-basis: 100%; padding: 12px; display: flex; flex-direction: column; gap: 10px; border: 1px solid var(--accent); background: var(--accent-soft); }
+.inv-collect > .btn { align-self: stretch; justify-content: center; }
+.inv-collect-actions { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+.inv-split { display: inline-flex; gap: 6px; align-items: center; font-size: 12.5px; color: var(--ink-2); }
+.inv-pages { display: flex; flex-wrap: wrap; gap: 8px; }
+.inv-page { position: relative; width: 64px; height: 86px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); overflow: hidden; display: grid; place-items: center; color: var(--ink-3); }
+.inv-page img, .inv-page > a { width: 100%; height: 100%; object-fit: cover; display: grid; place-items: center; }
+.inv-page-n { position: absolute; left: 3px; top: 3px; font-size: 10px; font-weight: 700; background: var(--ink); color: var(--surface); border-radius: 5px; padding: 0 5px; line-height: 16px; }
+.inv-page-x { position: absolute; right: 3px; top: 3px; width: 20px; height: 20px; border-radius: 50%; border: 0; background: rgba(0, 0, 0, 0.55); color: #fff; display: grid; place-items: center; padding: 0; }
+.inv-page-add { border-style: dashed; background: transparent; flex-direction: column; display: flex; align-items: center; justify-content: center; gap: 4px; font-size: 11px; cursor: pointer; }
+.inv-page-add:hover { border-color: var(--accent); color: var(--accent-ink); }
+.inv-pages-strip { display: flex; flex-direction: column; gap: 6px; }

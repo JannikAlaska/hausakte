@@ -58,39 +58,46 @@ const readDataUrl = (blob) =>
     r.readAsDataURL(blob);
   });
 
-// Stores files as artifact assets when possible, otherwise as compressed data URLs.
-export async function uploadFiles(files, meta = {}) {
+// Stores one file as artifact asset (or storage object) when possible, otherwise as compressed data URL.
+// Returns the fields to put on a document ({ assetId, contentType, size } or { dataUrl, contentType }) or null.
+export async function storeFile(file, { quiet } = {}) {
   const assets = await getAssets();
   const mode = getState().mode;
+  try {
+    if (assets) {
+      if (!ASSET_TYPES.includes(file.type)) {
+        if (!quiet) toast(`„${file.name}“: Dieser Dateityp wird nicht unterstützt. Lade PDF oder Bilder hoch.`, 'warn', 5000);
+        return null;
+      }
+      const res = await assets.upload(file, { type: file.type });
+      return { assetId: res.id, contentType: res.contentType, size: res.sizeBytes };
+    }
+    let blob = file;
+    if (file.type.startsWith('image/')) blob = await downscaleImage(file, mode === 'db' ? 1100 : 1600, 0.78);
+    const dataUrl = await readDataUrl(blob);
+    const limit = mode === 'db' ? 230000 : 2500000;
+    if (dataUrl.length > limit) {
+      if (!quiet) toast(`„${file.name}“ ist zu groß für diesen Speicher. Öffne die Hausakte in claude.ai als Besitzer, um größere Dateien abzulegen.`, 'warn', 6000);
+      return null;
+    }
+    return { dataUrl, contentType: blob.type || file.type, size: blob.size };
+  } catch (e) {
+    const msg = e?.code === 'too_large' ? 'Datei ist zu groß (max. 20 MB).' : e?.code === 'quota_or_state' ? 'Der Dateispeicher ist voll.' : e?.code === 'unsupported_type' ? 'Dateityp wird nicht unterstützt.' : 'Hochladen fehlgeschlagen.';
+    if (!quiet) toast(`„${file.name}“: ${msg}`, 'err', 5000);
+    return null;
+  }
+}
+
+export async function uploadFiles(files, meta = {}) {
   let ok = 0;
   for (const file of files) {
     const id = uid('d-');
-    const base = { id, name: file.name, type: meta.type || guessType(file), size: file.size, contentType: file.type, projectId: meta.projectId || null, componentId: meta.componentId || null, lineId: meta.lineId || null, contactId: meta.contactId || null, date: todayISO(), notes: '' };
-    try {
-      if (assets) {
-        if (!ASSET_TYPES.includes(file.type)) {
-          toast(`„${file.name}“: Dieser Dateityp wird nicht unterstützt. Lade PDF oder Bilder hoch.`, 'warn', 5000);
-          continue;
-        }
-        const res = await assets.upload(file, { type: file.type });
-        putDoc('documents', id, { ...base, assetId: res.id, contentType: res.contentType, size: res.sizeBytes }, 50);
-      } else {
-        let blob = file;
-        if (file.type.startsWith('image/')) blob = await downscaleImage(file, mode === 'db' ? 1100 : 1600, 0.78);
-        const dataUrl = await readDataUrl(blob);
-        const limit = mode === 'db' ? 230000 : 2500000;
-        if (dataUrl.length > limit) {
-          toast(`„${file.name}“ ist zu groß für diesen Speicher. Öffne die Hausakte in claude.ai als Besitzer, um größere Dateien abzulegen.`, 'warn', 6000);
-          continue;
-        }
-        putDoc('documents', id, { ...base, dataUrl, contentType: blob.type || file.type }, 50);
-      }
-      ok++;
-      meta.ids?.push(id);
-    } catch (e) {
-      const msg = e?.code === 'too_large' ? 'Datei ist zu groß (max. 20 MB).' : e?.code === 'quota_or_state' ? 'Der Dateispeicher ist voll.' : e?.code === 'unsupported_type' ? 'Dateityp wird nicht unterstützt.' : 'Hochladen fehlgeschlagen.';
-      toast(`„${file.name}“: ${msg}`, 'err', 5000);
-    }
+    const base = { id, name: meta.name || file.name, type: meta.type || guessType(file), size: file.size, contentType: file.type, projectId: meta.projectId || null, componentId: meta.componentId || null, lineId: meta.lineId || null, contactId: meta.contactId || null, date: todayISO(), notes: '' };
+    const stored = await storeFile(file);
+    if (!stored) continue;
+    putDoc('documents', id, { ...base, ...stored }, 50);
+    ok++;
+    meta.ids?.push(id);
   }
   if (ok && !meta.silent) toast(ok === 1 ? 'Dokument abgelegt' : `${ok} Dokumente abgelegt`);
   return ok;

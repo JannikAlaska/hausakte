@@ -554,16 +554,20 @@ Format:
 }
 
 // ---------- invoices ----------
-export async function aiReadInvoice(file, d, opts = {}) {
+export async function aiReadInvoice(files, d, opts = {}) {
+  const all = Array.isArray(files) ? files : [files];
+  // at most 5 files per request: the first four pages and the last one (where the totals usually are)
+  const list = all.length > 5 ? [...all.slice(0, 4), all[all.length - 1]] : all;
   const sample = await getSample();
   if (!sample) throw { code: 'not_granted' };
   const lim = await getLimits();
   if (!lim?.images) throw { code: 'images_unavailable' };
-  if (file.type === 'application/pdf' && !(lim.images.mediaTypes || []).includes('application/pdf')) throw { code: 'pdf_unsupported' };
+  if (list.some((f) => f.type === 'application/pdf') && !(lim.images.mediaTypes || []).includes('application/pdf')) throw { code: 'pdf_unsupported' };
+  const pages = list.length > 1 ? `Die ${list.length} Bilder sind Seiten derselben Rechnung in dieser Reihenfolge${all.length > 5 ? ` (Seiten 1–4 und die letzte von ${all.length} Seiten; fehlende Positionen dazwischen in warnings erwähnen)` : ''} – lies sie zusammen aus (Positionen von allen Seiten, Summen meist auf der letzten Seite).\n` : '';
   const projects = Object.values(d.projects || {}).filter((p) => !p.archived).map((p) => `- ${p.id}: ${p.title} (${projectKind(p.kind).name})`).join('\n');
   const contacts = Object.values(d.contacts || {}).map(contactLine).join('\n');
   const prompt = `Das Bild bzw. PDF zeigt eine Rechnung (auch Abschlags-, Schlussrechnung oder Gutschrift) rund um ein Wohnhaus – von Handwerkern, Lieferanten, Versorgern, Beratern oder Behörden. Lies alle Angaben genau aus.
-- total ist der zu zahlende Bruttobetrag; bei Abschlags- oder Schlussrechnungen nach Abzug bereits gezahlter Abschläge (die Abzüge in alreadyPaid).
+${pages}- total ist der zu zahlende Bruttobetrag; bei Abschlags- oder Schlussrechnungen nach Abzug bereits gezahlter Abschläge (die Abzüge in alreadyPaid).
 - Positionen so wie auf der Rechnung (höchstens 40), Betrag je Position so wie aufgeführt.
 - dueDate ist das Fälligkeitsdatum. Steht nur ein Zahlungsziel da (z. B. „zahlbar innerhalb von 14 Tagen“), rechne es ab dem Rechnungsdatum aus. Ohne Angabe: null.
 - Ordne die Rechnung einem Projekt aus der Liste zu, wenn sie eindeutig dazu passt (Gewerk, Leistung, Ort), sonst null.
@@ -579,7 +583,7 @@ ${contacts || 'keine'}
 ${JSON_RULES}
 Format:
 {"isInvoice":true,"kind":"rechnung|abschlag|schluss|gutschrift","vendor":{"company":"Firma","name":"Ansprechpartner oder leer","address":"Straße, PLZ Ort","phone":"","email":"","website":""},"contactId":"ID oder null","number":"Rechnungsnummer","date":"YYYY-MM-DD","dueDate":"YYYY-MM-DD oder null","paymentTerms":"z. B. 14 Tage netto, 2 % Skonto bis …","skonto":{"percent":2,"until":"YYYY-MM-DD"},"net":1000,"vatRate":19,"vat":190,"total":1190,"alreadyPaid":0,"items":[{"label":"Position","qty":1,"unit":"Stk","unitPrice":100,"amount":100}],"iban":"","projectId":"ID oder null","projectReason":"kurz, warum dieses Projekt","summary":"1 Satz, was berechnet wurde","warnings":["Auffälligkeit, z. B. Summe passt nicht zu den Positionen, Mehrwertsteuer fehlt, schon überfällig"]}`;
-  return sample.json(prompt, { images: [file], modelTier: 'default', signal: opts.signal, cache: false });
+  return sample.json(prompt, { images: list, modelTier: 'default', signal: opts.signal, cache: false });
 }
 
 // ---------- chat ----------
