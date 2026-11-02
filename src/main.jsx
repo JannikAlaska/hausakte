@@ -15,6 +15,7 @@ import { DocumentsSheet } from './ui/documents.jsx';
 import { AssistantDrawer } from './ui/assistant.jsx';
 import { ContactDrawer } from './ui/contacts.jsx';
 import { InvoiceDrawer } from './ui/invoices.jsx';
+import { CockpitPage } from './ui/cockpit.jsx';
 import { projectKind, gewerk, roomType } from './catalog.js';
 import { fmtTime, fmtArea } from './util.js';
 import { portfolio, buildingStats, roomArea, liveProjects } from './metrics.js';
@@ -23,6 +24,7 @@ import { isSupabaseMode, getSession, onAuth, signIn, signUp, resetPassword, upda
 const { useEffect, useRef, useMemo, useState, useLayoutEffect } = React;
 
 const VIEWS = [
+  { key: 'cockpit', label: 'Cockpit', icon: 'gauge' },
   { key: 'modell', label: 'Modell', icon: 'cube' },
   { key: 'grundriss', label: 'Grundriss', icon: 'plan' },
   { key: 'gebaeude', label: 'Gebäude', icon: 'building' },
@@ -110,6 +112,11 @@ function SceneView({ data, sceneRef }) {
   useEffect(() => {
     sceneRef.current?.setCompact(ui.mobile);
   }, [ui.mobile]);
+
+  // the cockpit page covers the model completely
+  useEffect(() => {
+    sceneRef.current?.setPaused(ui.view === 'cockpit' && data.loaded && !!data.house);
+  }, [ui.view, data.loaded, !!data.house]);
 
   // highlight what the open drawer is about
   useEffect(() => {
@@ -328,17 +335,49 @@ function SyncButton({ data }) {
   );
 }
 
+// phone: four main areas, the rest behind "Mehr"
+const NAV_MAIN = ['cockpit', 'modell', 'grundriss', 'projekte'];
 function BottomNav() {
   const ui = useUI();
+  const [more, setMore] = useState(false);
+  const extra = VIEWS.filter((v) => !NAV_MAIN.includes(v.key));
+  const cur = extra.find((v) => v.key === ui.view);
+  useEffect(() => {
+    if (!more) return;
+    const onKey = (e) => e.key === 'Escape' && setMore(false);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [more]);
+  const pick = (k) => {
+    setMore(false);
+    go(k);
+  };
   return (
-    <nav className="bottomnav" aria-label="Bereiche">
-      {VIEWS.map((v) => (
-        <button key={v.key} className={ui.view === v.key ? 'is-on' : ''} aria-current={ui.view === v.key ? 'page' : undefined} onClick={() => go(v.key)}>
-          <Icon name={v.icon} size={20} />
-          <span>{v.label}</span>
+    <>
+      {more ? <div className="more-backdrop" onClick={() => setMore(false)} /> : null}
+      {more ? (
+        <div className="more-menu" role="menu" aria-label="Weitere Bereiche">
+          {extra.map((v) => (
+            <button key={v.key} role="menuitem" className={ui.view === v.key ? 'is-on' : ''} onClick={() => pick(v.key)}>
+              <Icon name={v.icon} size={20} />
+              <span>{v.label}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+      <nav className="bottomnav" aria-label="Bereiche">
+        {VIEWS.filter((v) => NAV_MAIN.includes(v.key)).map((v) => (
+          <button key={v.key} className={ui.view === v.key ? 'is-on' : ''} aria-current={ui.view === v.key ? 'page' : undefined} onClick={() => pick(v.key)}>
+            <Icon name={v.icon} size={20} />
+            <span>{v.label}</span>
+          </button>
+        ))}
+        <button className={cur || more ? 'is-on' : ''} aria-haspopup="menu" aria-expanded={more} aria-current={cur ? 'page' : undefined} onClick={() => setMore(!more)}>
+          <Icon name={cur ? cur.icon : 'more'} size={20} />
+          <span>{cur ? cur.label : 'Mehr'}</span>
         </button>
-      ))}
-    </nav>
+      </nav>
+    </>
   );
 }
 
@@ -648,6 +687,7 @@ function App() {
               <SelectionCard data={data} />
             </>
           ) : null}
+          {ui.view === 'cockpit' ? <CockpitPage data={data} /> : null}
           {ui.view === 'grundriss' ? <PlanEditor data={data} sceneRef={sceneRef} /> : null}
           {ui.view === 'gebaeude' ? <BuildingSheet data={data} /> : null}
           {ui.view === 'projekte' ? <ProjectsSheet data={data} /> : null}

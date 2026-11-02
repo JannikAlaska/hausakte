@@ -1846,7 +1846,16 @@ export class HouseScene {
     this.camera.updateProjectionMatrix();
   }
 
+  // the cockpit covers the model: stop rendering until it is visible again
+  setPaused(on) {
+    on = !!on;
+    if (on === !!this.paused) return;
+    this.paused = on;
+    if (!on) this.clock.getDelta();
+  }
+
   tick() {
+    if (this.paused) return;
     const dt = Math.min(0.05, this.clock.getDelta());
     const t = this.clock.elapsedTime;
     const k = 1 - Math.exp(-dt * 7);

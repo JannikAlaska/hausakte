@@ -6,7 +6,7 @@ import { useDictation, SpeechRec } from './meetings.jsx';
 import { addNote, updateNote, deleteNote } from '../actions.js';
 import { fmtDate, todayISO, isISO } from '../util.js';
 
-const { useState } = React;
+const { useState, useEffect } = React;
 
 export function NotesPanel({ data }) {
   const [composer, setComposer] = useState(false);
@@ -44,10 +44,15 @@ export function NotesPanel({ data }) {
   );
 }
 
-function NoteComposer({ onClose }) {
+// autoStart: the cockpit's "Notiz sprechen" starts dictation right away
+export function NoteComposer({ onClose, autoStart }) {
   const [title, setTitle] = useState('');
   const [date, setDate] = useState(todayISO());
   const dict = useDictation(() => toast('Das Mikrofon ist für diese Seite nicht freigegeben – tippe die Notiz ein.', 'warn', 6000));
+  useEffect(() => {
+    if (autoStart && SpeechRec) dict.start('');
+    return () => dict.stop();
+  }, []);
   const save = () => {
     const t = dict.text.trim();
     if (!t && !title.trim()) return;

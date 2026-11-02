@@ -160,11 +160,15 @@ function PageThumb({ file, n, onRemove }) {
   );
 }
 
-export function InvoiceCapture({ projectId = null, compact }) {
+// initialPages/onClose: used by the cockpit, which takes the first photo itself and only shows the page collector
+export function InvoiceCapture({ projectId = null, compact, initialPages = null, onClose }) {
   const avail = useAiAvailable();
   const cam = useRef(null);
   const gal = useRef(null);
-  const [pages, setPages] = useState(null); // files of the invoice being collected
+  const [pages, setPages] = useState(initialPages); // files of the invoice being collected
+  useEffect(() => {
+    if (onClose && !pages) onClose();
+  }, [pages]);
   const [split, setSplit] = useState(false);
   const [busy, setBusy] = useState(false);
   const ai = avail !== false;
@@ -191,7 +195,7 @@ export function InvoiceCapture({ projectId = null, compact }) {
     <div className={`inv-capture ${compact ? 'is-compact' : ''}`}>
       <input ref={cam} type="file" accept="image/*" capture="environment" hidden onChange={take} />
       <input ref={gal} type="file" accept="image/*,application/pdf" multiple hidden onChange={take} />
-      {pages ? (
+      {!pages && onClose ? null : pages ? (
         <div className="inv-collect panel">
           <div className="spread">
             <b>

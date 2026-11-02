@@ -1,7 +1,7 @@
 // UI state shared across components (current view, 3D mode, selection, drawer, toasts).
 import { getState, subscribe } from '../store.js';
 
-const VIEWS = ['modell', 'grundriss', 'gebaeude', 'projekte', 'verbrauch', 'dokumente'];
+const VIEWS = ['cockpit', 'modell', 'grundriss', 'gebaeude', 'projekte', 'verbrauch', 'dokumente'];
 
 let ui = {
   view: viewFromHash(),
@@ -33,13 +33,13 @@ export function setUI(patch) {
 }
 
 function viewFromHash() {
-  if (typeof location === 'undefined') return 'modell';
+  if (typeof location === 'undefined') return 'cockpit';
   const h = location.hash.replace('#', '');
-  return VIEWS.includes(h) ? h : 'modell';
+  return VIEWS.includes(h) ? h : 'cockpit';
 }
 
 export function go(view) {
-  if (!VIEWS.includes(view)) view = 'modell';
+  if (!VIEWS.includes(view)) view = 'cockpit';
   setUI({ view });
   try {
     if (location.hash !== '#' + view) history.replaceState(null, '', '#' + view);
