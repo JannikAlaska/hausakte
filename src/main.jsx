@@ -19,7 +19,7 @@ import { CockpitPage } from './ui/cockpit.jsx';
 import { projectKind, gewerk, roomType } from './catalog.js';
 import { fmtTime, fmtArea } from './util.js';
 import { portfolio, buildingStats, roomArea, liveProjects } from './metrics.js';
-import { isSupabaseMode, getSession, onAuth, signIn, signUp, resetPassword, updatePassword, authErrorText, realtimeStatus, onRealtime } from './supa.js';
+import { isSupabaseMode, getSession, onAuth, signIn, signUp, resetPassword, updatePassword, authErrorText, realtimeStatus, onRealtime, storedUser } from './supa.js';
 
 const { useEffect, useRef, useMemo, useState, useLayoutEffect } = React;
 
@@ -293,9 +293,16 @@ function SyncButton({ data }) {
   useEffect(() => {
     if (data.syncNote) toast(data.syncNote.text, 'ok', 5000);
   }, [data.syncNote?.at]);
+  // started with the offline copy and the server has not answered for a while
+  const [stale, setStale] = useState(false);
+  useEffect(() => {
+    if (!data.fromCache) return setStale(false);
+    const t = setTimeout(() => setStale(true), 3000);
+    return () => clearTimeout(t);
+  }, [data.fromCache]);
   const busy = data.saving > 0;
-  const st = !online ? 'offline' : data.mode === 'local' ? 'local' : data.syncing ? 'syncing' : busy ? 'saving' : supaMode && rt === 'down' ? 'reconnect' : 'ok';
-  const label = { offline: 'Offline', local: 'Nur lokal', syncing: 'Abgleich …', saving: 'Speichert …', reconnect: 'Abgleichen', ok: 'Synchron' }[st];
+  const st = !online || (data.waiting && !data.syncing) || (stale && data.fromCache) ? 'offline' : data.mode === 'local' ? 'local' : data.syncing ? 'syncing' : busy ? 'saving' : supaMode && rt === 'down' ? 'reconnect' : 'ok';
+  const label = { offline: data.waiting ? `Offline · ${data.waiting}` : 'Offline', local: 'Nur lokal', syncing: 'Abgleich …', saving: 'Speichert …', reconnect: 'Abgleichen', ok: 'Synchron' }[st];
   const ago = (t) => {
     if (!t) return null;
     const m = Math.round((Date.now() - t) / 60000);
@@ -308,6 +315,8 @@ function SyncButton({ data }) {
     data.lastSaved ? `Zuletzt gespeichert: ${ago(data.lastSaved)}.` : null,
     st === 'reconnect' ? 'Live-Verbindung unterbrochen.' : null,
     !online ? 'Keine Internetverbindung – Änderungen werden gespeichert, sobald du wieder online bist.' : null,
+    data.waiting ? `${data.waiting} ${data.waiting === 1 ? 'Änderung wartet' : 'Änderungen warten'} auf die Verbindung und ${data.waiting === 1 ? 'wird' : 'werden'} dann automatisch gespeichert.` : null,
+    data.fromCache ? `Angezeigt wird der auf diesem Gerät gespeicherte Stand vom ${fmtTime(data.fromCache)}.` : null,
     data.mode !== 'local' ? 'Tippen zum Synchronisieren.' : null,
   ].filter(Boolean).join(' ');
   const run = async () => {
@@ -430,6 +439,22 @@ function Welcome({ onDone }) {
   );
 }
 
+// started without a connection and nothing stored on this device yet
+function OfflineStart() {
+  return (
+    <div className="welcome" role="alert" aria-label="Keine Verbindung">
+      <span className="brand-mark" style={{ width: 44, height: 44, borderRadius: 13 }}>
+        <Icon name="home" size={24} stroke={2} />
+      </span>
+      <h1>Keine Verbindung</h1>
+      <p>Die Hausakte konnte nicht geladen werden und auf diesem Gerät ist noch kein Stand gespeichert. Sobald du wieder online bist, lädt sie automatisch.</p>
+      <Btn kind="primary" icon="refresh" onClick={() => location.reload()}>
+        Erneut versuchen
+      </Btn>
+    </div>
+  );
+}
+
 function Banners({ data }) {
   const ui = useUI();
   const [hideEx, setHideEx] = useState(false);
@@ -525,9 +550,12 @@ function useAuth() {
       if (ev === 'SIGNED_OUT') return setAuth({ status: 'out' });
       if (session) setAuth((a) => (a.status === 'recovery' ? a : { status: 'in' }));
     });
-    getSession()
-      .then((s) => alive && setAuth((a) => (a.status === 'recovery' || a.status === 'in' ? a : { status: s ? 'in' : 'out' })))
-      .catch(() => alive && setAuth({ status: 'out' }));
+    // without a connection the session cannot be refreshed: whoever was signed in on this device
+    // keeps working with the offline copy
+    const offlineUser = () => (typeof navigator !== 'undefined' && navigator.onLine === false) || !!storedUser();
+    Promise.race([getSession(), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 4000))])
+      .then((s) => alive && setAuth((a) => (a.status === 'recovery' || a.status === 'in' ? a : { status: s ? 'in' : navigator.onLine === false && storedUser() ? 'in' : 'out' })))
+      .catch(() => alive && setAuth((a) => (a.status === 'recovery' || a.status === 'in' ? a : { status: offlineUser() && storedUser() ? 'in' : 'out' })));
     return () => {
       alive = false;
       off();
@@ -698,7 +726,7 @@ function App() {
           <Banners data={data} />
         </>
       ) : null}
-      {ready && !hasHouse ? <Welcome /> : null}
+      {ready && !hasHouse ? data.mode === 'db' && !data.serverOk ? <OfflineStart /> : <Welcome /> : null}
       {!ready ? (
         <div className="banner" role="status">
           <span className="dots">

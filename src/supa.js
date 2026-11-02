@@ -30,6 +30,20 @@ export async function getSession() {
   const { data } = await supa().auth.getSession();
   return data.session;
 }
+// the signed-in user as remembered on this device - available offline, when the session cannot be refreshed
+export function storedUser() {
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (/^sb-.*-auth-token$/.test(k)) {
+        const v = JSON.parse(localStorage.getItem(k) || 'null');
+        const u = v?.user || v?.currentSession?.user;
+        if (u?.id) return { id: u.id };
+      }
+    }
+  } catch {}
+  return null;
+}
 export function onAuth(fn) {
   const { data } = supa().auth.onAuthStateChange((ev, session) => fn(session, ev));
   return () => data.subscription.unsubscribe();
@@ -69,8 +83,9 @@ export async function updatePassword(password) {
 // ---------- document store with the same surface store.js uses from the artifact db ----------
 // Every row carries updated_at (set by a trigger). It is used as a version stamp: writes only go through
 // when the row still has the stamp this device last saw, otherwise store.js merges and retries.
-function snapshotOf(changes, fromCache = false) {
-  return { docChanges: () => changes, metadata: { fromCache, hasPendingWrites: false } };
+// initial: the complete collection as first loaded (live changes come one by one)
+function snapshotOf(changes, fromCache = false, initial = false) {
+  return { docChanges: () => changes, metadata: { fromCache, hasPendingWrites: false, initial } };
 }
 const docSnap = (row) => ({ id: row.id, exists: true, data: () => row.data, stamp: row.updated_at || null });
 
@@ -170,7 +185,7 @@ export function supaDb() {
             } catch (e) {
               return onError?.(e);
             }
-            if (alive) next(snapshotOf(rows.map((r) => ({ type: 'added', doc: docSnap(r) }))));
+            if (alive) next(snapshotOf(rows.map((r) => ({ type: 'added', doc: docSnap(r) })), false, true));
           })();
           return () => {
             alive = false;

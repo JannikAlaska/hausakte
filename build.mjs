@@ -3,6 +3,7 @@
 import * as esbuild from 'esbuild';
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { createTemplate } from './src/template.js';
 
 const root = path.dirname(new URL(import.meta.url).pathname);
@@ -70,9 +71,8 @@ fs.writeFileSync(path.join(dist, 'test.html'), skeleton(test));
 // The publishable key is meant for browsers; access is enforced by row level security.
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://kowakeiwjrwiqoshwiun.supabase.co';
 const SUPABASE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_au_XPVxgIjzU4rrQa7Ev9Q_RgEl29ki';
-const ICON =
-  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23c2410c'/%3E%3Cpath d='M16 31 32 18l16 13v15a2 2 0 0 1-2 2H38V37H26v11h-8a2 2 0 0 1-2-2z' fill='none' stroke='%23fff' stroke-width='4' stroke-linejoin='round'/%3E%3C/svg%3E";
-function webDoc({ supabase, ...libs }) {
+// installable app (PWA): manifest, icons and service worker come from public/
+function webDoc({ supabase, sw = true, ...libs }) {
   const head = `
 <script>window.HAUSAKTE_CONFIG = ${JSON.stringify({ supabaseUrl: SUPABASE_URL, supabaseKey: SUPABASE_KEY })};</script>
 <script src="${supabase}"></script>`;
@@ -83,12 +83,20 @@ function webDoc({ supabase, ...libs }) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#f4efe8" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#16130f" media="(prefers-color-scheme: dark)">
-<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1c2131" media="(prefers-color-scheme: dark)">
 <meta name="robots" content="noindex">
-<link rel="icon" href="${ICON}">
-${html.slice(0, at)}</head>
+<meta name="application-name" content="Hausakte">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Hausakte">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="format-detection" content="telephone=no">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+<link rel="icon" href="/icons/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+${sw ? `<script>if ('serviceWorker' in navigator && window.isSecureContext && !/^(127\\.|localhost$)/.test(location.hostname)) addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));</script>\n` : ''}${html.slice(0, at)}</head>
 <body>
 ${html.slice(at)}</body>
 </html>
@@ -96,16 +104,40 @@ ${html.slice(at)}</body>
 }
 const web = path.join(root, 'web');
 fs.mkdirSync(web, { recursive: true });
-fs.writeFileSync(
-  path.join(web, 'index.html'),
-  webDoc({
-    supabase: 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js',
-    react: 'https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js',
-    reactDom: 'https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js',
-    three: 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js',
-    addons: 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/',
-  }),
-);
+const WEB_LIBS = {
+  supabase: 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js',
+  react: 'https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js',
+  reactDom: 'https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js',
+  three: 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js',
+  addons: 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/',
+};
+fs.writeFileSync(path.join(web, 'index.html'), webDoc(WEB_LIBS));
+// every three.js addon the code imports, for the service worker's offline copy
+const addonFiles = new Set();
+const scan = (dir) => {
+  for (const f of fs.readdirSync(dir)) {
+    const p = path.join(dir, f);
+    if (fs.statSync(p).isDirectory()) scan(p);
+    else if (/\.(js|jsx)$/.test(f)) for (const m of fs.readFileSync(p, 'utf8').matchAll(/from 'three\/addons\/([^']+)'/g)) addonFiles.add(m[1]);
+  }
+};
+scan(path.join(root, 'src'));
+const LIB_URLS = [WEB_LIBS.supabase, WEB_LIBS.react, WEB_LIBS.reactDom, WEB_LIBS.three, ...[...addonFiles].map((f) => WEB_LIBS.addons + f), FONTS];
+// static files of the installed app; the service worker gets the build hash so a new build replaces its cache
+const pub = path.join(root, 'public');
+const copyDir = (from, to) => {
+  fs.mkdirSync(to, { recursive: true });
+  for (const f of fs.readdirSync(from)) {
+    const a = path.join(from, f),
+      b = path.join(to, f);
+    if (fs.statSync(a).isDirectory()) copyDir(a, b);
+    else fs.copyFileSync(a, b);
+  }
+};
+copyDir(pub, web);
+const version = crypto.createHash('sha256').update(fs.readFileSync(path.join(web, 'index.html'))).digest('hex').slice(0, 12);
+fs.writeFileSync(path.join(web, 'sw.js'), fs.readFileSync(path.join(pub, 'sw.js'), 'utf8').replace('__VERSION__', version).replace('__LIBS__', JSON.stringify(LIB_URLS, null, 1)));
+
 // local test of the self-hosted site against a mock client (see scripts in the scratchpad)
 fs.writeFileSync(
   path.join(dist, 'test-web.html'),

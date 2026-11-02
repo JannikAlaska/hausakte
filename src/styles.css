@@ -1222,6 +1222,23 @@ button.ck-rm-row:hover .ck-rm-name { color: var(--accent-ink); }
 .ck-floor-short { font-weight: 700; text-align: center; background: var(--surface-2); border-radius: 7px; padding: 3px 0; }
 .ck-floor b { font-variant-numeric: tabular-nums; }
 
+.ck-install { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 14px 16px; border-radius: 16px; border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); background: var(--accent-soft); }
+.ck-install img { width: 44px; height: 44px; border-radius: 11px; flex: none; }
+.ck-install-txt { display: flex; flex-direction: column; gap: 2px; flex: 1 1 320px; min-width: 0; }
+.ck-install-txt > span { font-size: 13px; color: var(--ink-2); }
+.ck-install-txt b { color: var(--ink); }
+.ck-share { vertical-align: -2px; margin: 0 3px; color: var(--info); }
+.ck-install-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.ck-capture { display: flex; flex-direction: column; gap: 10px; }
+
+/* installed app: no rubber-band scrolling or tap flashes, nothing selectable by accident */
+html, body { overscroll-behavior: none; }
+.cockpit, .sheet-body, .drawer-body { overscroll-behavior: contain; }
+button, a { -webkit-tap-highlight-color: transparent; }
+@media (display-mode: standalone) {
+  button, .tab, .chip, .view-btn { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+}
+
 /* phone menu "Mehr" */
 .more-backdrop { display: none; }
 .more-menu { display: none; }
@@ -1232,6 +1249,7 @@ button.ck-rm-row:hover .ck-rm-name { color: var(--accent-ink); }
   .ck-grid, .ck-main, .ck-side { display: contents; }
   .ck-hero { order: 1; }
   .ck-panel { order: 2; }
+  .ck-install { order: 2; }
   .ck-kpis { order: 3; }
   .ck-agenda { order: 4; }
   .ck-attn { order: 5; }

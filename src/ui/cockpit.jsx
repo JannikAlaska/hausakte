@@ -11,6 +11,7 @@ import { liveProjects, isDone } from '../metrics.js';
 import { ENERGY_CLASSES } from '../catalog.js';
 import { invOf, invOpen, invTotal, invVendor, isOverdue } from '../invoices.js';
 import { patchProject } from '../actions.js';
+import { useInstall, takeShortcut } from '../pwa.js';
 import { fmtEuro, fmtNum, todayISO, uid } from '../util.js';
 
 const { useState, useMemo, useRef, useEffect } = React;
@@ -37,6 +38,11 @@ export function CockpitPage({ data }) {
   const today = todayISO();
   const [panel, setPanel] = useState(null);
   const cam = useRef(null);
+  // started from an app shortcut
+  useEffect(() => {
+    const a = takeShortcut();
+    if (a) setPanel(a === 'notiz' ? 'note' : a === 'todo' ? 'todo' : 'capture');
+  }, []);
   const v = useMemo(
     () => ({
       head: headline(data, today),
@@ -97,8 +103,19 @@ export function CockpitPage({ data }) {
             {panel === 'note' ? <NoteComposer autoStart onClose={() => setPanel(null)} /> : null}
             {panel === 'todo' ? <TodoComposer data={data} onClose={() => setPanel(null)} /> : null}
             {panel?.type === 'invoice' ? <InvoiceCapture initialPages={panel.files} onClose={() => setPanel(null)} /> : null}
+            {panel === 'capture' ? (
+              <div className="panel ck-capture">
+                <div className="spread">
+                  <h3>Rechnung erfassen</h3>
+                  <IconBtn icon="x" label="Schließen" onClick={() => setPanel(null)} />
+                </div>
+                <InvoiceCapture compact />
+              </div>
+            ) : null}
           </div>
         ) : null}
+
+        <InstallHint />
 
         <Kpis v={v} />
 
@@ -115,6 +132,52 @@ export function CockpitPage({ data }) {
             <House floors={v.floors} />
           </aside>
         </div>
+      </div>
+    </section>
+  );
+}
+
+// offer to install the web version as an app (Android: system dialog, iPad/iPhone: instructions)
+function InstallHint() {
+  const { mode, prompt, dismiss } = useInstall();
+  const [busy, setBusy] = useState(false);
+  if (!mode) return null;
+  return (
+    <section className="ck-install" aria-label="Als App installieren">
+      <img src="/icons/icon-192.png" alt="" width="44" height="44" />
+      <div className="ck-install-txt">
+        <b>Hausakte als App installieren</b>
+        {mode === 'prompt' ? (
+          <span>Eigenes Symbol auf dem Startbildschirm, Vollbild ohne Adressleiste – und der letzte Stand ist auch ohne Netz da.</span>
+        ) : (
+          <span>
+            In Safari oben auf <b>Teilen</b>
+            <svg className="ck-share" viewBox="0 0 24 24" width="15" height="15" aria-label="Teilen-Symbol" role="img">
+              <path d="M12 3v12M8 7l4-4 4 4M6 11H5v10h14V11h-1" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            tippen, dann <b>„Zum Home-Bildschirm“</b>. Danach startet die Hausakte wie eine App – im Vollbild und mit dem letzten Stand auch ohne Netz.
+          </span>
+        )}
+      </div>
+      <div className="ck-install-actions">
+        {mode === 'prompt' ? (
+          <Btn
+            kind="primary"
+            icon="download"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              const ok = await prompt();
+              setBusy(false);
+              if (ok) toast('Die Hausakte wird als App installiert.');
+            }}
+          >
+            Installieren
+          </Btn>
+        ) : null}
+        <Btn kind="ghost" onClick={dismiss}>
+          {mode === 'prompt' ? 'Später' : 'Ausblenden'}
+        </Btn>
       </div>
     </section>
   );

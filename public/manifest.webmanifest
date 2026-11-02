@@ -1,0 +1,27 @@
+{
+  "id": "/",
+  "name": "Hausakte",
+  "short_name": "Hausakte",
+  "description": "Dein Haus als 3D-Modell mit Grundrissen, Projekten, Rechnungen und Dokumenten – für die Modernisierung.",
+  "lang": "de",
+  "dir": "ltr",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#eceef6",
+  "theme_color": "#ffffff",
+  "categories": ["productivity", "lifestyle"],
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Rechnung fotografieren", "short_name": "Rechnung", "url": "/?aktion=rechnung#cockpit", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Notiz sprechen", "short_name": "Notiz", "url": "/?aktion=notiz#cockpit", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "To-do anlegen", "short_name": "To-do", "url": "/?aktion=todo#cockpit", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Grundriss", "url": "/#grundriss", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] }
+  ]
+}

@@ -2,7 +2,7 @@
 // localStorage. Local state is authoritative while a write for a document is queued or in flight.
 
 import { deepClone } from './util.js';
-import { isSupabaseMode, supaDb, supaAssets, cachedFileUrl, onFileUrls, reconnectRealtime } from './supa.js';
+import { isSupabaseMode, supaDb, supaAssets, cachedFileUrl, onFileUrls, reconnectRealtime, getSession, storedUser } from './supa.js';
 
 export const COLLECTIONS = ['house', 'floors', 'components', 'projects', 'readings', 'documents', 'underlays', 'notes', 'contacts'];
 const LS_KEY = 'hausakte-v1';
@@ -27,6 +27,9 @@ let state = {
   syncing: false,
   lastSync: null, // last successful check against the server (Supabase mode)
   syncNote: null, // { text, at } - e.g. changes from another device merged into a save
+  serverOk: false, // Supabase mode: the server answered at least once since start
+  fromCache: null, // Supabase mode: time of the offline copy shown until the server answers
+  waiting: 0, // Supabase mode: changes saved on this device that wait for a connection
 };
 const listeners = new Set();
 export const getState = () => state;
@@ -98,6 +101,7 @@ export function merge3(base, local, remote, depth = 0) {
 }
 
 function applyLocal(col, id, data) {
+  saveCacheSoon();
   if (col === 'house') {
     state = { ...state, house: data };
   } else {
@@ -176,7 +180,9 @@ function flush(path) {
     try {
       await write();
       setState({ lastSaved: Date.now(), error: null });
+      if (entry.waiting || state.waiting) setState({ waiting: [...pending.values()].filter((x) => x.waiting).length });
     } catch (e) {
+      if (isConnectionError(e)) return requeue(path, entry);
       if (e?.code === 'unavailable') {
         await new Promise((r) => setTimeout(r, 800 + Math.random() * 800));
         try {
@@ -204,6 +210,18 @@ function flush(path) {
   });
 }
 
+// no connection: keep the change and send it when the device is online again
+const isConnectionError = (e) => (typeof navigator !== 'undefined' && navigator.onLine === false) || /failed to fetch|networkerror|network request failed|load failed|fetch failed|err_internet|timeout/i.test(String(e?.message || e || ''));
+function requeue(path, entry) {
+  if (!pending.has(path)) pending.set(path, { ...entry, timer: null, waiting: true });
+  const waiting = [...pending.values()].filter((x) => x.waiting).length;
+  setState({ waiting, error: null });
+  saveCacheSoon();
+}
+export function retryWaiting() {
+  for (const [path, x] of [...pending]) if (x.waiting && !x.timer) flush(path);
+}
+
 // a save was merged with changes from another device: show the merged version (and keep newer local edits)
 function adoptMerged(entry, merged) {
   const path = pathOf(entry.col, entry.id);
@@ -218,6 +236,93 @@ export function flushAll() {
     clearTimeout(pending.get(path).timer);
     flush(path);
   }
+}
+
+// ---------- offline copy (Supabase mode) ----------
+// The last known state is kept in IndexedDB per user: the app starts with it at once (also without a
+// connection) and replaces it with the server's data as soon as that arrives. Changes that could not
+// be sent yet are stored with it and sent after the next start.
+const IDB = 'hausakte-cache';
+let cacheKey = null;
+let cacheTimer = null;
+function idbOpen() {
+  return new Promise((res, rej) => {
+    if (typeof indexedDB === 'undefined') return rej(new Error('no indexedDB'));
+    const r = indexedDB.open(IDB, 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('snap');
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+async function idbDo(mode, fn) {
+  const d = await idbOpen();
+  try {
+    return await new Promise((res, rej) => {
+      const tx = d.transaction('snap', mode);
+      const req = fn(tx.objectStore('snap'));
+      tx.oncomplete = () => res(req?.result);
+      tx.onerror = () => rej(tx.error);
+      tx.onabort = () => rej(tx.error);
+    });
+  } finally {
+    d.close();
+  }
+}
+// written when things are quiet (dragging in the floor plan changes the state many times a second)
+function saveCacheSoon() {
+  if (!cacheKey || state.mode !== 'db') return;
+  clearTimeout(cacheTimer);
+  cacheTimer = setTimeout(() => (typeof requestIdleCallback === 'function' ? requestIdleCallback(writeCache, { timeout: 2000 }) : writeCache()), 2000);
+}
+function writeCache() {
+  if (!cacheKey) return;
+  const data = {};
+  for (const c of COLLECTIONS) data[c] = c === 'house' ? state.house : state[c];
+  const dirty = {};
+  for (const [path, x] of pending) dirty[path] = { col: x.col, id: x.id, data: x.data, base: bases.get(path) ?? null };
+  for (const path of inflight) if (!dirty[path]) {
+    const [col, id] = [path.slice(0, path.indexOf('/')), path.slice(path.indexOf('/') + 1)];
+    dirty[path] = { col, id, data: col === 'house' ? state.house : state[col]?.[id] ?? null, base: bases.get(path) ?? null };
+  }
+  const snap = { v: 1, at: Date.now(), data, stamps: [...stamps], dirty };
+  idbDo('readwrite', (st) => st.put(snap, cacheKey)).catch(() => {});
+}
+async function readCache() {
+  try {
+    return cacheKey ? await idbDo('readonly', (st) => st.get(cacheKey)) : null;
+  } catch {
+    return null;
+  }
+}
+// on sign-out: nothing of the house stays on the device
+export async function clearOfflineCopy() {
+  clearTimeout(cacheTimer);
+  cacheKey = null;
+  try {
+    await idbDo('readwrite', (st) => st.clear());
+  } catch {}
+}
+function applyCache(snap) {
+  const patch = { fromCache: snap.at, loaded: true };
+  for (const c of COLLECTIONS) patch[c] = snap.data?.[c] ?? (c === 'house' ? null : {});
+  for (const [path, stamp] of snap.stamps || []) stamps.set(path, stamp);
+  for (const c of COLLECTIONS) {
+    if (c === 'house') {
+      if (patch.house) bases.set(pathOf('house', 'main'), patch.house);
+    } else for (const [id, d] of Object.entries(patch[c] || {})) bases.set(pathOf(c, id), d);
+  }
+  state = { ...state, ...patch };
+  // changes that had not reached the server: send them again (conflicts are merged as usual)
+  const dirty = Object.entries(snap.dirty || {});
+  dirty.forEach(([path, x], i) => {
+    if (x.base != null) bases.set(path, x.base);
+    else bases.delete(path);
+    const entry = { col: x.col, id: x.id, data: x.data, timer: null, waiting: true };
+    entry.timer = setTimeout(() => flush(path), 1500 + i * 60);
+    pending.set(path, entry);
+  });
+  if (dirty.length) state = { ...state, waiting: dirty.length, saving: pending.size };
+  emit();
 }
 
 // ---------- public mutations ----------
@@ -297,9 +402,10 @@ function startLocal() {
   setState(patch);
 }
 
-function startDb(d) {
+function startDb(d, cached) {
   db = d;
   setState({ mode: 'db' });
+  if (cached?.data) applyCache(cached);
   const loaded = new Set();
   const markLoaded = (c) => {
     loaded.add(c);
@@ -312,6 +418,23 @@ function startDb(d) {
     db.collection(col).onSnapshot(
       (snap) => {
         let changed = false;
+        // the server's complete collection: drop what only the offline copy had
+        if (snap.metadata?.initial) {
+          const there = new Set(snap.docChanges().map((ch) => ch.doc.id));
+          const ids = col === 'house' ? (state.house ? ['main'] : []) : Object.keys(state[col] || {});
+          for (const id of ids) {
+            const path = pathOf(col, id);
+            if (there.has(id) || pending.has(path) || inflight.has(path)) continue;
+            applyLocal(col, id, null);
+            stamps.delete(path);
+            bases.delete(path);
+            changed = true;
+          }
+          if (!state.serverOk) {
+            state = { ...state, serverOk: true, fromCache: null };
+            changed = true;
+          }
+        }
         for (const ch of snap.docChanges()) {
           const id = ch.doc.id;
           const path = pathOf(col, id);
@@ -407,7 +530,8 @@ export function resync({ manual = false } = {}) {
           changed++;
         }
       }
-      setState({ syncing: false, lastSync: Date.now() });
+      setState({ syncing: false, lastSync: Date.now(), serverOk: true, fromCache: null });
+      retryWaiting();
       return { changed, supported: true };
     } catch (e) {
       setState({ syncing: false });
@@ -438,7 +562,10 @@ function startAutoSync() {
   });
   window.addEventListener('online', () => {
     reconnectRealtime();
+    retryWaiting();
     autoSync('online');
+    // started without a connection and without an offline copy: load everything now
+    if (!state.serverOk && !state.house) setTimeout(() => location.reload(), 600);
   });
   window.addEventListener('focus', () => autoSync('focus'));
   window.addEventListener('pageshow', (e) => e.persisted && autoSync('visible'));
@@ -451,7 +578,14 @@ export async function initStore() {
   started = true;
   if (isSupabaseMode()) {
     onFileUrls(() => setState({ fileTick: state.fileTick + 1 }));
-    startDb(supaDb());
+    // offline copy of this user (the session may not be refreshable without a connection)
+    let uid = null;
+    try {
+      uid = (await Promise.race([getSession(), new Promise((r) => setTimeout(() => r(null), 2500))]))?.user?.id || null;
+    } catch {}
+    uid = uid || storedUser()?.id || null;
+    cacheKey = uid ? 'snap:' + uid : null;
+    startDb(supaDb(), await readCache());
     return startAutoSync();
   }
   const hasClaude = typeof window !== 'undefined' && window.claude && typeof window.claude.use === 'function';

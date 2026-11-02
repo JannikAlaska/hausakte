@@ -7,7 +7,7 @@ import { Btn, IconBtn, Select, Sheet, Empty, ConfirmBtn, Pill, Field, TextInput 
 import { AiRunner } from './ai-ui.jsx';
 import { toast, go, openDrawer, useUI, setUI } from './state.js';
 import { DOC_TYPES } from '../catalog.js';
-import { putDoc, updateDoc, deleteDoc, getAssets, fileUrl, getState, exportData, clearAll, loadDataset } from '../store.js';
+import { putDoc, updateDoc, deleteDoc, getAssets, fileUrl, getState, exportData, clearAll, loadDataset, clearOfflineCopy } from '../store.js';
 import { aiReadImage } from '../ai.js';
 import { isSupabaseMode, supa, signOut, updatePassword, listMembers, listInvites, createInvite, deleteInvite, authErrorText } from '../supa.js';
 import { addCost, addMilestone } from '../actions.js';
@@ -523,7 +523,7 @@ function Account() {
     <div className="panel">
       <div className="panel-head">
         <h3>Konto & Zugriff</h3>
-        <Btn small kind="ghost" icon="x" onClick={async () => { await signOut(); location.reload(); }}>
+        <Btn small kind="ghost" icon="x" onClick={async () => { await clearOfflineCopy(); await signOut(); location.reload(); }}>
           Abmelden
         </Btn>
       </div>
