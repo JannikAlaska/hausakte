@@ -97,6 +97,8 @@ jobs:
           git init -q -b android-build-log
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add build-log.txt
+          # this branch holds only the log: no Vercel deployment for it
+          echo '{"git":{"deploymentEnabled":false}}' > vercel.json
+          git add build-log.txt vercel.json
           git commit -qm "Build-Protokoll ${GITHUB_RUN_NUMBER} (${{ job.status }})"
           git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" HEAD:android-build-log
