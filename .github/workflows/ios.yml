@@ -1,0 +1,94 @@
+# Builds the iPad/iPhone app (ios/) on a Mac runner. The build log of every run is kept on the branch
+# "ios-build-log".
+#
+# Without Apple credentials the app is only compiled (a check that everything builds). With these
+# repository secrets it is signed and uploaded to TestFlight, from where it installs on the iPad:
+#   APPLE_TEAM_ID      Team ID of the Apple Developer account (10 characters)
+#   ASC_KEY_ID         Key ID of an App Store Connect API key with the role "Admin"
+#   ASC_ISSUER_ID      Issuer ID shown above the list of API keys
+#   ASC_KEY_P8         Content of the downloaded AuthKey_XXXX.p8 file
+name: iPad-App bauen
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ios/**'
+      - '.github/workflows/ios.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ios-app
+  cancel-in-progress: false
+
+jobs:
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Xcode-Projekt erzeugen
+        run: |
+          echo "Build ${GITHUB_RUN_NUMBER} · ${GITHUB_SHA}" > ios-build-log.txt
+          xcodebuild -version | tee -a ios-build-log.txt
+          brew install xcodegen >/dev/null 2>&1 || brew install xcodegen
+          cd ios && xcodegen generate 2>&1 | tee -a ../ios-build-log.txt
+
+      - name: Kompilieren (ohne Signatur)
+        if: env.ASC_KEY_ID == ''
+        run: |
+          set +e
+          xcodebuild -project ios/Hausakte.xcodeproj -scheme Hausakte -configuration Release \
+            -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" \
+            build > "$RUNNER_TEMP/xcodebuild.txt" 2>&1
+          STATUS=$?
+          grep -E "error:|warning: .*(Hausakte|Widgets)|\*\* BUILD" "$RUNNER_TEMP/xcodebuild.txt" | head -150 | tee -a ios-build-log.txt
+          if [ $STATUS -ne 0 ]; then tail -60 "$RUNNER_TEMP/xcodebuild.txt" >> ios-build-log.txt; fi
+          echo "Ohne Apple-Schlüssel: nur kompiliert, nicht signiert (siehe Kopf dieser Datei)." >> ios-build-log.txt
+          exit $STATUS
+
+      - name: Signieren und an TestFlight senden
+        if: env.ASC_KEY_ID != ''
+        run: |
+          set -o pipefail
+          KEY="$RUNNER_TEMP/AuthKey_${ASC_KEY_ID}.p8"
+          printf '%s\n' "$ASC_KEY_P8" > "$KEY"
+          AUTH=(-allowProvisioningUpdates -authenticationKeyPath "$KEY" -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID")
+          xcodebuild -project ios/Hausakte.xcodeproj -scheme Hausakte -configuration Release \
+            -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/Hausakte.xcarchive" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" CODE_SIGN_STYLE=Automatic CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" \
+            "${AUTH[@]}" archive > "$RUNNER_TEMP/archive.txt" 2>&1 \
+            || { grep -E "error:" "$RUNNER_TEMP/archive.txt" | head -80 >> ios-build-log.txt; tail -60 "$RUNNER_TEMP/archive.txt" >> ios-build-log.txt; rm -f "$KEY"; exit 1; }
+          echo "Archiv erstellt (Build $GITHUB_RUN_NUMBER)" | tee -a ios-build-log.txt
+          sed "s/TEAM_ID/$APPLE_TEAM_ID/" ios/ExportOptions.plist > "$RUNNER_TEMP/ExportOptions.plist"
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/Hausakte.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" -exportPath "$RUNNER_TEMP/export" \
+            "${AUTH[@]}" > "$RUNNER_TEMP/export.txt" 2>&1 \
+            || { grep -E "error:|Error" "$RUNNER_TEMP/export.txt" | head -80 >> ios-build-log.txt; tail -60 "$RUNNER_TEMP/export.txt" >> ios-build-log.txt; rm -f "$KEY"; exit 1; }
+          rm -f "$KEY"
+          grep -E "Upload|EXPORT SUCCEEDED|uploaded" "$RUNNER_TEMP/export.txt" | tee -a ios-build-log.txt
+          echo "An TestFlight gesendet: Version 1.0 (${GITHUB_RUN_NUMBER}). Nach der Verarbeitung durch Apple (meist 5–30 Minuten) erscheint sie in der TestFlight-App." | tee -a ios-build-log.txt
+
+      - name: Build-Protokoll sichern
+        if: always()
+        run: |
+          touch ios-build-log.txt
+          mkdir -p "$RUNNER_TEMP/log" && cp ios-build-log.txt "$RUNNER_TEMP/log/build-log.txt"
+          cd "$RUNNER_TEMP/log"
+          # this branch holds only the log: no Vercel deployment for it
+          echo '{"git":{"deploymentEnabled":false}}' > vercel.json
+          git init -q -b ios-build-log
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add build-log.txt vercel.json
+          git commit -qm "iOS-Build-Protokoll ${GITHUB_RUN_NUMBER} (${{ job.status }})"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" HEAD:ios-build-log

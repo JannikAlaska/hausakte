@@ -10,3 +10,6 @@ android/.gradle/
 android/build/
 android/app/build/
 android/local.properties
+# iOS build output (the Xcode project is generated from ios/project.yml)
+ios/Hausakte.xcodeproj/
+ios/build/

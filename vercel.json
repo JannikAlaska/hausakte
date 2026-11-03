@@ -81,7 +81,8 @@
   ],
   "git": {
     "deploymentEnabled": {
-      "android-build-log": false
+      "android-build-log": false,
+      "ios-build-log": false
     }
   }
 }

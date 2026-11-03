@@ -21,7 +21,7 @@ if (typeof window !== 'undefined') {
 }
 
 export const isAndroid = () => typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
-const inAndroidApp = () => typeof window !== 'undefined' && !!window.HausakteAndroid;
+const inNativeApp = () => typeof window !== 'undefined' && !!(window.HausakteAndroid || window.HausakteIOS);
 export const isStandalone = () => typeof window !== 'undefined' && (window.matchMedia?.('(display-mode: standalone)').matches || window.navigator.standalone === true);
 export const isAppleMobile = () => typeof navigator !== 'undefined' && (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
 
@@ -44,7 +44,7 @@ export function dismissInstallHint() {
 // what the install hint can offer right now: 'prompt' (Chrome's install dialog), 'android' (the APK),
 // 'apple' (instructions) or null
 export function installMode() {
-  if (!isSupabaseMode() || installed || isStandalone() || inAndroidApp()) return null;
+  if (!isSupabaseMode() || installed || isStandalone() || inNativeApp()) return null;
   if (isAndroid()) return 'android';
   if (deferred) return 'prompt';
   if (isAppleMobile()) return 'apple';

@@ -1,14 +1,16 @@
-// Android app (WebView around this page): home screen widgets get their figures from here, widgets and
-// launcher shortcuts send commands ("aktion:todo", "ansicht:grundriss"), and the back key closes what is open.
+// Android and iPad app (WebView around this page): home screen widgets get their figures from here, widgets
+// and shortcuts send commands ("aktion:todo", "ansicht:grundriss"), and the back key closes what is open.
 import { getUI, setUI, go, closeDrawer } from './ui/state.js';
 import { agenda, invoicesSummary, progress, attention } from './cockpit.js';
 import { liveProjects, isDone } from './metrics.js';
 import { invOf } from './invoices.js';
 import { todayISO, isISO } from './util.js';
 import { setPendingAction } from './pwa.js';
+import { nativeBridge } from './native-speech.js';
 
-const A = typeof window !== 'undefined' ? window.HausakteAndroid : null;
-export const isAndroidApp = !!A;
+const A = nativeBridge;
+export const isNativeApp = !!A;
+export const isAndroidApp = A?.kind === 'android';
 export const appVersion = () => {
   try {
     return A?.version() || null;
@@ -67,7 +69,7 @@ export function saveTextFile(name, mime, text) {
 }
 
 if (A) {
-  document.documentElement.classList.add('is-android-app');
+  document.documentElement.classList.add('is-native-app', `is-${A.kind}-app`);
   window.__hausakteCommand = (cmd) => {
     const [kind, arg] = String(cmd || '').split(':');
     if (kind === 'aktion') {
