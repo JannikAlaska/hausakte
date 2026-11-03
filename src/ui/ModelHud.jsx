@@ -1,5 +1,6 @@
 import { Icon } from './icons.jsx';
-import { IconBtn, Seg, Btn, Pill } from './common.jsx';
+import { IconBtn, Seg, Btn, Pill, InstallFilter } from './common.jsx';
+import { roomDims } from '../focus.js';
 import { useUI, setUI, openDrawer, go, showFloor, hideWall, setHiddenWalls, toast } from './state.js';
 import { portfolio, sortFloors, floorStats, componentWear, isDone, roomArea, buildingStats, liveProjects } from '../metrics.js';
 import { projectKind, status as statusOf, roomType } from '../catalog.js';
@@ -142,6 +143,7 @@ export function FloorPanel({ data, compact }) {
               <Icon name={ui.showLines === true ? 'eye' : 'eyeOff'} size={15} />
             </span>
           </button>
+          {ui.showLines === true && lineCount + pointCount ? <InstallFilter className="fp-filter" /> : null}
         </li>
         <li>
           <button className={`fp-row ${furnOn && furnCount ? '' : 'is-dim'}`} aria-pressed={furnOn} onClick={() => setUI({ showFurniture: !furnOn })} title="Möbel im 3D-Modell ein- oder ausblenden">
@@ -265,6 +267,7 @@ export function SelectionCard({ data }) {
     const r = f?.rooms?.find((x) => x.id === sel.roomId);
     if (!r) return null;
     const comps = Object.values(data.components).filter((c) => c.roomId === r.id);
+    const dims = roomDims(r, f);
     return (
       <div className="selcard">
         <div className="sel-crumb">
@@ -279,6 +282,12 @@ export function SelectionCard({ data }) {
               <span>{roomType(r.type).name}</span>
               {comps.length ? <span>{comps.length} Bauteile</span> : null}
             </div>
+            {dims ? (
+              <div className="sel-dims">
+                {dims.rect ? '' : 'max. '}
+                {fmtFixed(dims.width, 2)} × {fmtFixed(dims.depth, 2)} m · Umfang {fmtFixed(dims.perimeter, 2)} m{dims.height ? ` · Höhe ${fmtFixed(dims.height, 2)} m` : dims.underRoof ? ' · unter der Dachschräge' : ''}
+              </div>
+            ) : null}
           </div>
         </div>
         <div className="sel-actions">

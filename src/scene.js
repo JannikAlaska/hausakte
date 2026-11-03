@@ -12,7 +12,7 @@ import { sortFloors, roomArea, isDone } from './metrics.js';
 import { sunPosition, sunVector, yearSteps, poa, houseGeo, shadeColor } from './solar.js';
 import { fmtFixed, fmtDayMonth, todayISO, escapeHtml } from './util.js';
 import { furnitureParts, furnType } from './furniture.js';
-import { roomFocus } from './focus.js';
+import { roomFocus, roomDims, inwardNormal, statusShown } from './focus.js';
 
 
 
@@ -750,6 +750,29 @@ export class HouseScene {
       if (fadeAll || onFocus) lbl.element.classList.add(isFocus ? 'is-focus' : 'is-faded');
       group.add(lbl);
       entry.roomLabels.push(lbl);
+      if (isFocus) {
+        const d = roomDims(room, f);
+        const pts = [];
+        for (const sd of d?.sides || []) {
+          const n = inwardNormal(room.poly, sd);
+          const a = [sd.a[0] + n[0] * 0.12, sd.a[1] + n[1] * 0.12];
+          const b = [sd.b[0] + n[0] * 0.12, sd.b[1] + n[1] * 0.12];
+          pts.push(new THREE.Vector3(a[0], 0, a[1]), new THREE.Vector3(b[0], 0, b[1]));
+          const dl = makeLabel(`${fmtFixed(sd.length, 2)} m`, 'dim');
+          dl.center.set(0.5, 0.5);
+          dl.position.set((a[0] + b[0]) / 2 + n[0] * 0.28, f.elevation + 0.06, (a[1] + b[1]) / 2 + n[1] * 0.28);
+          group.add(dl);
+          entry.roomLabels.push(dl);
+        }
+        if (pts.length) {
+          const ln = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: this.accent, depthTest: false, transparent: true }));
+          ln.position.y = f.elevation + 0.03;
+          ln.renderOrder = 6;
+          ln.userData.noShade = true;
+          ln.userData.noXray = true;
+          group.add(ln);
+        }
+      }
     }
 
     // stairs
@@ -823,11 +846,15 @@ export class HouseScene {
         const m = new THREE.Mesh(g, mat);
         m.position.y = f.elevation;
         m.renderOrder = 4;
+        m.userData.status = l.status || 'bestand';
+        m.visible = statusShown(this.installFilter, m.userData.status);
         lg.add(m);
       }
       for (const q of points) {
         const m = fixtureMesh(q);
         m.position.set(q.x, f.elevation + (q.z ?? 0.3), q.y);
+        m.userData.status = q.status || 'bestand';
+        m.visible = statusShown(this.installFilter, m.userData.status);
         lg.add(m);
       }
       lg.visible = !!this.view.showLines;
@@ -1844,6 +1871,15 @@ export class HouseScene {
     const d = off.length();
     if (d < this.controls.minDistance || d > this.controls.maxDistance) return;
     this.camAnim = { target: this.controls.target.clone(), pos: this.controls.target.clone().add(off) };
+  }
+
+  // lines and connection points: 'alle' | 'bestand' | 'geplant'
+  setInstallFilter(f) {
+    this.installFilter = f || 'alle';
+    for (const e of this.floorEntries || [])
+      e.lineGroup?.children.forEach((m) => {
+        if (m.userData.status) m.visible = statusShown(this.installFilter, m.userData.status);
+      });
   }
 
   setHiddenWalls(ids) {

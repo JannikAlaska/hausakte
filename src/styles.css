@@ -1338,14 +1338,14 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .plan-canvas svg .is-faded { opacity: 0.32; transition: opacity 0.18s; }
 .plan-canvas svg .svg-room.is-faded { opacity: 0.42; }
 .svg-room.is-focus { stroke: var(--accent); }
-.plan-focus { position: absolute; top: 8px; left: 8px; z-index: 3; display: flex; align-items: center; gap: 8px; max-width: calc(100% - 240px); padding: 4px 4px 4px 10px; background: var(--surface); border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line)); border-radius: 10px; box-shadow: var(--shadow); font-size: 12.5px; color: var(--ink-2); }
+.plan-focus { position: absolute; top: 54px; left: 8px; z-index: 3; display: flex; align-items: center; gap: 8px; max-width: calc(100% - 16px); padding: 4px 4px 4px 10px; background: var(--surface); border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line)); border-radius: 10px; box-shadow: var(--shadow); font-size: 12.5px; color: var(--ink-2); }
 .plan-focus b { color: var(--ink); }
 .plan-focus-dot { width: 9px; height: 9px; border-radius: 3px; background: var(--accent); flex: none; }
 .plan-focus-txt { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .plan-focus-x { width: 28px; height: 28px; flex: none; display: grid; place-items: center; border: 0; border-radius: 8px; background: var(--surface-2); color: var(--ink-2); }
 .plan-focus-x:hover { color: var(--ink); background: var(--surface-3); }
 @media (max-width: 760px) {
-  .plan-focus { top: 60px; left: 8px; max-width: calc(100% - 16px); }
+  .plan-focus { top: 62px; left: 8px; max-width: calc(100% - 16px); }
   .plan-focus-x { width: 34px; height: 34px; }
 }
 .tag3d.room.is-faded { opacity: 0.5; }
@@ -1354,3 +1354,24 @@ button, a { -webkit-tap-highlight-color: transparent; }
 /* walls hidden in the 3D model: dashed in the floor plan */
 .svg-wall.is-hidden3d { fill-opacity: 0.35; stroke: var(--accent); stroke-dasharray: 0.08 0.06; stroke-width: 0.02; }
 .sel-swatch.wall { display: grid; place-items: center; background: var(--surface-3); color: var(--ink-2); }
+
+/* room dimensions of the focused room */
+.svg-roomdim { stroke: var(--accent-ink); }
+.svg-roomdim-label { fill: var(--accent-ink); font-family: var(--font-mono); font-weight: 600; paint-order: stroke; stroke: var(--surface); stroke-linejoin: round; }
+/* filter for lines and connection points */
+.inst-filter { display: inline-flex; align-items: center; }
+.inst-filter select { height: 32px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); color: var(--ink); font: inherit; font-size: 12.5px; font-weight: 600; padding: 0 26px 0 9px; appearance: none; -webkit-appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238a90a3' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 9px center; cursor: pointer; }
+.inst-filter.is-on select { border-color: var(--accent); background-color: var(--accent-soft); color: var(--accent-ink); }
+.plan-instfilter { margin-right: 2px; }
+@media (max-width: 760px) { .inst-filter select { height: 38px; } }
+
+.sel-dims { margin-top: 3px; font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.fp-filter { display: flex; padding: 2px 6px 6px 46px; }
+.fp-filter select { width: 100%; }
+.tag3d.dim { font-family: var(--font-mono); font-size: 11px; font-weight: 600; color: var(--accent-ink); background: var(--surface); border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line)); border-radius: 6px; padding: 1px 6px; box-shadow: var(--shadow); }
+@media (max-width: 760px) {
+  .floorpanel .fp-list > li { display: flex; align-items: center; gap: 6px; flex: none; }
+  .fp-filter { padding: 0; }
+  .fp-filter select { width: auto; height: 34px; }
+  .tag3d.dim { font-size: 10px; padding: 0 4px; }
+}

@@ -1,8 +1,8 @@
 // Floor plan editor: walls, openings, rooms, stairs, roof sections and a traceable underlay image.
 import { Icon, ICON_PATHS } from './icons.jsx';
-import { Btn, IconBtn, Field, TextInput, NumInput, Select, Toggle, Pill, Sheet, Seg, ConfirmBtn, Empty } from './common.jsx';
+import { Btn, IconBtn, Field, TextInput, NumInput, Select, Toggle, Pill, Sheet, Seg, ConfirmBtn, Empty, InstallFilter } from './common.jsx';
 import { useUI, setUI, getUI, openDrawer, toast, go, hideWall, showWall } from './state.js';
-import { roomFocus } from '../focus.js';
+import { roomFocus, roomDims, inwardNormal, statusShown } from '../focus.js';
 import { downscaleImage } from './documents.jsx';
 import { ROOM_TYPES, roomType, ROOM_COLORS, LINE_KINDS, LINE_ZONES, lineKind, FIXTURE_KINDS, fixtureKind, fixtureZ } from '../catalog.js';
 import { DocList, UploadButton } from './documents.jsx';
@@ -493,6 +493,10 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
   const walls = floor.walls || [];
   const lines = floor.lines || [];
   const points = floor.points || [];
+  // filter Bestand / geplant: only what is shown can be clicked
+  const instF = ui.installFilter || 'alle';
+  const visLines = instF === 'alle' ? lines : lines.filter((l) => statusShown(instF, l.status));
+  const visPoints = instF === 'alle' ? points : points.filter((q) => statusShown(instF, q.status));
   const dims = floor.dims || [];
   const furniture = floor.furniture || [];
   const fitPts = useCallback(() => walls.flatMap((w) => [w.a, w.b]).concat(guide ? [[guide.x - 1, guide.y - 1], [guide.x + guide.w + 1, guide.y + guide.d + 1]] : []).concat(floor.underlay ? [[floor.underlay.x, floor.underlay.y], [floor.underlay.x + floor.underlay.w, floor.underlay.y + floor.underlay.w * (floor.underlay.aspect || 0.7)]] : []), [floor.id]);
@@ -691,7 +695,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
       return;
     }
     if (tool === 'fixture') {
-      const hp = hitPoint(p, points, 9 / view.s);
+      const hp = hitPoint(p, visPoints, 9 / view.s);
       if (hp) {
         setSel({ kind: 'point', id: hp.id });
         setDrag({ kind: 'ptMove', id: hp.id, from: deepClone(floor) });
@@ -798,7 +802,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
       return;
     }
     if (showLines) {
-      const hp = hitPoint(p, points, 9 / view.s);
+      const hp = hitPoint(p, visPoints, 9 / view.s);
       if (hp) {
         setSel({ kind: 'point', id: hp.id });
         setDrag({ kind: 'ptMove', id: hp.id, from: deepClone(floor) });
@@ -831,7 +835,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
       }
     }
     if (showLines) {
-      const hl = hitLine(p, lines, tolM);
+      const hl = hitLine(p, visLines, tolM);
       if (hl) {
         setSel({ kind: 'line', id: hl.line.id });
         setDrag({ kind: 'lineMove', id: hl.line.id, p0: p, pts0: hl.line.pts.map((q) => [...q]), from: deepClone(floor) });
@@ -1200,6 +1204,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
   const focusSel = !ctx && ui.selection?.type === 'room' && ui.selection.floorId === floor.id ? ui.selection : null;
   const focus = focusSel ? roomFocus((floor.rooms || []).find((r) => r.id === focusSel.roomId), floor) : null;
   const fade = (belongs) => (focus && !belongs ? 'is-faded' : undefined);
+  const focusDims = focus ? roomDims(focus.room, floor) : null;
   const hiddenSet = new Set(ui.hiddenWalls || []);
   const hints = {
     select: selFurn ? 'Möbel ziehen verschiebt es (rastet an Wänden ein, Alt = frei), runder Griff dreht, Eckquadrat ändert die Größe. R dreht um 90°, Pfeiltasten verschieben um 1 cm.' : 'Klicken wählt Wände, Öffnungen, Räume, Treppen und Möbel. Wand ziehen verschiebt sie, Endpunkte ziehen ändert die Länge. Leere Fläche ziehen verschiebt die Ansicht.',
@@ -1254,6 +1259,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
         </div>
         <div className="plan-canvas" ref={boxRef}>
           <div className="plan-quick">
+            {showLines && lines.length + points.length > 0 ? <InstallFilter className="plan-instfilter" /> : null}
             <IconBtn icon={showLines ? 'eye' : 'eyeOff'} label={showLines ? 'Leitungen und Anschlüsse ausblenden' : 'Leitungen und Anschlüsse einblenden'} active={showLines && lines.length + points.length > 0} onClick={() => setUI({ planLines: !showLines })} />
             <IconBtn icon="sofa" className={showFurn ? '' : 'is-struck'} label={showFurn ? 'Möbel ausblenden' : 'Möbel einblenden'} active={showFurn && furniture.length > 0} aria-pressed={showFurn} onClick={() => { if (showFurn && selFurn) setSel(null); setUI({ planFurniture: !showFurn }); }} />
             <IconBtn icon="undo" label="Rückgängig (Strg+Z)" onClick={undo} disabled={!hist.current.undo.length} />
@@ -1265,6 +1271,8 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
               <span className="plan-focus-dot" aria-hidden="true" />
               <span className="plan-focus-txt">
                 Fokus: <b>{focus.room.name || roomType(focus.room.type).name}</b> · {fmtFixed(roomArea(focus.room), 1)} m²
+                {focusDims ? ` · ${focusDims.rect ? '' : 'max. '}${fmtFixed(focusDims.width, 2)} × ${fmtFixed(focusDims.depth, 2)} m` : ''}
+                {focusDims?.height ? ` · ${fmtFixed(focusDims.height, 2)} m hoch` : ''}
               </span>
               <button type="button" className="plan-focus-x" aria-label="Fokus aufheben" title="Fokus aufheben (Esc)" onClick={() => { setSel(null); clearFocus(); }}>
                 <Icon name="x" size={14} />
@@ -1394,9 +1402,10 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
                   </g>
                 );
               })}
-              {showLines ? <PassingRisers floor={floor} floors={floors} px={px} /> : null}
-              {showLines ? <PlanLines lines={lines} sel={sel} px={px} faded={focus ? (l) => !focus.lines.has(l.id) : null} /> : null}
-              {showLines ? <PlanPoints points={points} sel={sel} px={px} faded={focus ? (q) => !focus.points.has(q.id) : null} /> : null}
+              {showLines ? <PassingRisers floor={floor} floors={floors} px={px} filter={instF} /> : null}
+              {showLines ? <PlanLines lines={visLines} sel={sel} px={px} faded={focus ? (l) => !focus.lines.has(l.id) : null} /> : null}
+              {showLines ? <PlanPoints points={visPoints} sel={sel} px={px} faded={focus ? (q) => !focus.points.has(q.id) : null} /> : null}
+              {focus ? <RoomDims room={focus.room} px={px} /> : null}
               {chain && tool === 'line' ? <LinePreview pts={chain.pts} cursor={cursor?.p} kind={lineOpts.kind} px={px} /> : null}
               {cursor?.furn && tool === 'furniture' ? <FurnitureSymbol f={cursor.furn} px={px} ghost /> : null}
               {selFurn && showFurn ? <FurnitureHandles f={selFurn} px={px} s={s} /> : null}
@@ -1735,14 +1744,58 @@ function FixtureProps({ pt, floor, data, mutate, onDelete }) {
 }
 
 // risers drawn on other floors that run through this one
-function PassingRisers({ floor, floors, px }) {
+// dimension lines along the sides of the focused room (inner measures)
+function RoomDims({ room, px }) {
+  const d = roomDims(room);
+  if (!d) return null;
+  const P = room.poly;
+  const off = px(17);
+  const tick = px(5);
+  return (
+    <g className="svg-roomdims" style={{ pointerEvents: 'none' }}>
+      {d.sides.map((sd, i) => {
+        const n = inwardNormal(P, sd);
+        const a = [sd.a[0] + n[0] * off, sd.a[1] + n[1] * off];
+        const b = [sd.b[0] + n[0] * off, sd.b[1] + n[1] * off];
+        const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+        let ang = (Math.atan2(b[1] - a[1], b[0] - a[0]) * 180) / Math.PI;
+        if (ang > 90) ang -= 180;
+        if (ang <= -90) ang += 180;
+        const fs = px(11.5);
+        const short = sd.length < fs * 4.2;
+        return (
+          <g key={i}>
+            <line x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} className="svg-roomdim" strokeWidth={px(1.3)} />
+            {[a, b].map((q, k) => (
+              <line key={k} x1={q[0] - n[0] * tick} y1={q[1] - n[1] * tick} x2={q[0] + n[0] * tick} y2={q[1] + n[1] * tick} className="svg-roomdim" strokeWidth={px(1.3)} />
+            ))}
+            <text
+              x={m[0] + (short ? n[0] * fs * 1.1 : 0)}
+              y={m[1] + (short ? n[1] * fs * 1.1 : 0)}
+              transform={`rotate(${ang} ${m[0] + (short ? n[0] * fs * 1.1 : 0)} ${m[1] + (short ? n[1] * fs * 1.1 : 0)})`}
+              textAnchor="middle"
+              dominantBaseline="central"
+              fontSize={fs}
+              strokeWidth={px(3.5)}
+              className="svg-roomdim-label"
+            >
+              {fmtFixed(sd.length, 2)} m
+            </text>
+          </g>
+        );
+      })}
+    </g>
+  );
+}
+
+function PassingRisers({ floor, floors, px, filter = 'alle' }) {
   const lo = floor.elevation,
     hi = floor.elevation + floor.height;
   const items = [];
   for (const f of floors) {
     if (f.id === floor.id) continue;
     for (const l of f.lines || []) {
-      if (!l.riser || !(l.pts || []).length) continue;
+      if (!l.riser || !(l.pts || []).length || !statusShown(filter, l.status)) continue;
       const zs = l.pts.map((q) => f.elevation + (q[2] ?? 0));
       if (Math.min(hi, Math.max(...zs)) - Math.max(lo, Math.min(...zs)) > 0.05) items.push({ l, f });
     }

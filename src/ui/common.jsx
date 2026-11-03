@@ -1,5 +1,6 @@
 import { Icon } from './icons.jsx';
 import { parseNum, fmtNum } from '../util.js';
+import { useUI, setInstallFilter } from './state.js';
 
 const { useState, useEffect, useRef } = React;
 
@@ -278,5 +279,21 @@ export function KV({ k, v, tone }) {
       <span>{k}</span>
       <b>{v}</b>
     </div>
+  );
+}
+
+// which lines and connection points are shown (floor plan and 3D model share the setting)
+export function InstallFilter({ className = '' }) {
+  const ui = useUI();
+  const v = ui.installFilter || 'alle';
+  return (
+    <label className={`inst-filter ${v !== 'alle' ? 'is-on' : ''} ${className}`} title="Welche Leitungen und Anschlüsse angezeigt werden">
+      <span className="sr">Leitungen und Anschlüsse anzeigen</span>
+      <select value={v} onChange={(e) => setInstallFilter(e.target.value)} onPointerDown={(e) => e.stopPropagation()}>
+        <option value="alle">Bestand + geplant</option>
+        <option value="bestand">Nur Bestand</option>
+        <option value="geplant">Nur geplant</option>
+      </select>
+    </label>
   );
 }

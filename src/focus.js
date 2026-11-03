@@ -63,3 +63,76 @@ export function focusedRoom(selection, floors) {
   const room = f?.rooms?.find((r) => r.id === selection.roomId);
   return room?.poly?.length >= 3 ? { floor: f, room } : null;
 }
+
+// ---------- room dimensions ----------
+const sub2 = (a, b) => [a[0] - b[0], a[1] - b[1]];
+const unit = (v) => {
+  const l = Math.hypot(v[0], v[1]) || 1;
+  return [v[0] / l, v[1] / l];
+};
+
+// sides of the room outline; straight runs made of several pieces count as one side
+export function roomSidesMerged(P) {
+  const n = (P || []).length;
+  if (n < 3) return [];
+  const dirAt = (i) => unit(sub2(P[(i + 1) % n], P[i]));
+  const turns = (d0, d1) => Math.abs(d0[0] * d1[1] - d0[1] * d1[0]) > 0.01 || d0[0] * d1[0] + d0[1] * d1[1] < 0;
+  let start = 0;
+  for (let i = 0; i < n; i++) {
+    if (turns(dirAt((i - 1 + n) % n), dirAt(i))) {
+      start = i;
+      break;
+    }
+  }
+  const out = [];
+  let a = P[start];
+  let cur = dirAt(start);
+  for (let k = 1; k < n; k++) {
+    const i = (start + k) % n;
+    if (dist(P[i], P[(i + 1) % n]) < 1e-6) continue;
+    const d = dirAt(i);
+    if (turns(cur, d)) {
+      out.push({ a, b: P[i], length: dist(a, P[i]) });
+      a = P[i];
+      cur = d;
+    }
+  }
+  out.push({ a, b: P[start], length: dist(a, P[start]) });
+  return out.filter((s) => s.length > 0.02);
+}
+
+// width × depth along the room's main direction (its longest side), perimeter and clear height
+export function roomDims(room, floor) {
+  const P = room?.poly || [];
+  const sides = roomSidesMerged(P);
+  if (!sides.length) return null;
+  const main = sides.reduce((m, s) => (s.length > m.length ? s : m), sides[0]);
+  const u = unit(sub2(main.b, main.a));
+  const v = [-u[1], u[0]];
+  const pu = P.map((p) => p[0] * u[0] + p[1] * u[1]);
+  const pv = P.map((p) => p[0] * v[0] + p[1] * v[1]);
+  const a = Math.max(...pu) - Math.min(...pu);
+  const b = Math.max(...pv) - Math.min(...pv);
+  const rect = sides.length === 4;
+  return {
+    sides,
+    width: Math.max(a, b),
+    depth: Math.min(a, b),
+    rect,
+    perimeter: sides.reduce((s, x) => s + x.length, 0),
+    height: floor && !floor.underRoof ? Math.max(0, (floor.height || 0) - (floor.slab ?? 0.2)) : null,
+    underRoof: !!floor?.underRoof,
+  };
+}
+
+// inward unit normal of a side
+export function inwardNormal(P, s) {
+  const e = unit(sub2(s.b, s.a));
+  let n = [-e[1], e[0]];
+  const m = [(s.a[0] + s.b[0]) / 2 + n[0] * 0.05, (s.a[1] + s.b[1]) / 2 + n[1] * 0.05];
+  if (!pointInPoly(m, P)) n = [-n[0], -n[1]];
+  return n;
+}
+
+// ---------- filter for lines and connection points: all | bestand (existing, incl. decommissioned) | geplant ----------
+export const statusShown = (filter, status) => (filter === 'bestand' ? status !== 'geplant' : filter === 'geplant' ? status === 'geplant' : true);

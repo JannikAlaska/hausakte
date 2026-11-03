@@ -18,9 +18,21 @@ function loadHiddenWalls() {
   }
 }
 
+// lines and connection points shown: 'alle' | 'bestand' | 'geplant' (also a setting of this device)
+const IF_KEY = 'hausakte-install-filter';
+function loadInstallFilter() {
+  try {
+    const v = localStorage.getItem(IF_KEY);
+    return ['bestand', 'geplant'].includes(v) ? v : 'alle';
+  } catch {
+    return 'alle';
+  }
+}
+
 let ui = {
   ...routeFromHash(),
   hiddenWalls: loadHiddenWalls(),
+  installFilter: loadInstallFilter(),
   mode: 'all', // 'all' | 'floor' | 'explode'
   floorId: null,
   showRoof: true,
@@ -105,3 +117,11 @@ export function setHiddenWalls(ids) {
 }
 export const hideWall = (id) => setHiddenWalls([...getUI().hiddenWalls, id]);
 export const showWall = (id) => setHiddenWalls(getUI().hiddenWalls.filter((x) => x !== id));
+
+export function setInstallFilter(v) {
+  const f = ['bestand', 'geplant'].includes(v) ? v : 'alle';
+  try {
+    localStorage.setItem(IF_KEY, f);
+  } catch {}
+  setUI({ installFilter: f });
+}

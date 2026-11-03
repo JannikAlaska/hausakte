@@ -99,6 +99,10 @@ function SceneView({ data, sceneRef }) {
   }, [ui.hiddenWalls]);
 
   useEffect(() => {
+    sceneRef.current?.setInstallFilter(ui.installFilter);
+  }, [ui.installFilter]);
+
+  useEffect(() => {
     sceneRef.current?.setSelection(ui.selection);
   }, [ui.selection, data.floors]);
 
