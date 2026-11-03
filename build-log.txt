@@ -1,0 +1,164 @@
+Build 1 · 87d0f31880bf4f73066b7eb734bb2cbe8017f45d
+
+Welcome to Gradle 8.9!
+
+Here are the highlights of this release:
+ - Enhanced Error and Warning Messages
+ - IDE Integration Improvements
+ - Daemon JVM Information
+
+For more details see https://docs.gradle.org/8.9/release-notes.html
+
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.9/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build 
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preReleaseBuild UP-TO-DATE
+> Task :app:mergeReleaseJniLibFolders
+> Task :app:mergeReleaseNativeLibs NO-SOURCE
+> Task :app:stripReleaseDebugSymbols NO-SOURCE
+> Task :app:extractReleaseNativeSymbolTables NO-SOURCE
+> Task :app:mergeReleaseNativeDebugMetadata NO-SOURCE
+> Task :app:generateReleaseBuildConfig
+> Task :app:checkReleaseDuplicateClasses
+> Task :app:javaPreCompileRelease
+> Task :app:generateReleaseResValues
+> Task :app:checkReleaseAarMetadata
+> Task :app:mapReleaseSourceSetPaths
+> Task :app:generateReleaseResources
+> Task :app:packageReleaseResources
+> Task :app:mergeReleaseResources
+> Task :app:createReleaseCompatibleScreenManifests
+> Task :app:extractDeepLinksRelease
+> Task :app:parseReleaseLocalResources
+> Task :app:processReleaseMainManifest
+> Task :app:processReleaseManifest
+> Task :app:desugarReleaseFileDependencies
+> Task :app:mergeReleaseStartupProfile
+> Task :app:mergeReleaseArtProfile
+> Task :app:mergeReleaseShaders
+> Task :app:compileReleaseShaders NO-SOURCE
+> Task :app:processReleaseManifestForPackage
+> Task :app:generateReleaseAssets UP-TO-DATE
+> Task :app:mergeReleaseAssets
+> Task :app:compressReleaseAssets
+> Task :app:extractReleaseVersionControlInfo
+> Task :app:processReleaseJavaRes NO-SOURCE
+> Task :app:processReleaseResources
+> Task :app:mergeReleaseJavaResource
+> Task :app:mergeExtDexRelease
+> Task :app:compileReleaseJavaWithJavac
+> Task :app:dexBuilderRelease
+> Task :app:mergeReleaseGlobalSynthetics
+> Task :app:collectReleaseDependencies
+> Task :app:optimizeReleaseResources
+> Task :app:sdkReleaseDependencyData
+> Task :app:writeReleaseAppMetadata
+> Task :app:writeReleaseSigningConfigVersions
+> Task :app:mergeDexRelease
+> Task :app:compileReleaseArtProfile
+> Task :app:packageRelease
+> Task :app:createReleaseApkListingFileRedirect
+> Task :app:assembleRelease
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run-1793664970656.json
+
+BUILD SUCCESSFUL in 59s
+38 actionable tasks: 38 executed
+Signatur: neuer Schlüssel für diesen Build (keine Repository-Secrets gesetzt)
+Verifies
+Verified using v1 scheme (JAR signing): false
+Verified using v2 scheme (APK Signature Scheme v2): true
+Verified using v3 scheme (APK Signature Scheme v3): true
+Verified using v3.1 scheme (APK Signature Scheme v3.1): false
+Verified using v3.2 scheme (APK Signature Scheme v3.2): false
+Verified using v4 scheme (APK Signature Scheme v4): false
+Verified for SourceStamp: false
+Number of signers: 1
+package: name='app.hausakte' versionCode='1' versionName='1.0.1' platformBuildVersionName='14' platformBuildVersionCode='34' compileSdkVersion='34' compileSdkVersionCodename='14'
+targetSdkVersion:'34'
+application-label:'Hausakte'
+application-label-af:'Hausakte'
+application-label-am:'Hausakte'
+application-label-ar:'Hausakte'
+application-label-as:'Hausakte'
+application-label-az:'Hausakte'
+application-label-be:'Hausakte'
+application-label-bg:'Hausakte'
+application-label-bn:'Hausakte'
+application-label-bs:'Hausakte'
+application-label-ca:'Hausakte'
+application-label-cs:'Hausakte'
+application-label-da:'Hausakte'
+application-label-de:'Hausakte'
+application-label-el:'Hausakte'
+application-label-en-AU:'Hausakte'
+application-label-en-CA:'Hausakte'
+application-label-en-GB:'Hausakte'
+application-label-en-IN:'Hausakte'
+application-label-en-XC:'Hausakte'
+application-label-es:'Hausakte'
+application-label-es-US:'Hausakte'
+application-label-et:'Hausakte'
+application-label-eu:'Hausakte'
+application-label-fa:'Hausakte'
+application-label-fi:'Hausakte'
+application-label-fr:'Hausakte'
+application-label-fr-CA:'Hausakte'
+application-label-gl:'Hausakte'
+application-label-gu:'Hausakte'
+application-label-hi:'Hausakte'
+application-label-hr:'Hausakte'
+application-label-hu:'Hausakte'
+application-label-hy:'Hausakte'
+application-label-in:'Hausakte'
+application-label-is:'Hausakte'
+application-label-it:'Hausakte'
+application-label-iw:'Hausakte'
+application-label-ja:'Hausakte'
+application-label-ka:'Hausakte'
+application-label-kk:'Hausakte'
+application-label-km:'Hausakte'
+application-label-kn:'Hausakte'
+application-label-ko:'Hausakte'
+application-label-ky:'Hausakte'
+application-label-lo:'Hausakte'
+application-label-lt:'Hausakte'
+application-label-lv:'Hausakte'
+application-label-mk:'Hausakte'
+application-label-ml:'Hausakte'
+application-label-mn:'Hausakte'
+application-label-mr:'Hausakte'
+application-label-ms:'Hausakte'
+application-label-my:'Hausakte'
+application-label-nb:'Hausakte'
+application-label-ne:'Hausakte'
+application-label-nl:'Hausakte'
+application-label-or:'Hausakte'
+application-label-pa:'Hausakte'
+application-label-pl:'Hausakte'
+application-label-pt:'Hausakte'
+application-label-pt-BR:'Hausakte'
+application-label-pt-PT:'Hausakte'
+application-label-ro:'Hausakte'
+application-label-ru:'Hausakte'
+application-label-si:'Hausakte'
+application-label-sk:'Hausakte'
+application-label-sl:'Hausakte'
+application-label-sq:'Hausakte'
+application-label-sr:'Hausakte'
+application-label-sr-Latn:'Hausakte'
+application-label-sv:'Hausakte'
+application-label-sw:'Hausakte'
+application-label-ta:'Hausakte'
+application-label-te:'Hausakte'
+application-label-th:'Hausakte'
+application-label-tl:'Hausakte'
+application-label-tr:'Hausakte'
+application-label-uk:'Hausakte'
+application-label-ur:'Hausakte'
+application-label-uz:'Hausakte'
+application-label-vi:'Hausakte'
+application-label-zh-CN:'Hausakte'
+application-label-zh-HK:'Hausakte'
+application-label-zh-TW:'Hausakte'
+application-label-zu:'Hausakte'
+-rw-r--r-- 1 runner runner 1564833 Nov  3 00:17 hausakte.apk
