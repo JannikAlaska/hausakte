@@ -1,5 +1,5 @@
-// Android and iPad app (WebView around this page): home screen widgets get their figures from here, widgets
-// and shortcuts send commands ("aktion:todo", "ansicht:grundriss"), and the back key closes what is open.
+// Android app (WebView around this page): home screen widgets get their figures from here, widgets and
+// launcher shortcuts send commands ("aktion:todo", "ansicht:grundriss"), and the back key closes what is open.
 import { getUI, setUI, go, closeDrawer } from './ui/state.js';
 import { agenda, invoicesSummary, progress, attention } from './cockpit.js';
 import { liveProjects, isDone } from './metrics.js';

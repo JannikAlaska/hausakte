@@ -1,9 +1,7 @@
-// The Android and iPad apps (a WebView around this page) offer the device's own functions through one
-// interface, nativeBridge. Speech input: WebViews have no working speech recognition of their own, so the
-// device's is offered under the browser's name (SpeechRecognition). Must run before any module reads it.
+// The Android app (a WebView around this page) offers the phone's own functions through nativeBridge.
+// Speech input: the WebView has no working speech recognition of its own, so the phone's is offered
+// under the browser's name (SpeechRecognition). Must run before any module reads that name.
 const AND = typeof window !== 'undefined' ? window.HausakteAndroid : null;
-const IOS = typeof window !== 'undefined' && window.HausakteIOS && window.webkit?.messageHandlers?.hausakte ? window.HausakteIOS : null;
-const post = (m) => window.webkit.messageHandlers.hausakte.postMessage(m);
 
 export const nativeBridge = AND
   ? {
@@ -16,18 +14,7 @@ export const nativeBridge = AND
       speechStop: (id) => AND.speechStop(id),
       speechAbort: (id) => AND.speechAbort(id),
     }
-  : IOS
-    ? {
-        kind: 'ios',
-        version: () => IOS.version,
-        setWidgetData: (json) => post({ type: 'widgets', json }),
-        saveText: (name, mime, text) => post({ type: 'saveText', name, mime, text }),
-        speechAvailable: () => !!IOS.speech,
-        speechStart: (id, lang, interim, continuous) => post({ type: 'speechStart', id, lang, interim, continuous }),
-        speechStop: (id) => post({ type: 'speechStop', id }),
-        speechAbort: (id) => post({ type: 'speechAbort', id }),
-      }
-    : null;
+  : null;
 
 const N = nativeBridge;
 if (N) {

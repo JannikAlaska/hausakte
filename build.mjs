@@ -72,6 +72,10 @@ fs.writeFileSync(path.join(dist, 'test.html'), skeleton(test));
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://kowakeiwjrwiqoshwiun.supabase.co';
 const SUPABASE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_au_XPVxgIjzU4rrQa7Ev9Q_RgEl29ki';
 // installable app (PWA): manifest, icons and service worker come from public/
+// iPad start screens (light and dark) for the app added to the home screen
+const SPLASH = JSON.parse(fs.readFileSync(path.join(root, 'public/splash/splash.json'), 'utf8'))
+  .map((x) => `<link rel="apple-touch-startup-image" media="${x.media}" href="${x.href}">`)
+  .join('\n');
 function webDoc({ supabase, sw = true, ...libs }) {
   const head = `
 <script>window.HAUSAKTE_CONFIG = ${JSON.stringify({ supabaseUrl: SUPABASE_URL, supabaseKey: SUPABASE_KEY })};</script>
@@ -96,6 +100,7 @@ function webDoc({ supabase, sw = true, ...libs }) {
 <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
 <link rel="icon" href="/icons/favicon-32.png" sizes="32x32" type="image/png">
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+${SPLASH}
 ${sw ? `<script>if ('serviceWorker' in navigator && window.isSecureContext && !/^(127\\.|localhost$)/.test(location.hostname)) addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));</script>\n` : ''}${html.slice(0, at)}</head>
 <body>
 ${html.slice(at)}</body>
