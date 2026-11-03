@@ -47,7 +47,8 @@ function SceneView({ data, sceneRef }) {
           return;
         }
         if (hit.type === 'project') return openDrawer({ type: 'project', id: hit.projectId });
-        if (hit.type === 'room') return setUI({ selection: hit });
+        // a room becomes the focus; in the whole-house view its storey is opened so it can be seen
+        if (hit.type === 'room') return setUI(u.mode === 'all' && u.view === 'modell' ? { selection: hit, mode: 'floor', floorId: hit.floorId } : { selection: hit });
         if (hit.type === 'floor') return setUI({ selection: hit });
         if (hit.type === 'roof') return setUI({ selection: hit });
       },
@@ -94,6 +95,20 @@ function SceneView({ data, sceneRef }) {
   useEffect(() => {
     sceneRef.current?.setSelection(ui.selection);
   }, [ui.selection, data.floors]);
+
+  // opening the model with a focused room shows its storey, so the room is not hidden under the roof
+  useEffect(() => {
+    const sel = getUI().selection;
+    if (ui.view === 'modell' && sel?.type === 'room' && getUI().mode === 'all') setUI({ mode: 'floor', floorId: sel.floorId });
+  }, [ui.view, ui.selection?.roomId]);
+
+  // a focused room on another storey than the one shown ends the focus
+  useEffect(() => {
+    const sel = ui.selection;
+    if (sel?.type !== 'room') return;
+    const shown = ui.view === 'grundriss' || ui.mode === 'floor' ? ui.floorId : null;
+    if (shown && shown !== sel.floorId) setUI({ selection: null });
+  }, [ui.view, ui.mode, ui.floorId]);
 
   // real sun position for the sun study
   useEffect(() => {
@@ -684,7 +699,8 @@ function App() {
     const onKey = (e) => {
       if (e.key === 'Escape' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) {
         if (getUI().drawer) closeDrawer();
-        else if (getUI().selection) setUI({ selection: null });
+        // the floor plan handles Esc itself (first the selected element, then the room focus)
+        else if (getUI().selection && getUI().view !== 'grundriss') setUI({ selection: null });
       }
     };
     window.addEventListener('keydown', onKey);

@@ -426,13 +426,19 @@ export function FurnitureSymbol({ f, px, sel, ghost }) {
 }
 
 // all pieces of a floor; rugs first so everything else lies on top
-export function PlanFurniture({ list, sel, px }) {
+export function PlanFurniture({ list, sel, px, faded }) {
   const sorted = [...(list || [])].sort((a, b) => (furnType(a.type).kind === 'rug' ? 0 : 1) - (furnType(b.type).kind === 'rug' ? 0 : 1));
   return (
     <g className="svg-furniture">
-      {sorted.map((f) => (
-        <FurnitureSymbol key={f.id} f={f} px={px} sel={sel?.kind === 'furn' && sel.id === f.id} />
-      ))}
+      {sorted.map((f) =>
+        faded ? (
+          <g key={f.id} className={faded(f) ? 'is-faded' : undefined}>
+            <FurnitureSymbol f={f} px={px} sel={sel?.kind === 'furn' && sel.id === f.id} />
+          </g>
+        ) : (
+          <FurnitureSymbol key={f.id} f={f} px={px} sel={sel?.kind === 'furn' && sel.id === f.id} />
+        ),
+      )}
     </g>
   );
 }

@@ -1,7 +1,8 @@
 // Floor plan editor: walls, openings, rooms, stairs, roof sections and a traceable underlay image.
 import { Icon, ICON_PATHS } from './icons.jsx';
 import { Btn, IconBtn, Field, TextInput, NumInput, Select, Toggle, Pill, Sheet, Seg, ConfirmBtn, Empty } from './common.jsx';
-import { useUI, setUI, openDrawer, toast, go } from './state.js';
+import { useUI, setUI, getUI, openDrawer, toast, go } from './state.js';
+import { roomFocus } from '../focus.js';
 import { downscaleImage } from './documents.jsx';
 import { ROOM_TYPES, roomType, ROOM_COLORS, LINE_KINDS, LINE_ZONES, lineKind, FIXTURE_KINDS, fixtureKind, fixtureZ } from '../catalog.js';
 import { DocList, UploadButton } from './documents.jsx';
@@ -474,6 +475,16 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
   const [furnKey, setFurnKey] = useState('sofa3');
   const [hlSide, setHlSide] = useState(null); // {roomId, i, wallIds} while a room side length is edited
   const ui = useUI();
+  // a selected room becomes the focus (shared with the 3D model): it stays as it is, the rest is faded
+  useEffect(() => {
+    if (ctx || sel?.kind !== 'room') return;
+    const cur = getUI().selection;
+    if (cur?.type === 'room' && cur.roomId === sel.id) return;
+    setUI({ selection: { type: 'room', floorId: floor.id, roomId: sel.id } });
+  }, [sel?.kind, sel?.id]);
+  const clearFocus = () => {
+    if (getUI().selection?.type === 'room') setUI({ selection: null });
+  };
   const showLines = ui.planLines !== false || tool === 'line' || tool === 'riser' || tool === 'fixture';
   const showFurn = ui.planFurniture !== false || tool === 'furniture';
   const hist = useRef({ undo: [], redo: [] });
@@ -605,7 +616,8 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
         if (chain) finishChain();
         else if (measure) setMeasure(null);
         else if (calib) setCalib(null);
-        else setSel(null);
+        else if (sel) setSel(null);
+        else clearFocus();
       }
       if ((e.key === 'Delete' || e.key === 'Backspace') && sel && document.activeElement?.id !== 'plan-typed') {
         e.preventDefault();
@@ -1062,7 +1074,10 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
     pointers.current.delete(e.pointerId);
     if (pointers.current.size < 2) pinch.current = null;
     if (!drag) return;
-    if (drag.kind === 'pan' && drag.clear && !drag.moved) setSel(null);
+    if (drag.kind === 'pan' && drag.clear && !drag.moved) {
+      setSel(null);
+      clearFocus();
+    }
     if (drag.moved && drag.from) {
       hist.current.undo.push(JSON.stringify(drag.from));
       hist.current.redo = [];
@@ -1182,6 +1197,9 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
   const selDim = sel?.kind === 'dim' ? dims.find((d) => d.id === sel.id) : null;
   const selFurn = sel?.kind === 'furn' ? furniture.find((x) => x.id === sel.id) : null;
   const hlRoom = hlSide && selRoom?.id === hlSide.roomId ? selRoom : null;
+  const focusSel = !ctx && ui.selection?.type === 'room' && ui.selection.floorId === floor.id ? ui.selection : null;
+  const focus = focusSel ? roomFocus((floor.rooms || []).find((r) => r.id === focusSel.roomId), floor) : null;
+  const fade = (belongs) => (focus && !belongs ? 'is-faded' : undefined);
   const hints = {
     select: selFurn ? 'Möbel ziehen verschiebt es (rastet an Wänden ein, Alt = frei), runder Griff dreht, Eckquadrat ändert die Größe. R dreht um 90°, Pfeiltasten verschieben um 1 cm.' : 'Klicken wählt Wände, Öffnungen, Räume, Treppen und Möbel. Wand ziehen verschiebt sie, Endpunkte ziehen ändert die Länge. Leere Fläche ziehen verschiebt die Ansicht.',
     furniture: `${furnType(furnKey).name} (${Math.round(furnType(furnKey).w * 100)} × ${Math.round(furnType(furnKey).d * 100)} cm): in den Grundriss klicken zum Platzieren. Ziehen verschiebt, runder Griff dreht, Eckquadrat ändert die Größe.`,
@@ -1241,6 +1259,17 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
             <IconBtn icon="redo" label="Wiederholen (Strg+Y)" onClick={redo} disabled={!hist.current.redo.length} />
             <FullBtn />
           </div>
+          {focus ? (
+            <div className="plan-focus" role="status">
+              <span className="plan-focus-dot" aria-hidden="true" />
+              <span className="plan-focus-txt">
+                Fokus: <b>{focus.room.name || roomType(focus.room.type).name}</b> · {fmtFixed(roomArea(focus.room), 1)} m²
+              </span>
+              <button type="button" className="plan-focus-x" aria-label="Fokus aufheben" title="Fokus aufheben (Esc)" onClick={() => { setSel(null); clearFocus(); }}>
+                <Icon name="x" size={14} />
+              </button>
+            </div>
+          ) : null}
           <svg
             ref={svgRef}
             width={size.w}
@@ -1275,9 +1304,16 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
                 ? (below.walls || []).map((w) => <line key={'g' + w.id} x1={w.a[0]} y1={w.a[1]} x2={w.b[0]} y2={w.b[1]} className="svg-ghost" strokeWidth={w.t} opacity="0.35" />)
                 : null}
               {(floor.rooms || []).map((r) => (
-                <polygon key={r.id} points={ptsAttr(r.poly || [])} fill={ROOM_COLORS[r.type] || ROOM_COLORS.sonstiges} className={`svg-room ${sel?.id === r.id ? 'sel' : ''}`} strokeWidth={sel?.id === r.id ? px(2) : 0} vectorEffect="non-scaling-stroke" />
+                <polygon
+                  key={r.id}
+                  points={ptsAttr(r.poly || [])}
+                  fill={ROOM_COLORS[r.type] || ROOM_COLORS.sonstiges}
+                  className={`svg-room ${sel?.id === r.id ? 'sel' : ''} ${focus ? (focus.room.id === r.id ? 'is-focus' : 'is-faded') : ''}`}
+                  strokeWidth={sel?.id === r.id ? px(2) : focus?.room.id === r.id ? px(2.5) : 0}
+                  vectorEffect="non-scaling-stroke"
+                />
               ))}
-              {showFurn ? <PlanFurniture list={furniture} sel={sel} px={px} /> : null}
+              {showFurn ? <PlanFurniture list={furniture} sel={sel} px={px} faded={focus ? (f) => !focus.furn.has(f.id) : null} /> : null}
               {(floor.items || [])
                 .filter((it) => it.type === 'stairs')
                 .map((it) => {
@@ -1292,7 +1328,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
                   const c = [it.x + (it.dir === 'e' || it.dir === 'w' ? it.l : it.w) / 2, it.y + (it.dir === 'e' || it.dir === 'w' ? it.w : it.l) / 2];
                   const ang = { n: -90, s: 90, e: 0, w: 180 }[it.dir] || -90;
                   return (
-                    <g key={it.id}>
+                    <g key={it.id} className={fade(focus?.items.has(it.id))}>
                       <polygon points={ptsAttr(poly)} className="svg-stairs" strokeWidth={px(sel?.id === it.id ? 2.5 : 1)} style={sel?.id === it.id ? { stroke: 'var(--accent)' } : undefined} />
                       <g stroke="var(--ink-3)" strokeWidth={px(1)}>
                         {lines}
@@ -1305,7 +1341,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
                   );
                 })}
               {walls.map((w) => (
-                <g key={w.id}>
+                <g key={w.id} className={fade(focus?.walls.has(w.id))}>
                   {wallSolidPolys(w).map((poly, i) => (
                     <polygon key={i} points={ptsAttr(poly)} className={`svg-wall ${w.ext ? 'ext' : ''} ${sel?.kind === 'wall' && sel.id === w.id ? 'sel' : ''}`} />
                   ))}
@@ -1347,7 +1383,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
                 const lp = labelPoint(r.poly);
                 const fs = Math.min(px(13), 0.45);
                 return (
-                  <g key={'l' + r.id}>
+                  <g key={'l' + r.id} className={fade(focus?.room.id === r.id)}>
                     <text x={lp[0]} y={lp[1] - fs * 0.15} textAnchor="middle" className="svg-room-label" fontSize={fs} fontWeight="600">
                       {r.name}
                     </text>
@@ -1358,8 +1394,8 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
                 );
               })}
               {showLines ? <PassingRisers floor={floor} floors={floors} px={px} /> : null}
-              {showLines ? <PlanLines lines={lines} sel={sel} px={px} /> : null}
-              {showLines ? <PlanPoints points={points} sel={sel} px={px} /> : null}
+              {showLines ? <PlanLines lines={lines} sel={sel} px={px} faded={focus ? (l) => !focus.lines.has(l.id) : null} /> : null}
+              {showLines ? <PlanPoints points={points} sel={sel} px={px} faded={focus ? (q) => !focus.points.has(q.id) : null} /> : null}
               {chain && tool === 'line' ? <LinePreview pts={chain.pts} cursor={cursor?.p} kind={lineOpts.kind} px={px} /> : null}
               {cursor?.furn && tool === 'furniture' ? <FurnitureSymbol f={cursor.furn} px={px} ghost /> : null}
               {selFurn && showFurn ? <FurnitureHandles f={selFurn} px={px} s={s} /> : null}
@@ -1506,7 +1542,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
   );
 }
 
-function PlanLines({ lines, sel, px }) {
+function PlanLines({ lines, sel, px, faded }) {
   return (
     <g>
       {lines.map((l) => {
@@ -1518,7 +1554,7 @@ function PlanLines({ lines, sel, px }) {
         const vert = [];
         for (let i = 1; i < (l.pts || []).length; i++) if (same(l.pts[i - 1], l.pts[i], 0.002) && Math.abs((l.pts[i][2] ?? 0) - (l.pts[i - 1][2] ?? 0)) > 0.005) vert.push(l.pts[i]);
         return (
-          <g key={l.id} opacity={l.status === 'stillgelegt' ? 0.55 : 1}>
+          <g key={l.id} opacity={l.status === 'stillgelegt' ? 0.55 : 1} className={faded?.(l) ? 'is-faded' : undefined}>
             {isSel && pp.length > 1 ? <polyline points={ptsAttr(pp)} fill="none" stroke="var(--accent)" strokeOpacity="0.35" strokeWidth={px(10)} strokeLinecap="round" strokeLinejoin="round" /> : null}
             {pp.length > 1 ? <polyline points={ptsAttr(pp)} fill="none" stroke={k.color} strokeWidth={px(isSel ? 3.6 : 2.8)} strokeLinecap="round" strokeLinejoin="round" strokeDasharray={dash} /> : null}
             {l.riser ? (
@@ -1544,7 +1580,7 @@ function FixtureGlyph({ kind, size, color, strokeWidth = 2.1 }) {
   return <path d={ICON_PATHS[k.icon]} transform={`translate(${-size / 2},${-size / 2}) scale(${sc})`} fill="none" stroke={color || k.color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />;
 }
 
-function PlanPoints({ points, sel, px }) {
+function PlanPoints({ points, sel, px, faded }) {
   return (
     <g>
       {points.map((q) => {
@@ -1552,7 +1588,7 @@ function PlanPoints({ points, sel, px }) {
         const isSel = sel?.kind === 'point' && sel.id === q.id;
         const r = px(9.5);
         return (
-          <g key={q.id} transform={`translate(${q.x},${q.y})`} opacity={q.status === 'stillgelegt' ? 0.5 : 1}>
+          <g key={q.id} transform={`translate(${q.x},${q.y})`} opacity={q.status === 'stillgelegt' ? 0.5 : 1} className={faded?.(q) ? 'is-faded' : undefined}>
             <title>{`${q.label || k.name}${q.count > 1 ? ` (${q.count}-fach)` : ''} · ${fmtFixed(q.z ?? 0, 2)} m`}</title>
             {isSel ? <circle r={r + px(4)} fill="var(--accent)" fillOpacity="0.25" /> : null}
             <circle r={r} fill="var(--surface)" stroke={isSel ? 'var(--accent)' : k.color} strokeWidth={px(isSel ? 2.4 : 1.8)} strokeDasharray={q.status === 'geplant' ? `${px(3)} ${px(2)}` : undefined} />

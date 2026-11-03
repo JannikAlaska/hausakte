@@ -12,6 +12,7 @@ import { sortFloors, roomArea, isDone } from './metrics.js';
 import { sunPosition, sunVector, yearSteps, poa, houseGeo, shadeColor } from './solar.js';
 import { fmtFixed, fmtDayMonth, todayISO, escapeHtml } from './util.js';
 import { furnitureParts, furnType } from './furniture.js';
+import { roomFocus } from './focus.js';
 
 
 
@@ -505,8 +506,13 @@ export class HouseScene {
     const top = C('#cfd0d6');
     const reveal = C('#e9e8e4');
 
+    // room focus: the selected room stays as it is, everything else is faded
+    const fs = this.focus && floors.find((f) => f.id === this.focus.floorId);
+    const focus = fs ? roomFocus((fs.rooms || []).find((r) => r.id === this.focus.roomId), fs) : null;
+    if (focus) focus.floorId = fs.id;
+    this.focusInfo = focus;
     floors.forEach((f, i) => {
-      const entry = this.buildStorey(f, { below: floors[i - 1], index: i, roofs, facade, interior, top, reveal });
+      const entry = this.buildStorey(f, { below: floors[i - 1], index: i, roofs, facade, interior, top, reveal, focus });
       this.houseGroup.add(entry.group);
       this.floorEntries.push(entry);
     });
@@ -526,11 +532,27 @@ export class HouseScene {
   }
 
   // One storey (or an outbuilding drawn with walls): slab, walls with openings, rooms, stairs, lines and connection points.
-  buildStorey(f, { below = null, index = 0, roofs = [], facade, interior, top, reveal, ctx = false }) {
+  buildStorey(f, { below = null, index = 0, roofs = [], facade, interior, top, reveal, ctx = false, focus = null }) {
     const group = new THREE.Group();
     group.userData.floorId = f.id;
     const pick = (m) => !ctx && this.pickables.push(m);
     const entry = { floor: f, group, offset: 0, target: 0, visible: true, wantVisible: true, wallMats: [], labelObjs: [], roomLabels: [], index };
+    // room focus: on another storey everything is faded, on the focus storey what is outside the room
+    const fadeAll = !!focus && !ctx && f.id !== focus.floorId;
+    const onFocus = !!focus && !ctx && f.id === focus.floorId;
+    const fadeMat = (m, opacity = 0.26) => {
+      m.transparent = true;
+      m.opacity = Math.min(m.opacity ?? 1, opacity);
+      m.depthWrite = false;
+      m.userData.faded = true;
+      return m;
+    };
+    // shared materials get a faded copy for this storey
+    const faded = (m) => {
+      const c = fadeMat(m.clone());
+      entry.wallMats.push(c);
+      return c;
+    };
     const outline = outlineFromWalls(f.walls || []);
     const outer = outerOutline(f.walls || []);
     const wallTop = f.height - (f.slab ?? 0.2);
@@ -539,7 +561,7 @@ export class HouseScene {
     // slab under this floor (with stair openings from the floor below)
     if (outer) {
       const holes = (below?.items || []).filter((it) => it.type === 'stairs').map((it) => stairHole(it, below.height));
-      const slab = new THREE.Mesh(slabGeometry(outer, f.slab ?? 0.2, holes), [this.mats.slabCap, this.mats.slabSide]);
+      const slab = new THREE.Mesh(slabGeometry(outer, f.slab ?? 0.2, holes), fadeAll ? [faded(this.mats.slabCap), faded(this.mats.slabSide)] : [this.mats.slabCap, this.mats.slabSide]);
       slab.position.y = f.elevation;
       slab.castShadow = slab.receiveShadow = true;
       slab.userData.pick = { type: 'floor', floorId: f.id };
@@ -563,12 +585,12 @@ export class HouseScene {
     // walls, grouped by the roof section that clips them
     const clip = !!f.underRoof && roofs.length > 0;
     const buckets = new Map();
-    const frames = [],
-      glass = [],
-      doors = [];
+    const parts = { 0: { frames: [], glass: [], doors: [] }, 1: { frames: [], glass: [], doors: [] } };
     for (const w of f.walls || []) {
       const L = Math.hypot(w.b[0] - w.a[0], w.b[1] - w.a[1]);
       if (L < 0.01) continue;
+      const fade = fadeAll || (onFocus && !focus.walls.has(w.id)) ? 1 : 0;
+      const { frames, glass, doors } = parts[fade];
       const ext = !!w.ext;
       const e = ext ? w.t / 2 : 0;
       let H = w.h ?? wallTop;
@@ -594,8 +616,9 @@ export class HouseScene {
         const k = roofs.findIndex((r) => mid[0] >= r.sec.x - 0.5 && mid[0] <= r.sec.x + r.sec.w + 0.5 && mid[1] >= r.sec.y - 0.5 && mid[1] <= r.sec.y + r.sec.d + 0.5);
         sec = k < 0 ? 0 : k;
       }
-      if (!buckets.has(sec)) buckets.set(sec, []);
-      const geos = buckets.get(sec);
+      const bkey = sec + '|' + fade;
+      if (!buckets.has(bkey)) buckets.set(bkey, []);
+      const geos = buckets.get(bkey);
       const ops = [...(w.openings || [])].sort((a, b) => a.pos - b.pos);
       let cur = -e;
       for (const o of ops) {
@@ -623,12 +646,14 @@ export class HouseScene {
       }
       if (L + e > cur) geos.push(wallBox(w, cur, L + e, 0, H, w.t, cols));
     }
-    for (const [secIdx, geos] of buckets) {
+    for (const [bkey, geos] of buckets) {
+      const [secIdx, fade] = bkey.split('|').map(Number);
       const list = geos.filter(Boolean);
       if (!list.length) continue;
       const merged = mergeGeometries(list);
       list.forEach((g) => g.dispose());
       const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, metalness: 0, emissive: '#000000' });
+      if (fade) fadeMat(mat, 0.24);
       if (clip) {
         const planes = sectionClipPlanes(roofs[secIdx].geo).map((p) => ({ base: p, plane: new THREE.Plane() }));
         mat.clippingPlanes = planes.map((p) => p.plane);
@@ -637,7 +662,8 @@ export class HouseScene {
       }
       const mesh = new THREE.Mesh(merged, mat);
       mesh.position.y = f.elevation;
-      mesh.castShadow = mesh.receiveShadow = true;
+      mesh.castShadow = !fade;
+      mesh.receiveShadow = true;
       mesh.userData.pick = { type: 'floor', floorId: f.id };
       group.add(mesh);
       entry.wallMats.push(mat);
@@ -651,9 +677,12 @@ export class HouseScene {
       m.castShadow = true;
       group.add(m);
     };
-    addMerged(glass, this.mats.glass);
-    addMerged(frames, this.mats.frame);
-    addMerged(doors, this.mats.door);
+    addMerged(parts[0].glass, this.mats.glass);
+    addMerged(parts[0].frames, this.mats.frame);
+    addMerged(parts[0].doors, this.mats.door);
+    if (parts[1].glass.length) addMerged(parts[1].glass, faded(this.mats.glass));
+    if (parts[1].frames.length) addMerged(parts[1].frames, faded(this.mats.frame));
+    if (parts[1].doors.length) addMerged(parts[1].doors, faded(this.mats.door));
 
     // rooms
     for (const room of f.rooms || []) {
@@ -664,6 +693,11 @@ export class HouseScene {
         color: ROOM_COLORS[room.type] || ROOM_COLORS.sonstiges, roughness: 1, side: THREE.DoubleSide,
         polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, emissive: '#000000',
       });
+      const isFocus = onFocus && focus.room.id === room.id;
+      if ((fadeAll || onFocus) && !isFocus) {
+        mat.color.lerp(C('#ffffff'), 0.55);
+        fadeMat(mat, 0.6);
+      }
       const mesh = new THREE.Mesh(g, mat);
       mesh.position.y = f.elevation + 0.012;
       mesh.receiveShadow = true;
@@ -682,6 +716,7 @@ export class HouseScene {
         () => this.opts.onPick?.({ type: 'room', floorId: f.id, roomId: room.id }),
       );
       lbl.position.set(lp[0], f.elevation + 0.3, lp[1]);
+      if (fadeAll || onFocus) lbl.element.classList.add(isFocus ? 'is-focus' : 'is-faded');
       group.add(lbl);
       entry.roomLabels.push(lbl);
     }
@@ -706,7 +741,7 @@ export class HouseScene {
         riser.translate(gx, h - rise / 2 - 0.05, gz);
         geos.push(tread, riser);
       }
-      const m = new THREE.Mesh(mergeGeometries(geos), this.mats.stairs);
+      const m = new THREE.Mesh(mergeGeometries(geos), fadeAll || (onFocus && !focus.items.has(it.id)) ? faded(this.mats.stairs) : this.mats.stairs);
       geos.forEach((g) => g.dispose());
       m.position.y = f.elevation;
       m.castShadow = m.receiveShadow = true;
@@ -719,7 +754,20 @@ export class HouseScene {
       // garden furniture outside the house stands on the ground, not on the floor level
       const ground = this.data?.house?.model?.groundLevel ?? 0;
       const nearGround = !ctx && outer && Math.abs(f.elevation - ground) < 1.5;
-      const { grp, mats } = furnitureGroup(furn, (x) => (nearGround && !pointInPoly([x.x, x.y], outer) ? ground : f.elevation));
+      const baseOf = (x) => (nearGround && !pointInPoly([x.x, x.y], outer) ? ground : f.elevation);
+      const grp = new THREE.Group();
+      const mats = [];
+      // room focus: furniture outside the room is faded
+      const keep = fadeAll ? [] : onFocus ? furn.filter((x) => focus.furn.has(x.id)) : furn;
+      const fade = fadeAll ? furn : onFocus ? furn.filter((x) => !focus.furn.has(x.id)) : [];
+      for (const [list, isFaded] of [[keep, false], [fade, true]]) {
+        if (!list.length) continue;
+        const r = furnitureGroup(list, baseOf);
+        if (isFaded) r.mats.forEach((m) => fadeMat(m, 0.28));
+        grp.add(r.grp);
+        mats.push(...r.mats);
+      }
+      grp.userData.noShade = true;
       grp.visible = this.view.showFurniture !== false;
       group.add(grp);
       entry.furnGroup = grp;
@@ -1769,6 +1817,11 @@ export class HouseScene {
 
   setSelection(sel) {
     this.selection = sel;
+    const focus = sel?.type === 'room' ? { floorId: sel.floorId, roomId: sel.roomId } : null;
+    if (JSON.stringify(focus) !== JSON.stringify(this.focus || null)) {
+      this.focus = focus;
+      if (this.data) return this.rebuild();
+    }
     this.applySelection();
   }
 
