@@ -1,0 +1,9 @@
+Build 1 · abde3cb03371dd13607c1ef6b926510fb39d39b7
+Xcode 16.4
+Build version 16F6
+⚙️  Generating plists...
+⚙️  Generating project...
+⚙️  Writing project...
+Created project at /Users/runner/work/hausakte/hausakte/ios/Hausakte.xcodeproj
+** BUILD SUCCEEDED **
+Ohne Apple-Schlüssel: nur kompiliert, nicht signiert (siehe Kopf dieser Datei).
