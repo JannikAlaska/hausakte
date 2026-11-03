@@ -7,8 +7,20 @@ const VIEWS = ['cockpit', 'modell', 'grundriss', 'gebaeude', 'projekte', 'verbra
 const ALIAS = { rechnungen: { view: 'dokumente', docTab: 'rechnungen' }, notizen: { view: 'dokumente', docTab: 'notizen' }, kontakte: { view: 'dokumente', docTab: 'kontakte' } };
 const routeOf = (h) => ALIAS[h] || { view: VIEWS.includes(h) ? h : 'cockpit' };
 
+// walls hidden in the 3D model: a view setting of this device (not part of the house data)
+const HW_KEY = 'hausakte-hidden-walls';
+function loadHiddenWalls() {
+  try {
+    const v = JSON.parse(localStorage.getItem(HW_KEY) || '[]');
+    return Array.isArray(v) ? v.filter((x) => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
 let ui = {
   ...routeFromHash(),
+  hiddenWalls: loadHiddenWalls(),
   mode: 'all', // 'all' | 'floor' | 'explode'
   floorId: null,
   showRoof: true,
@@ -83,3 +95,13 @@ export function useData() {
 export function showFloor(floorId) {
   setUI({ mode: 'floor', floorId });
 }
+
+export function setHiddenWalls(ids) {
+  const list = [...new Set(ids)];
+  try {
+    localStorage.setItem(HW_KEY, JSON.stringify(list));
+  } catch {}
+  setUI({ hiddenWalls: list });
+}
+export const hideWall = (id) => setHiddenWalls([...getUI().hiddenWalls, id]);
+export const showWall = (id) => setHiddenWalls(getUI().hiddenWalls.filter((x) => x !== id));

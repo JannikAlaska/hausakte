@@ -1,7 +1,7 @@
 // Floor plan editor: walls, openings, rooms, stairs, roof sections and a traceable underlay image.
 import { Icon, ICON_PATHS } from './icons.jsx';
 import { Btn, IconBtn, Field, TextInput, NumInput, Select, Toggle, Pill, Sheet, Seg, ConfirmBtn, Empty } from './common.jsx';
-import { useUI, setUI, getUI, openDrawer, toast, go } from './state.js';
+import { useUI, setUI, getUI, openDrawer, toast, go, hideWall, showWall } from './state.js';
 import { roomFocus } from '../focus.js';
 import { downscaleImage } from './documents.jsx';
 import { ROOM_TYPES, roomType, ROOM_COLORS, LINE_KINDS, LINE_ZONES, lineKind, FIXTURE_KINDS, fixtureKind, fixtureZ } from '../catalog.js';
@@ -1200,6 +1200,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
   const focusSel = !ctx && ui.selection?.type === 'room' && ui.selection.floorId === floor.id ? ui.selection : null;
   const focus = focusSel ? roomFocus((floor.rooms || []).find((r) => r.id === focusSel.roomId), floor) : null;
   const fade = (belongs) => (focus && !belongs ? 'is-faded' : undefined);
+  const hiddenSet = new Set(ui.hiddenWalls || []);
   const hints = {
     select: selFurn ? 'Möbel ziehen verschiebt es (rastet an Wänden ein, Alt = frei), runder Griff dreht, Eckquadrat ändert die Größe. R dreht um 90°, Pfeiltasten verschieben um 1 cm.' : 'Klicken wählt Wände, Öffnungen, Räume, Treppen und Möbel. Wand ziehen verschiebt sie, Endpunkte ziehen ändert die Länge. Leere Fläche ziehen verschiebt die Ansicht.',
     furniture: `${furnType(furnKey).name} (${Math.round(furnType(furnKey).w * 100)} × ${Math.round(furnType(furnKey).d * 100)} cm): in den Grundriss klicken zum Platzieren. Ziehen verschiebt, runder Griff dreht, Eckquadrat ändert die Größe.`,
@@ -1343,7 +1344,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
               {walls.map((w) => (
                 <g key={w.id} className={fade(focus?.walls.has(w.id))}>
                   {wallSolidPolys(w).map((poly, i) => (
-                    <polygon key={i} points={ptsAttr(poly)} className={`svg-wall ${w.ext ? 'ext' : ''} ${sel?.kind === 'wall' && sel.id === w.id ? 'sel' : ''}`} />
+                    <polygon key={i} points={ptsAttr(poly)} className={`svg-wall ${w.ext ? 'ext' : ''} ${sel?.kind === 'wall' && sel.id === w.id ? 'sel' : ''} ${!ctx && hiddenSet.has(w.id) ? 'is-hidden3d' : ''}`} />
                   ))}
                   {(w.openings || []).map((o) => {
                     const { u, n } = wallFrame(w);
@@ -1497,7 +1498,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
         ) : selFurn ? (
           <FurnitureProps f={selFurn} floor={floor} mutate={mutate} onDelete={deleteSelection} onSelect={(id) => setSel({ kind: 'furn', id })} />
         ) : selWall ? (
-          <WallProps w={selWall} walls={walls} mutate={mutate} onDelete={deleteSelection} onSelectOpening={(o) => setSel({ kind: 'opening', id: o.id, wallId: selWall.id })} />
+          <WallProps w={selWall} walls={walls} mutate={mutate} onDelete={deleteSelection} onSelectOpening={(o) => setSel({ kind: 'opening', id: o.id, wallId: selWall.id })} can3d={!ctx} />
         ) : selOpening ? (
           <OpeningProps o={selOpening} w={walls.find((w) => w.id === sel.wallId)} mutate={mutate} onDelete={deleteSelection} />
         ) : selRoom ? (
@@ -2185,7 +2186,9 @@ function CalibrationPrompt({ onApply, onCancel }) {
 }
 
 // ---------- property panels ----------
-function WallProps({ w, walls = [], mutate, onDelete, onSelectOpening }) {
+function WallProps({ w, walls = [], mutate, onDelete, onSelectOpening, can3d }) {
+  const ui = useUI();
+  const hidden3d = (ui.hiddenWalls || []).includes(w.id);
   const { L, u } = wallFrame(w);
   const pieces = useMemo(() => splitAtJunctions(walls, w.id).length - walls.length + 1, [walls, w.id]);
   const set = (patch, opts) => mutate((f) => ({ ...f, walls: f.walls.map((x) => (x.id === w.id ? { ...x, ...patch } : x)) }), opts);
@@ -2237,6 +2240,7 @@ function WallProps({ w, walls = [], mutate, onDelete, onSelectOpening }) {
         </Field>
       ) : null}
       <Toggle checked={w.ext} onChange={(v) => set({ ext: v })} label="Außenwand" />
+      {can3d ? <Toggle checked={hidden3d} onChange={(v) => (v ? hideWall(w.id) : showWall(w.id))} label="Im 3D-Modell ausblenden" /> : null}
       {w.ext ? (
         <Field label="Außenseite grenzt an" hint="Für den Heizlast-Check">
           <Select value={w.adj || ''} onChange={(v) => set({ adj: v || undefined }, { refresh: false })} options={[{ value: '', label: 'Automatisch (aus Lageplan)' }, ...ADJ.map((a) => ({ value: a.key, label: a.name }))]} />

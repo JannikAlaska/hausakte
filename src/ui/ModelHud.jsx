@@ -1,6 +1,6 @@
 import { Icon } from './icons.jsx';
 import { IconBtn, Seg, Btn, Pill } from './common.jsx';
-import { useUI, setUI, openDrawer, go, showFloor } from './state.js';
+import { useUI, setUI, openDrawer, go, showFloor, hideWall, setHiddenWalls, toast } from './state.js';
 import { portfolio, sortFloors, floorStats, componentWear, isDone, roomArea, buildingStats, liveProjects } from '../metrics.js';
 import { projectKind, status as statusOf, roomType } from '../catalog.js';
 import { ROOF_TYPES } from '../roof.js';
@@ -96,6 +96,8 @@ export function FloorPanel({ data, compact }) {
   const pointCount = storeys.reduce((n, f) => n + (f.points || []).length, 0);
   const furnCount = storeys.reduce((n, f) => n + (f.furniture || []).length, 0);
   const furnOn = ui.showFurniture !== false;
+  const hidden = new Set(ui.hiddenWalls || []);
+  const hiddenCount = floors.reduce((n, f) => n + (f.walls || []).filter((w) => hidden.has(w.id)).length, 0);
   return (
     <div className={`floorpanel ${compact ? 'is-compact' : ''}`}>
       <div className="fp-head">
@@ -155,6 +157,22 @@ export function FloorPanel({ data, compact }) {
             </span>
           </button>
         </li>
+        {hiddenCount ? (
+          <li>
+            <button className="fp-row is-on" onClick={() => setHiddenWalls([])} title="Alle ausgeblendeten Wände wieder einblenden">
+              <span className="fp-short">
+                <Icon name="wall" size={15} />
+              </span>
+              <span className="fp-name">
+                <b>Ausgeblendete Wände</b>
+                <span>{hiddenCount} · alle einblenden</span>
+              </span>
+              <span className="fp-aside">
+                <Icon name="eye" size={15} />
+              </span>
+            </button>
+          </li>
+        ) : null}
         {floors.map((f) => {
           const st = floorStats(f);
           const on = ui.mode === 'floor' && ui.floorId === f.id;
@@ -304,6 +322,52 @@ export function SelectionCard({ data }) {
             Dach bearbeiten
           </Btn>
           <IconBtn icon="x" label="Auswahl aufheben" onClick={() => setUI({ selection: null })} />
+        </div>
+      </div>
+    );
+  }
+  if (sel.type === 'wall') {
+    const f = data.floors[sel.floorId];
+    const w = f?.walls?.find((x) => x.id === sel.wallId);
+    if (!w) return null;
+    const L = Math.hypot(w.b[0] - w.a[0], w.b[1] - w.a[1]);
+    const n = (w.openings || []).length;
+    const back = () => setUI({ selection: sel.focus || null });
+    return (
+      <div className="selcard">
+        <div className="sel-crumb">
+          {f.short} · {f.name}
+        </div>
+        <div className="sel-main">
+          <span className="sel-swatch wall" aria-hidden="true">
+            <Icon name="wall" size={16} />
+          </span>
+          <div>
+            <b>{w.ext ? 'Außenwand' : 'Innenwand'}</b>
+            <div className="sel-meta">
+              <Pill tone="accent">{fmtFixed(L, 2)} m</Pill>
+              <span>{fmtFixed((w.t || 0) * 100, 1)} cm dick</span>
+              {n ? <span>{n} {n === 1 ? 'Öffnung' : 'Öffnungen'}</span> : null}
+            </div>
+          </div>
+        </div>
+        <div className="sel-actions">
+          <Btn
+            small
+            kind="primary"
+            icon="eyeOff"
+            onClick={() => {
+              hideWall(w.id);
+              back();
+              toast('Wand ausgeblendet. Zurückholen: „Ausgeblendete Wände“ in der Etagen-Liste.', 'ok', 4500);
+            }}
+          >
+            Ausblenden
+          </Btn>
+          <Btn small kind="ghost" icon="plan" onClick={() => { setUI({ floorId: f.id }); go('grundriss'); }}>
+            Grundriss
+          </Btn>
+          <IconBtn icon="x" label="Auswahl aufheben" onClick={back} />
         </div>
       </div>
     );

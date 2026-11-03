@@ -49,6 +49,8 @@ function SceneView({ data, sceneRef }) {
         if (hit.type === 'project') return openDrawer({ type: 'project', id: hit.projectId });
         // a room becomes the focus; in the whole-house view its storey is opened so it can be seen
         if (hit.type === 'room') return setUI(u.mode === 'all' && u.view === 'modell' ? { selection: hit, mode: 'floor', floorId: hit.floorId } : { selection: hit });
+        // a wall: selectable (to hide it); a focused room stays focused meanwhile
+        if (hit.type === 'wall') return setUI({ selection: { ...hit, focus: u.selection?.type === 'room' ? u.selection : u.selection?.focus || null } });
         if (hit.type === 'floor') return setUI({ selection: hit });
         if (hit.type === 'roof') return setUI({ selection: hit });
       },
@@ -91,6 +93,10 @@ function SceneView({ data, sceneRef }) {
       else s.setView({ mode: 'all', floorId: null, showRoof: true, showLabels: ui.showLabels, showLines, showFurniture });
     } else s.setView({ mode: ui.mode, floorId: ui.floorId, showRoof: ui.showRoof, showLabels: ui.showLabels, showLines: ui.showLines === true, showFurniture: ui.showFurniture !== false });
   }, [ui.view, ui.mode, ui.floorId, ui.showRoof, ui.showLabels, ui.showLines, ui.planLines, ui.showFurniture, ui.planFurniture, data.house]);
+
+  useEffect(() => {
+    sceneRef.current?.setHiddenWalls(ui.hiddenWalls);
+  }, [ui.hiddenWalls]);
 
   useEffect(() => {
     sceneRef.current?.setSelection(ui.selection);

@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { outerOutline, outlineFromWalls, pointInPoly, labelPoint, polyCentroid, polyArea, norm, sub, perp, offsetPolygon, bbox, planarFaces, wallSegs, distToPolyEdges } from './geometry.js';
+import { outerOutline, outlineFromWalls, pointInPoly, labelPoint, polyCentroid, polyArea, norm, sub, perp, offsetPolygon, bbox, planarFaces, wallSegs, distToPolyEdges, distToSeg } from './geometry.js';
 import { roofModel, sectionClipPlanes, pvPotential, sectionGeometry } from './roof.js';
 import { roomType, projectKind, status as statusOf, ROOM_COLORS, lineKind, fixtureKind } from './catalog.js';
 import { sortFloors, roomArea, isDone } from './metrics.js';
@@ -348,6 +348,15 @@ function panelTexture() {
   return t;
 }
 
+// a wall as one plain box in plan coordinates (x, height, plan y), from the floor up to height H
+function wallSolid(w, H) {
+  const L = Math.hypot(w.b[0] - w.a[0], w.b[1] - w.a[1]);
+  const g = new THREE.BoxGeometry(L, H, w.t || 0.2);
+  g.rotateY(-Math.atan2(w.b[1] - w.a[1], w.b[0] - w.a[0]));
+  g.translate((w.a[0] + w.b[0]) / 2, H / 2, (w.a[1] + w.b[1]) / 2);
+  return g;
+}
+
 function makeLabel(html, cls, onClick) {
   const el = document.createElement('div');
   el.className = 'tag3d ' + (cls || '');
@@ -586,9 +595,15 @@ export class HouseScene {
     const clip = !!f.underRoof && roofs.length > 0;
     const buckets = new Map();
     const parts = { 0: { frames: [], glass: [], doors: [] }, 1: { frames: [], glass: [], doors: [] } };
+    const hiddenHere = [];
     for (const w of f.walls || []) {
       const L = Math.hypot(w.b[0] - w.a[0], w.b[1] - w.a[1]);
       if (L < 0.01) continue;
+      // hidden in the 3D model: only a thin outline shows where it stands
+      if (!ctx && this.hiddenWalls?.has(w.id)) {
+        hiddenHere.push(w);
+        continue;
+      }
       const fade = fadeAll || (onFocus && !focus.walls.has(w.id)) ? 1 : 0;
       const { frames, glass, doors } = parts[fade];
       const ext = !!w.ext;
@@ -665,9 +680,25 @@ export class HouseScene {
       mesh.castShadow = !fade;
       mesh.receiveShadow = true;
       mesh.userData.pick = { type: 'floor', floorId: f.id };
+      mesh.userData.wallsOf = f;
       group.add(mesh);
       entry.wallMats.push(mat);
       pick(mesh);
+    }
+    if (hiddenHere.length) {
+      const edges = [];
+      for (const w of hiddenHere) {
+        const H = Math.min(w.h ?? wallTop, wallTop);
+        const box = wallSolid(w, H);
+        edges.push(new THREE.EdgesGeometry(box));
+        box.dispose();
+      }
+      const lines = new THREE.LineSegments(mergeGeometries(edges), new THREE.LineBasicMaterial({ color: this.accent, transparent: true, opacity: 0.55, depthWrite: false }));
+      edges.forEach((g) => g.dispose());
+      lines.position.y = f.elevation;
+      lines.userData.noShade = true;
+      lines.userData.noXray = true;
+      group.add(lines);
     }
     const addMerged = (geos, mat) => {
       if (!geos.length) return;
@@ -1815,9 +1846,18 @@ export class HouseScene {
     this.camAnim = { target: this.controls.target.clone(), pos: this.controls.target.clone().add(off) };
   }
 
+  setHiddenWalls(ids) {
+    const next = new Set(ids || []);
+    const same = this.hiddenWalls && this.hiddenWalls.size === next.size && [...next].every((x) => this.hiddenWalls.has(x));
+    this.hiddenWalls = next;
+    if (!same && this.data) this.rebuild();
+  }
+
   setSelection(sel) {
     this.selection = sel;
-    const focus = sel?.type === 'room' ? { floorId: sel.floorId, roomId: sel.roomId } : null;
+    // a wall selected while a room is focused keeps that focus (sel.focus)
+    const fr = sel?.type === 'room' ? sel : sel?.focus?.type === 'room' ? sel.focus : null;
+    const focus = fr ? { floorId: fr.floorId, roomId: fr.roomId } : null;
     if (JSON.stringify(focus) !== JSON.stringify(this.focus || null)) {
       this.focus = focus;
       if (this.data) return this.rebuild();
@@ -1826,6 +1866,28 @@ export class HouseScene {
   }
 
   applySelection() {
+    if (this.selWallObj) {
+      this.selWallObj.parent?.remove(this.selWallObj);
+      disposeTree(this.selWallObj);
+      this.selWallObj = null;
+    }
+    const sel = this.selection;
+    if (sel?.type === 'wall') {
+      const e = this.floorEntries?.find((x) => x.floor.id === sel.floorId);
+      const w = e?.floor.walls?.find((x) => x.id === sel.wallId);
+      if (w) {
+        const H = Math.min(w.h ?? e.floor.height - (e.floor.slab ?? 0.2), e.floor.height);
+        const box = wallSolid(w, H + 0.02);
+        const grp = new THREE.Group();
+        grp.add(new THREE.Mesh(box, new THREE.MeshBasicMaterial({ color: this.accent, transparent: true, opacity: 0.28, depthWrite: false })));
+        grp.add(new THREE.LineSegments(new THREE.EdgesGeometry(box), new THREE.LineBasicMaterial({ color: this.accent })));
+        grp.position.y = e.floor.elevation - 0.01;
+        grp.userData.noShade = true;
+        grp.userData.noXray = true;
+        e.group.add(grp);
+        this.selWallObj = grp;
+      }
+    }
     if (!this.roomMeshes) return;
     for (const [id, r] of this.roomMeshes) {
       const on = this.selection?.type === 'room' && this.selection.roomId === id;
@@ -1877,7 +1939,21 @@ export class HouseScene {
     const hits = this.raycaster.intersectObjects((this.pickables || []).filter(visible), false);
     for (const h of hits) {
       const pk = h.object.userData.pick;
-      if (pk) return pk;
+      if (!pk) continue;
+      // walls are merged per storey: find the wall at the point that was hit
+      const f = h.object.userData.wallsOf;
+      if (f) {
+        const lp = h.object.worldToLocal(h.point.clone());
+        const p = [lp.x, lp.z];
+        let best = null;
+        for (const w of f.walls || []) {
+          if (this.hiddenWalls?.has(w.id)) continue;
+          const d = distToSeg(p, w.a, w.b).d - (w.t || 0.2) / 2;
+          if (!best || d < best.d) best = { w, d };
+        }
+        if (best && best.d < 0.12) return { type: 'wall', floorId: f.id, wallId: best.w.id };
+      }
+      return pk;
     }
     return null;
   }

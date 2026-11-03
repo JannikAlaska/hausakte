@@ -1350,3 +1350,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 }
 .tag3d.room.is-faded { opacity: 0.5; }
 .tag3d.room.is-focus { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent), var(--shadow); }
+
+/* walls hidden in the 3D model: dashed in the floor plan */
+.svg-wall.is-hidden3d { fill-opacity: 0.35; stroke: var(--accent); stroke-dasharray: 0.08 0.06; stroke-width: 0.02; }
+.sel-swatch.wall { display: grid; place-items: center; background: var(--surface-3); color: var(--ink-2); }
