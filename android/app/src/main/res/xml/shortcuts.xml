@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/sc_camera"
+        android:shortcutId="rechnung"
+        android:shortcutLongLabel="@string/sc_rechnung_long"
+        android:shortcutShortLabel="@string/sc_rechnung">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:data="https://hausakte-eight.vercel.app/?aktion=rechnung#cockpit"
+            android:targetClass="app.hausakte.MainActivity"
+            android:targetPackage="app.hausakte" />
+    </shortcut>
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/sc_mic"
+        android:shortcutId="notiz"
+        android:shortcutLongLabel="@string/sc_notiz_long"
+        android:shortcutShortLabel="@string/sc_notiz">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:data="https://hausakte-eight.vercel.app/?aktion=notiz#cockpit"
+            android:targetClass="app.hausakte.MainActivity"
+            android:targetPackage="app.hausakte" />
+    </shortcut>
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/sc_tasks"
+        android:shortcutId="todo"
+        android:shortcutLongLabel="@string/sc_todo_long"
+        android:shortcutShortLabel="@string/sc_todo">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:data="https://hausakte-eight.vercel.app/?aktion=todo#cockpit"
+            android:targetClass="app.hausakte.MainActivity"
+            android:targetPackage="app.hausakte" />
+    </shortcut>
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/sc_plan"
+        android:shortcutId="grundriss"
+        android:shortcutLongLabel="@string/sc_plan_long"
+        android:shortcutShortLabel="@string/sc_plan">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:data="https://hausakte-eight.vercel.app/#grundriss"
+            android:targetClass="app.hausakte.MainActivity"
+            android:targetPackage="app.hausakte" />
+    </shortcut>
+</shortcuts>

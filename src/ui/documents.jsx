@@ -7,6 +7,7 @@ import { Btn, IconBtn, Select, Sheet, Empty, ConfirmBtn, Pill, Field, TextInput 
 import { AiRunner } from './ai-ui.jsx';
 import { toast, go, openDrawer, useUI, setUI } from './state.js';
 import { DOC_TYPES } from '../catalog.js';
+import { saveTextFile } from '../native.js';
 import { putDoc, updateDoc, deleteDoc, getAssets, fileUrl, getState, exportData, clearAll, loadDataset, clearOfflineCopy } from '../store.js';
 import { aiReadImage } from '../ai.js';
 import { isSupabaseMode, supa, signOut, updatePassword, listMembers, listInvites, createInvite, deleteInvite, authErrorText } from '../supa.js';
@@ -397,6 +398,7 @@ function Backup({ data }) {
       }
       return;
     }
+    if (saveTextFile(`hausakte-${todayISO()}.json`, 'application/json', json)) return;
     if (!window.claude) {
       const a = document.createElement('a');
       a.href = URL.createObjectURL(new Blob([json], { type: 'application/json' }));

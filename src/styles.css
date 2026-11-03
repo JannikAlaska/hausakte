@@ -1332,3 +1332,4 @@ button, a { -webkit-tap-highlight-color: transparent; }
 @media (prefers-reduced-motion: reduce) {
   .ck-kpi, .ck-qa { transition: none; }
 }
+.ck-install-actions a.btn { text-decoration: none; }

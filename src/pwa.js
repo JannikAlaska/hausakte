@@ -20,6 +20,8 @@ if (typeof window !== 'undefined') {
   });
 }
 
+export const isAndroid = () => typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
+const inAndroidApp = () => typeof window !== 'undefined' && !!window.HausakteAndroid;
 export const isStandalone = () => typeof window !== 'undefined' && (window.matchMedia?.('(display-mode: standalone)').matches || window.navigator.standalone === true);
 export const isAppleMobile = () => typeof navigator !== 'undefined' && (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
 
@@ -39,13 +41,16 @@ export function dismissInstallHint() {
   notify();
 }
 
-// what the install hint can offer right now: 'prompt' (Android/Chrome), 'apple' (instructions) or null
+// what the install hint can offer right now: 'prompt' (Chrome's install dialog), 'android' (the APK),
+// 'apple' (instructions) or null
 export function installMode() {
-  if (!isSupabaseMode() || installed || isStandalone()) return null;
+  if (!isSupabaseMode() || installed || isStandalone() || inAndroidApp()) return null;
+  if (isAndroid()) return 'android';
   if (deferred) return 'prompt';
   if (isAppleMobile()) return 'apple';
   return null;
 }
+export const canPromptInstall = () => !!deferred;
 
 export async function promptInstall() {
   if (!deferred) return false;
@@ -64,11 +69,22 @@ export function useInstall() {
     subs.add(f);
     return () => subs.delete(f);
   }, []);
-  return { mode: installHintDismissed() ? null : installMode(), prompt: promptInstall, dismiss: dismissInstallHint };
+  return { mode: installHintDismissed() ? null : installMode(), canPrompt: !!deferred, prompt: promptInstall, dismiss: dismissInstallHint };
+}
+
+// an action sent by the Android app (widget) while the page was already open
+let pendingAction = null;
+export function setPendingAction(a) {
+  pendingAction = ['rechnung', 'notiz', 'todo'].includes(a) ? a : null;
 }
 
 // app shortcuts (long press on the app icon): ?aktion=rechnung|notiz|todo - read once, then removed from the address
 export function takeShortcut() {
+  if (pendingAction) {
+    const a = pendingAction;
+    pendingAction = null;
+    return a;
+  }
   if (typeof location === 'undefined') return null;
   const p = new URLSearchParams(location.search);
   const a = p.get('aktion');

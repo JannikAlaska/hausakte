@@ -40,8 +40,12 @@ export function CockpitPage({ data }) {
   const cam = useRef(null);
   // started from an app shortcut
   useEffect(() => {
-    const a = takeShortcut();
-    if (a) setPanel(a === 'notiz' ? 'note' : a === 'todo' ? 'todo' : 'capture');
+    const open = (a) => a && setPanel(a === 'notiz' ? 'note' : a === 'todo' ? 'todo' : 'capture');
+    open(takeShortcut());
+    // from an Android widget while the cockpit is already open
+    const onAction = () => open(takeShortcut());
+    window.addEventListener('hausakte-aktion', onAction);
+    return () => window.removeEventListener('hausakte-aktion', onAction);
   }, []);
   const v = useMemo(
     () => ({
@@ -139,15 +143,32 @@ export function CockpitPage({ data }) {
 
 // offer to install the web version as an app (Android: system dialog, iPad/iPhone: instructions)
 function InstallHint() {
-  const { mode, prompt, dismiss } = useInstall();
+  const { mode, canPrompt, prompt, dismiss } = useInstall();
   const [busy, setBusy] = useState(false);
   if (!mode) return null;
+  const promptBtn = (label, kind) => (
+    <Btn
+      kind={kind}
+      icon="download"
+      disabled={busy}
+      onClick={async () => {
+        setBusy(true);
+        const ok = await prompt();
+        setBusy(false);
+        if (ok) toast('Die Hausakte wird als App installiert.');
+      }}
+    >
+      {label}
+    </Btn>
+  );
   return (
     <section className="ck-install" aria-label="Als App installieren">
       <img src="/icons/icon-192.png" alt="" width="44" height="44" />
       <div className="ck-install-txt">
-        <b>Hausakte als App installieren</b>
-        {mode === 'prompt' ? (
+        <b>{mode === 'android' ? 'Hausakte als Android-App' : 'Hausakte als App installieren'}</b>
+        {mode === 'android' ? (
+          <span>Mit Widgets für den Startbildschirm (Als Nächstes, Überblick, Schnellaktionen), Spracheingabe und dem letzten Stand auch ohne Netz. Nach dem Herunterladen die Datei öffnen und – einmalig – die Installation aus dieser Quelle erlauben.</span>
+        ) : mode === 'prompt' ? (
           <span>Eigenes Symbol auf dem Startbildschirm, Vollbild ohne Adressleiste – und der letzte Stand ist auch ohne Netz da.</span>
         ) : (
           <span>
@@ -160,23 +181,16 @@ function InstallHint() {
         )}
       </div>
       <div className="ck-install-actions">
-        {mode === 'prompt' ? (
-          <Btn
-            kind="primary"
-            icon="download"
-            disabled={busy}
-            onClick={async () => {
-              setBusy(true);
-              const ok = await prompt();
-              setBusy(false);
-              if (ok) toast('Die Hausakte wird als App installiert.');
-            }}
-          >
-            Installieren
-          </Btn>
+        {mode === 'android' ? (
+          <a className="btn btn-primary" href="/hausakte.apk" download="Hausakte.apk">
+            <Icon name="download" size={17} />
+            <span>APK herunterladen</span>
+          </a>
         ) : null}
+        {mode === 'prompt' ? promptBtn('Installieren', 'primary') : null}
+        {mode === 'android' && canPrompt ? promptBtn('Ohne APK installieren', 'soft') : null}
         <Btn kind="ghost" onClick={dismiss}>
-          {mode === 'prompt' ? 'Später' : 'Ausblenden'}
+          {mode === 'apple' ? 'Ausblenden' : 'Später'}
         </Btn>
       </div>
     </section>

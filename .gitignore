@@ -5,3 +5,8 @@ upload/
 # private house data (address, purchase price) – lives in Supabase, not in git
 src/house-private.js
 .DS_Store
+# Android build output
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties

@@ -3,8 +3,12 @@ import { getState, subscribe } from '../store.js';
 
 const VIEWS = ['cockpit', 'modell', 'grundriss', 'gebaeude', 'projekte', 'verbrauch', 'dokumente'];
 
+// short addresses for widgets and links: #rechnungen opens Dokumente > Rechnungen
+const ALIAS = { rechnungen: { view: 'dokumente', docTab: 'rechnungen' }, notizen: { view: 'dokumente', docTab: 'notizen' }, kontakte: { view: 'dokumente', docTab: 'kontakte' } };
+const routeOf = (h) => ALIAS[h] || { view: VIEWS.includes(h) ? h : 'cockpit' };
+
 let ui = {
-  view: viewFromHash(),
+  ...routeFromHash(),
   mode: 'all', // 'all' | 'floor' | 'explode'
   floorId: null,
   showRoof: true,
@@ -32,15 +36,15 @@ export function setUI(patch) {
   for (const f of subs) f();
 }
 
-function viewFromHash() {
-  if (typeof location === 'undefined') return 'cockpit';
-  const h = location.hash.replace('#', '');
-  return VIEWS.includes(h) ? h : 'cockpit';
+function routeFromHash() {
+  if (typeof location === 'undefined') return { view: 'cockpit' };
+  return routeOf(location.hash.replace('#', ''));
 }
 
-export function go(view) {
-  if (!VIEWS.includes(view)) view = 'cockpit';
-  setUI({ view });
+export function go(target) {
+  const r = routeOf(target);
+  const view = r.view;
+  setUI(r);
   try {
     if (location.hash !== '#' + view) history.replaceState(null, '', '#' + view);
   } catch {
@@ -51,7 +55,7 @@ export function go(view) {
 }
 
 if (typeof window !== 'undefined') {
-  window.addEventListener('hashchange', () => setUI({ view: viewFromHash() }));
+  window.addEventListener('hashchange', () => setUI(routeFromHash()));
   window.addEventListener('resize', () => {
     const wide = window.innerWidth >= 1100;
     const mobile = window.innerWidth <= 760;

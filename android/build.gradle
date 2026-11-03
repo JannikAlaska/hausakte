@@ -1,0 +1,5 @@
+// Android shell of the Hausakte web app: a full-screen WebView on https://hausakte-eight.vercel.app with
+// camera/file access, speech input and home screen widgets. Built by .github/workflows/android.yml.
+plugins {
+    id 'com.android.application' version '8.5.2' apply false
+}

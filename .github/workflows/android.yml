@@ -1,0 +1,102 @@
+# Builds the Android app (android/) and publishes it as public/hausakte.apk, which Vercel then serves at
+# https://hausakte-eight.vercel.app/hausakte.apk. The build log of every run is kept on the branch
+# "android-build-log".
+#
+# Signing: with the repository secrets ANDROID_KEYSTORE_B64 (base64 of a .jks) and ANDROID_KEYSTORE_PASSWORD
+# every build carries the same signature, so a new APK installs over the old one. Without them each build
+# gets a fresh key (the repository is public, so no key may live in it) and an update needs the old app
+# uninstalled first.
+name: Android-App bauen
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-apk
+  cancel-in-progress: false
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: APK bauen
+        run: |
+          set -o pipefail
+          echo "Build ${GITHUB_RUN_NUMBER} · ${GITHUB_SHA}" > build-log.txt
+          gradle -p android assembleRelease --no-daemon --stacktrace 2>&1 | tee -a build-log.txt
+
+      - name: Ausrichten und signieren
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          set -eo pipefail
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          UNSIGNED=android/app/build/outputs/apk/release/app-release-unsigned.apk
+          if [ -n "$KS_B64" ] && [ -n "$KS_PASS" ]; then
+            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/ks.jks"
+            PASS="$KS_PASS"
+            ALIAS=$(keytool -list -keystore "$RUNNER_TEMP/ks.jks" -storepass "$PASS" | grep -m1 PrivateKeyEntry | cut -d, -f1)
+            echo "Signatur: fester Schlüssel aus den Repository-Secrets" | tee -a build-log.txt
+          else
+            PASS=$(openssl rand -hex 24)
+            ALIAS=hausakte
+            keytool -genkeypair -keystore "$RUNNER_TEMP/ks.jks" -storepass "$PASS" -keypass "$PASS" -alias "$ALIAS" \
+              -keyalg RSA -keysize 3072 -validity 10000 -dname "CN=Hausakte, O=Hausakte" >/dev/null 2>&1
+            echo "Signatur: neuer Schlüssel für diesen Build (keine Repository-Secrets gesetzt)" | tee -a build-log.txt
+          fi
+          "$BT/zipalign" -p -f 4 "$UNSIGNED" "$RUNNER_TEMP/aligned.apk"
+          "$BT/apksigner" sign --ks "$RUNNER_TEMP/ks.jks" --ks-pass "pass:$PASS" --ks-key-alias "$ALIAS" --out hausakte.apk "$RUNNER_TEMP/aligned.apk"
+          rm -f "$RUNNER_TEMP/ks.jks"
+          "$BT/apksigner" verify --verbose hausakte.apk 2>&1 | tee -a build-log.txt
+          "$BT/aapt2" dump badging hausakte.apk 2>/dev/null | grep -E "^(package|sdkVersion|targetSdkVersion|application-label)" | tee -a build-log.txt
+          ls -la hausakte.apk | tee -a build-log.txt
+
+      - name: Veröffentlichen
+        run: |
+          set -e
+          cp hausakte.apk public/hausakte.apk
+          printf '{"version":"1.0.%s","built":"%s","sha256":"%s","bytes":%s}\n' "$GITHUB_RUN_NUMBER" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(sha256sum hausakte.apk | cut -d' ' -f1)" "$(stat -c%s hausakte.apk)" > public/android.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/hausakte.apk public/android.json
+          git commit -m "Android-App gebaut: Version 1.0.${GITHUB_RUN_NUMBER}"
+          for i in 1 2 3; do
+            git pull --rebase origin main && git push origin HEAD:main && break
+            sleep 5
+          done
+
+      - name: Build-Protokoll sichern
+        if: always()
+        run: |
+          touch build-log.txt
+          mkdir -p "$RUNNER_TEMP/log" && cp build-log.txt "$RUNNER_TEMP/log/build-log.txt"
+          cd "$RUNNER_TEMP/log"
+          git init -q -b android-build-log
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add build-log.txt
+          git commit -qm "Build-Protokoll ${GITHUB_RUN_NUMBER} (${{ job.status }})"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" HEAD:android-build-log

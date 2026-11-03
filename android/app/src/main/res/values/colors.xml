@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bg">#ECEEF6</color>
+    <color name="bar">#FFFFFF</color>
+    <color name="accent">#17936A</color>
+    <color name="accent_dark">#12805B</color>
+    <color name="icon_top">#1FA77A</color>
+    <color name="w_bg">#FFFFFF</color>
+    <color name="w_tile">#F2F3F8</color>
+    <color name="w_soft">#E2F3EB</color>
+    <color name="w_ink">#1B2032</color>
+    <color name="w_ink2">#5C6378</color>
+    <color name="w_accent">#0D6A4B</color>
+    <color name="w_icon">#17936A</color>
+</resources>

@@ -1,3 +1,4 @@
+import './native-speech.js';
 import { HouseScene } from './scene.js';
 import { initStore, loadDataset, clearAll, exportData, getState, resync, canResync, flushAll } from './store.js';
 import { createTemplate, createEmptyHouse } from './template.js';
@@ -16,6 +17,7 @@ import { AssistantDrawer } from './ui/assistant.jsx';
 import { ContactDrawer } from './ui/contacts.jsx';
 import { InvoiceDrawer } from './ui/invoices.jsx';
 import { CockpitPage } from './ui/cockpit.jsx';
+import { pushWidgets } from './native.js';
 import { projectKind, gewerk, roomType } from './catalog.js';
 import { fmtTime, fmtArea } from './util.js';
 import { portfolio, buildingStats, roomArea, liveProjects } from './metrics.js';
@@ -688,6 +690,11 @@ function App() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
+
+  // Android app: keep the home screen widgets up to date
+  useEffect(() => {
+    pushWidgets(data);
+  }, [data.loaded, data.house, data.projects, data.documents, data.components, data.contacts]);
 
   const ready = data.loaded;
   const hasHouse = !!data.house;

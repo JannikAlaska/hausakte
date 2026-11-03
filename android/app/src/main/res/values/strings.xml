@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Hausakte</string>
+    <string name="widget_next">Hausakte · Als Nächstes</string>
+    <string name="widget_next_desc">Heute und die nächsten Termine, Fristen und fälligen Rechnungen</string>
+    <string name="widget_overview">Hausakte · Überblick</string>
+    <string name="widget_overview_desc">Offene Rechnungen, To-dos und die nächste Frist</string>
+    <string name="widget_quick">Hausakte · Schnellaktionen</string>
+    <string name="widget_quick_desc">Rechnung fotografieren, Notiz sprechen, To-do anlegen, Grundriss</string>
+    <string name="sc_rechnung">Rechnung</string>
+    <string name="sc_rechnung_long">Rechnung fotografieren</string>
+    <string name="sc_notiz">Notiz</string>
+    <string name="sc_notiz_long">Notiz sprechen</string>
+    <string name="sc_todo">To-do</string>
+    <string name="sc_todo_long">To-do anlegen</string>
+    <string name="sc_plan">Grundriss</string>
+    <string name="sc_plan_long">Grundriss öffnen</string>
+</resources>
