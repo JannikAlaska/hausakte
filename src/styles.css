@@ -1375,3 +1375,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
   .fp-filter select { width: auto; height: 34px; }
   .tag3d.dim { font-size: 10px; padding: 0 4px; }
 }
+
+/* inner measures of the rooms along a selected wall */
+.side-title { grid-column: 1 / -1; font-size: 12px; font-weight: 600; color: var(--ink-2); margin-bottom: -2px; }
+.wall-inner { padding: 10px; border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line)); border-radius: 12px; background: color-mix(in srgb, var(--accent-soft) 40%, var(--surface)); }

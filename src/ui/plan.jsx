@@ -1200,7 +1200,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
   const selPoint = sel?.kind === 'point' ? points.find((q) => q.id === sel.id) : null;
   const selDim = sel?.kind === 'dim' ? dims.find((d) => d.id === sel.id) : null;
   const selFurn = sel?.kind === 'furn' ? furniture.find((x) => x.id === sel.id) : null;
-  const hlRoom = hlSide && selRoom?.id === hlSide.roomId ? selRoom : null;
+  const hlRoom = hlSide ? (floor.rooms || []).find((r) => r.id === hlSide.roomId) || null : null;
   const focusSel = !ctx && ui.selection?.type === 'room' && ui.selection.floorId === floor.id ? ui.selection : null;
   const focus = focusSel ? roomFocus((floor.rooms || []).find((r) => r.id === focusSel.roomId), floor) : null;
   const fade = (belongs) => (focus && !belongs ? 'is-faded' : undefined);
@@ -1507,7 +1507,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
         ) : selFurn ? (
           <FurnitureProps f={selFurn} floor={floor} mutate={mutate} onDelete={deleteSelection} onSelect={(id) => setSel({ kind: 'furn', id })} />
         ) : selWall ? (
-          <WallProps w={selWall} walls={walls} mutate={mutate} onDelete={deleteSelection} onSelectOpening={(o) => setSel({ kind: 'opening', id: o.id, wallId: selWall.id })} can3d={!ctx} />
+          <WallProps w={selWall} walls={walls} floor={floor} mutate={mutate} onDelete={deleteSelection} onSelectOpening={(o) => setSel({ kind: 'opening', id: o.id, wallId: selWall.id })} can3d={!ctx} onHighlight={setHlSide} />
         ) : selOpening ? (
           <OpeningProps o={selOpening} w={walls.find((w) => w.id === sel.wallId)} mutate={mutate} onDelete={deleteSelection} />
         ) : selRoom ? (
@@ -2239,7 +2239,7 @@ function CalibrationPrompt({ onApply, onCancel }) {
 }
 
 // ---------- property panels ----------
-function WallProps({ w, walls = [], mutate, onDelete, onSelectOpening, can3d }) {
+function WallProps({ w, walls = [], floor, mutate, onDelete, onSelectOpening, can3d, onHighlight }) {
   const ui = useUI();
   const hidden3d = (ui.hiddenWalls || []).includes(w.id);
   const { L, u } = wallFrame(w);
@@ -2273,7 +2273,8 @@ function WallProps({ w, walls = [], mutate, onDelete, onSelectOpening, can3d }) 
         <h4>{w.ext ? 'Außenwand' : 'Innenwand'}</h4>
         <ConfirmBtn onConfirm={onDelete}>{''}</ConfirmBtn>
       </div>
-      <Field label="Länge (Achsmaß)">
+      {floor ? <WallInnerSides w={w} floor={floor} mutate={mutate} onHighlight={onHighlight} /> : null}
+      <Field label="Länge (Achsmaß)" hint="Von Wandmitte zu Wandmitte – für Innenmaße das Feld darüber nutzen.">
         <NumInput id={'w-len-' + w.id} value={r3(L)} onChange={setLength} unit="m" digits={3} />
       </Field>
       {pieces > 1 ? (
@@ -2406,20 +2407,27 @@ function RoomProps({ r, floor, mutate, onDelete, focus, noDetails, onHighlight }
 function RoomSides({ r, floor, mutate, onHighlight }) {
   const north = getState().house?.northAngle || 0;
   const sides = useMemo(() => (r.poly?.length >= 3 ? roomSides(floor, r, north) : []), [floor.walls, floor.rooms, r.poly, north]);
-  const [ends, setEnds] = useState({});
-  useEffect(() => {
-    setEnds({});
-    return () => onHighlight?.(null);
-  }, [r.id]);
+  useEffect(() => () => onHighlight?.(null), [r.id]);
   if (!sides.length) return null;
+  return (
+    <div className="room-sides">
+      <span className="field-label">Seitenlängen (innen)</span>
+      {sides.map((sd) => (
+        <SideRow key={r.id + sd.i} r={r} s={sd} label={sd.dir} mutate={mutate} onHighlight={onHighlight} />
+      ))}
+      <p className="small muted">Neue Länge eintippen und Enter: Die gewählte Wand an der Seitenkante wird verschoben – nur das Stück an diesem Raum. Räume dahinter werden entsprechend kleiner, Anschlüsse und Möbel an dieser Wand wandern mit. Rückgängig mit Strg+Z oder über „Frühere Versionen“.</p>
+    </div>
+  );
+}
+
+// one room side: its inner length, editable; the wall at the chosen end of the side is moved
+function SideRow({ r, s, label, title, mutate, onHighlight }) {
+  const [chosen, setChosen] = useState(null);
+  const okEnds = s.ends.filter((e) => e.ok);
   // default: move an inner wall rather than the outside wall
-  const endOf = (s) => {
-    const chosen = s.ends.find((e) => e.end === ends[s.i] && e.ok);
-    return (chosen || s.ends.find((e) => e.ok && !e.ext) || s.ends.find((e) => e.ok))?.end || null;
-  };
-  const light = (s, end = endOf(s)) => onHighlight?.({ roomId: r.id, i: s.i, wallIds: s.ends.find((e) => e.end === end)?.wallIds || [] });
-  const apply = (s, v) => {
-    const end = endOf(s);
+  const end = (s.ends.find((e) => e.end === chosen && e.ok) || s.ends.find((e) => e.ok && !e.ext) || s.ends.find((e) => e.ok))?.end || null;
+  const light = (en = end) => onHighlight?.({ roomId: r.id, i: s.i, wallIds: s.ends.find((e) => e.end === en)?.wallIds || [] });
+  const apply = (v) => {
     if (!end) return toast(s.ends[0].reason || 'Diese Seite lässt sich nicht anpassen.', 'warn', 5000);
     let err = null;
     mutate((f) => {
@@ -2431,43 +2439,71 @@ function RoomSides({ r, floor, mutate, onHighlight }) {
       }
     });
     if (err) toast(err.message, 'warn', 5000);
-    else toast(`Seite ${s.dir} auf ${fmtFixed(v, 2)} m gesetzt – ${s.ends.find((e) => e.end === end).label} verschoben.`, 'ok', 4000);
+    else toast(`${r.name || 'Raum'}, Seite ${s.dir}: ${fmtFixed(v, 2)} m innen – ${s.ends.find((e) => e.end === end).label} verschoben.`, 'ok', 4000);
   };
   return (
-    <div className="room-sides">
-      <span className="field-label">Seitenlängen (innen)</span>
-      {sides.map((s) => {
-        const okEnds = s.ends.filter((e) => e.ok);
-        const end = endOf(s);
-        return (
-          <div key={s.i} className="side-row" onMouseEnter={() => light(s)} onMouseLeave={() => onHighlight?.(null)}>
-            <span className="side-dir" title="Lage der Seite (Himmelsrichtung)">
-              {s.dir}
-            </span>
-            <SideLength value={s.length} disabled={!okEnds.length} onFocus={() => light(s)} onCommit={(v) => apply(s, v)} />
-            {okEnds.length > 1 ? (
-              <select
-                className="input select side-end"
-                value={end || ''}
-                onChange={(e) => {
-                  setEnds({ ...ends, [s.i]: e.target.value });
-                  light(s, e.target.value);
-                }}
-                aria-label="Welche Wand verschoben wird"
-              >
-                {okEnds.map((e) => (
-                  <option key={e.end} value={e.end}>
-                    verschiebt: {e.label}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <span className="side-end-txt">{okEnds.length ? `verschiebt: ${okEnds[0].label}` : s.ends[0].reason}</span>
-            )}
-          </div>
-        );
-      })}
-      <p className="small muted">Neue Länge eintippen und Enter: Die gewählte Wand an der Seitenkante wird verschoben – nur das Stück an diesem Raum. Räume dahinter werden entsprechend kleiner, Anschlüsse und Möbel an dieser Wand wandern mit. Rückgängig mit Strg+Z oder über „Frühere Versionen“.</p>
+    <div className={`side-row ${title ? 'has-title' : ''}`} onMouseEnter={() => light()} onMouseLeave={() => onHighlight?.(null)}>
+      {title ? <span className="side-title">{title}</span> : null}
+      <span className="side-dir" title="Lage der Seite (Himmelsrichtung)">
+        {label}
+      </span>
+      <SideLength value={s.length} disabled={!okEnds.length} onFocus={() => light()} onCommit={apply} />
+      {okEnds.length > 1 ? (
+        <select
+          className="input select side-end"
+          value={end || ''}
+          onChange={(e) => {
+            setChosen(e.target.value);
+            light(e.target.value);
+          }}
+          aria-label="Welche Wand verschoben wird"
+        >
+          {okEnds.map((e) => (
+            <option key={e.end} value={e.end}>
+              verschiebt: {e.label}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <span className="side-end-txt">{okEnds.length ? `verschiebt: ${okEnds[0].label}` : s.ends[0].reason}</span>
+      )}
+    </div>
+  );
+}
+
+// the inner measures of the rooms along a wall (room sides lying on one of the wall's faces)
+function WallInnerSides({ w, floor, mutate, onHighlight }) {
+  const north = getState().house?.northAngle || 0;
+  const rows = useMemo(() => {
+    const L = dist(w.a, w.b);
+    if (L < 0.01) return [];
+    const u = [(w.b[0] - w.a[0]) / L, (w.b[1] - w.a[1]) / L];
+    const n = [-u[1], u[0]];
+    const out = [];
+    for (const r of floor.rooms || []) {
+      if (!r.poly || r.poly.length < 3) continue;
+      for (const sd of roomSides(floor, r, north)) {
+        const e = [sd.b[0] - sd.a[0], sd.b[1] - sd.a[1]];
+        const el = Math.hypot(e[0], e[1]);
+        if (el < 0.02 || Math.abs(u[0] * e[1] - u[1] * e[0]) / el > 0.02) continue;
+        const off = (sd.a[0] - w.a[0]) * n[0] + (sd.a[1] - w.a[1]) * n[1];
+        if (Math.abs(Math.abs(off) - w.t / 2) > 0.05) continue;
+        const s0 = (sd.a[0] - w.a[0]) * u[0] + (sd.a[1] - w.a[1]) * u[1];
+        const s1 = (sd.b[0] - w.a[0]) * u[0] + (sd.b[1] - w.a[1]) * u[1];
+        if (Math.min(Math.max(s0, s1), L) - Math.max(Math.min(s0, s1), 0) > 0.05) out.push({ r, s: sd });
+      }
+    }
+    return out;
+  }, [w, floor.walls, floor.rooms, north]);
+  useEffect(() => () => onHighlight?.(null), [w.id]);
+  if (!rows.length) return null;
+  return (
+    <div className="room-sides wall-inner">
+      <span className="field-label">Innenmaß (gemessen im Raum)</span>
+      {rows.map(({ r, s: sd }) => (
+        <SideRow key={r.id + ':' + sd.i} r={r} s={sd} label={sd.dir} title={r.name || roomType(r.type).name} mutate={mutate} onHighlight={onHighlight} />
+      ))}
+      <p className="small muted">Das Maß, das du im Raum von Wandoberfläche zu Wandoberfläche misst. Eintippen und Enter: Die Wand am gewählten Ende wird so verschoben, dass der Raum genau dieses Innenmaß hat. Rückgängig mit Strg+Z.</p>
     </div>
   );
 }
@@ -2478,7 +2514,7 @@ function SideLength({ value, onCommit, onFocus, disabled }) {
   const commit = () => {
     const v = parseNum(text ?? '');
     setText(null);
-    if (v > 0.2 && v < 40 && Math.abs(v - value) > 0.004) onCommit(v);
+    if (v >= 0.05 && v < 40 && Math.abs(v - value) > 0.004) onCommit(v);
   };
   return (
     <span className="input-wrap side-len">
