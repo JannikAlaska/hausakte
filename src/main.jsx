@@ -18,6 +18,7 @@ import { ContactDrawer } from './ui/contacts.jsx';
 import { InvoiceDrawer } from './ui/invoices.jsx';
 import { CockpitPage } from './ui/cockpit.jsx';
 import { pushWidgets } from './native.js';
+import { prepareOlderNotes } from './notesai.js';
 import { projectKind, gewerk, roomType } from './catalog.js';
 import { fmtTime, fmtArea } from './util.js';
 import { portfolio, buildingStats, roomArea, liveProjects } from './metrics.js';
@@ -716,6 +717,13 @@ function App() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
+
+  // once per start: older spoken notes that the AI has not prepared yet
+  useEffect(() => {
+    if (!data.loaded || !data.house || (data.mode === 'db' && !data.serverOk)) return;
+    const t = setTimeout(() => prepareOlderNotes(), 4000);
+    return () => clearTimeout(t);
+  }, [data.loaded, !!data.house, data.serverOk]);
 
   // Android app: keep the home screen widgets up to date
   useEffect(() => {

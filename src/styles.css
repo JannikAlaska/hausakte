@@ -1379,3 +1379,20 @@ button, a { -webkit-tap-highlight-color: transparent; }
 /* inner measures of the rooms along a selected wall */
 .side-title { grid-column: 1 / -1; font-size: 12px; font-weight: 600; color: var(--ink-2); margin-bottom: -2px; }
 .wall-inner { padding: 10px; border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line)); border-radius: 12px; background: color-mix(in srgb, var(--accent-soft) 40%, var(--surface)); }
+
+/* notes prepared by the AI */
+.note-pills { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.ai-pending { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 10px; background: var(--info-soft); color: var(--info); font-size: 12.5px; font-weight: 600; }
+.note-meeting { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 12px; border: 1px solid color-mix(in srgb, var(--warn) 30%, var(--line)); background: color-mix(in srgb, var(--warn-soft) 45%, var(--surface)); }
+.nm-what { display: flex; align-items: center; gap: 8px; color: var(--ink); }
+.nm-what .ico { color: var(--warn-ink); }
+.nm-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 10px; margin: 0; font-size: 13px; }
+.nm-facts dt { color: var(--ink-3); font-weight: 600; }
+.nm-facts dd { margin: 0; }
+.nm-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-size: 13px; }
+.nm-list li { display: flex; gap: 6px; align-items: flex-start; }
+.nm-list .ico { color: var(--accent); margin-top: 3px; }
+.rich-text { display: flex; flex-direction: column; gap: 6px; font-size: 13.5px; line-height: 1.5; }
+.rich-text ul { margin: 0; padding-left: 18px; }
+.meet-facts { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; color: var(--ink-2); margin-top: 2px; }
+.meet-facts .ico { color: var(--warn-ink); }

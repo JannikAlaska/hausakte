@@ -4,9 +4,9 @@ import { Icon } from './icons.jsx';
 import { Btn, IconBtn, Field, TextInput, DateInput, Pill, ConfirmBtn } from './common.jsx';
 import { useAiAvailable } from './ai-ui.jsx';
 import { toast, openDrawer } from './state.js';
-import { aiMeeting, aiErrorText } from '../ai.js';
 import { addMeeting, addCost, patchProject } from '../actions.js';
-import { fmtDate, fmtEuro, todayISO, isISO } from '../util.js';
+import { prepareMeeting, usePreparing } from '../notesai.js';
+import { fmtDate, fmtDateShort, fmtEuro, todayISO, isISO } from '../util.js';
 
 const { useState, useEffect, useRef } = React;
 
@@ -113,41 +113,24 @@ export function Meetings({ p, data }) {
 function Recorder({ p, data, onClose }) {
   const avail = useAiAvailable();
   const [date, setDate] = useState(todayISO());
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState(null);
-  const ctl = useRef(null);
   const dict = useDictation((code) =>
     toast(code === 'audio-capture' ? 'Kein Mikrofon gefunden.' : 'Das Mikrofon ist für diese Seite nicht freigegeben. Erlaube den Zugriff in den Browser-Einstellungen – in der Vorschau in claude.ai geht es nicht.', 'warn', 7000),
   );
-  useEffect(() => () => ctl.current?.abort(), []);
   const toggle = () => {
     if (dict.on) return dict.stop();
     if (!dict.start(dict.text)) toast('Spracheingabe kann dieser Browser nicht – tippe die Notiz ein oder nutze das Diktier-Mikrofon deiner Tastatur.', 'warn', 6000);
   };
-  const evaluate = async () => {
-    const t = dict.text.trim();
-    if (t.length < 10) return toast('Die Notiz ist noch zu kurz.', 'warn');
-    dict.stop();
-    setBusy(true);
-    setErr(null);
-    ctl.current = new AbortController();
-    try {
-      const r = await aiMeeting(p, t, data, { date, signal: ctl.current.signal });
-      const res = addMeeting(p.id, r, { transcript: t, date });
-      toast(`Besprechung angelegt${res.milestones ? ` · ${res.milestones} Termin${res.milestones > 1 ? 'e' : ''}` : ''}${res.todos ? ` · ${res.todos} To-do${res.todos > 1 ? 's' : ''}` : ''}`);
-      onClose();
-    } catch (e) {
-      if (e?.code !== 'cancelled') setErr(aiErrorText(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const saveRaw = () => {
+  // the note is saved at once; the AI prepares it in the background (title, appointment, decisions, dates, to-dos)
+  const save = (withAi) => {
     const t = dict.text.trim();
     if (!t) return;
+    if (withAi && t.length < 10) return toast('Die Notiz ist noch zu kurz.', 'warn');
     dict.stop();
-    addMeeting(p.id, { title: 'Besprechung', summary: '', date }, { transcript: t, date, source: 'manuell' });
-    toast('Notiz gespeichert');
+    const res = addMeeting(p.id, { title: 'Besprechung', summary: '', date }, { transcript: t, date, source: dict.secs > 0 ? 'sprache' : 'manuell', extra: withAi ? {} : { aiSkip: true } });
+    if (withAi) {
+      toast('Gespeichert – die KI bereitet die Besprechung auf …');
+      prepareMeeting(p.id, res.id, { derive: true });
+    } else toast('Notiz gespeichert');
     onClose();
   };
   return (
@@ -160,7 +143,7 @@ function Recorder({ p, data, onClose }) {
         <DateInput value={date} onChange={(v) => setDate(v || todayISO())} />
       </Field>
       <div className="rec-row">
-        <button type="button" className={`rec-btn ${dict.on ? 'is-on' : ''}`} onClick={toggle} disabled={busy} aria-label={dict.on ? 'Aufnahme beenden' : 'Aufnahme starten'}>
+        <button type="button" className={`rec-btn ${dict.on ? 'is-on' : ''}`} onClick={toggle} aria-label={dict.on ? 'Aufnahme beenden' : 'Aufnahme starten'}>
           <Icon name={dict.on ? 'stop' : 'mic'} size={22} />
         </button>
         <div>
@@ -171,22 +154,17 @@ function Recorder({ p, data, onClose }) {
       <Field label="Notiz (wird beim Sprechen mitgeschrieben, du kannst sie korrigieren)">
         <textarea className="input meet-text" rows={7} value={dict.text} readOnly={dict.on} onChange={(e) => dict.setText(e.target.value)} placeholder="z. B. Termin mit Elektriker Müller zur PV-Anlage: Zählerschrank muss erneuert werden, Angebot kommt bis Freitag, Montage voraussichtlich in KW 12 …" />
       </Field>
-      {err ? (
-        <div className="callout callout-warn">
-          <Icon name="alert" size={16} />
-          <span>{err}</span>
-        </div>
-      ) : null}
       <div className="hstack" style={{ flexWrap: 'wrap' }}>
         {avail !== false ? (
-          <Btn kind="ai" icon="sparkles" onClick={evaluate} disabled={busy || !dict.text.trim()}>
-            {busy ? 'KI schreibt die Notiz …' : 'Notiz, Termine & To-dos erstellen'}
+          <Btn kind="ai" icon="sparkles" onClick={() => save(true)} disabled={!dict.text.trim()}>
+            Speichern & aufbereiten
           </Btn>
         ) : null}
-        <Btn kind="ghost" icon="check" onClick={saveRaw} disabled={busy || !dict.text.trim()}>
-          Nur Text speichern
+        <Btn kind={avail !== false ? 'ghost' : 'primary'} icon="check" onClick={() => save(false)} disabled={!dict.text.trim()}>
+          {avail !== false ? 'Ohne KI speichern' : 'Speichern'}
         </Btn>
       </div>
+      {avail !== false ? <p className="small muted">Die KI erkennt, ob es um einen Termin ging, wann er war, wer dabei war und was beschlossen wurde, schreibt die Notiz sauber und trägt neue Termine und To-dos ins Projekt ein.</p> : null}
       {avail === false ? <p className="small muted">Die KI-Auswertung steht zur Verfügung, wenn die KI eingerichtet ist. Der Text wird trotzdem gespeichert.</p> : null}
     </div>
   );
@@ -194,6 +172,9 @@ function Recorder({ p, data, onClose }) {
 
 function MeetingCard({ m, p, data }) {
   const [edit, setEdit] = useState(false);
+  const preparing = usePreparing()('meeting:' + m.id);
+  const avail = useAiAvailable();
+  const raw = !m.ai && !m.summary && !(m.points || []).length && String(m.transcript || '').trim().length >= 10;
   const set = (patch) => patchProject(p.id, (x) => ({ ...x, meetings: (x.meetings || []).map((y) => (y.id === m.id ? { ...y, ...patch } : y)) }));
   const ms = (p.milestones || []).filter((x) => x.meetingId === m.id);
   const todos = (p.constraints || []).filter((x) => x.meetingId === m.id);
@@ -225,7 +206,15 @@ function MeetingCard({ m, p, data }) {
         </span>
         <div style={{ flex: 1, minWidth: 0 }}>
           {edit ? <TextInput id={'mt-title-' + m.id} value={m.title} onChange={(v) => set({ title: v })} /> : <h3>{m.title}</h3>}
-          {m.participants?.length ? <div className="small muted">{m.participants.join(' · ')}</div> : null}
+          {m.ai && m.isMeeting !== false ? (
+            <div className="small meet-facts">
+              <Icon name="calendar" size={13} /> {m.meetingType ? <b>{m.meetingType}</b> : 'Termin'} · {isISO(m.date) ? `${fmtDateShort(m.date)}${m.date.slice(0, 4)}` : 'Datum offen'}
+              {m.time ? `, ${m.time} Uhr` : ''}
+            </div>
+          ) : m.ai && m.isMeeting === false ? (
+            <div className="small muted">Notiz – kein Termin</div>
+          ) : null}
+          {m.participants?.length ? <div className="small muted">Dabei: {m.participants.join(' · ')}</div> : null}
           {(m.contactIds || []).filter((id) => data?.contacts?.[id]).length ? (
             <div className="chips" style={{ marginTop: 4 }}>
               {m.contactIds.filter((id) => data.contacts[id]).map((id) => (
@@ -252,8 +241,29 @@ function MeetingCard({ m, p, data }) {
       ) : m.summary ? (
         <p className="meet-summary">{m.summary}</p>
       ) : null}
+      {preparing ? (
+        <div className="ai-pending" role="status">
+          <span className="dots">
+            <i />
+            <i />
+            <i />
+          </span>
+          Die KI bereitet die Besprechung auf …
+        </div>
+      ) : raw && !edit ? (
+        <>
+          <p className="note-text">{m.transcript}</p>
+          {avail !== false ? (
+            <div>
+              <Btn small kind="ai" icon="sparkles" onClick={() => prepareMeeting(p.id, m.id, { derive: true })}>
+                Mit KI aufbereiten
+              </Btn>
+            </div>
+          ) : null}
+        </>
+      ) : null}
       <Block title="Besprochen" items={m.points} />
-      <Block title="Vereinbart" items={m.decisions} icon="check" />
+      <Block title="Beschlossen / vereinbart" items={m.decisions} icon="check" />
       <Block title="Offene Fragen" items={m.openQuestions} icon="info" />
       {ms.length || todos.length ? (
         <div className="meet-block">
@@ -307,7 +317,7 @@ function MeetingCard({ m, p, data }) {
           </ul>
         </div>
       ) : null}
-      {m.transcript ? (
+      {m.transcript && !raw ? (
         <details className="small meet-transcript">
           <summary>Gesprochene Notiz</summary>
           <p>{m.transcript}</p>

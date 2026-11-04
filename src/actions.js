@@ -149,13 +149,13 @@ export function addReading(r) {
   return id;
 }
 
-// Stores a meeting note on a project and adds the appointments as milestones and the to-dos as tasks.
-// r: { title, date, participants, summary, points, decisions, openQuestions, appointments, todos, costs }
-export function addMeeting(projectId, r, { transcript = '', date, source = 'ki' } = {}) {
+// AI result of a spoken meeting note -> fields of the meeting plus the appointments (milestones) and to-dos
+// it derives; both point back to the meeting via meetingId.
+// r: { title, isMeeting, meetingType, date, time, participants, contactIds, summary, points, decisions, openQuestions, appointments, todos, costs }
+function meetingFromAi(id, r, date) {
   const iso = (v) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
   const txt = (v, n = 300) => String(v ?? '').trim().slice(0, n);
   const list = (v, n = 20) => (Array.isArray(v) ? v.map((x) => txt(x, 400)).filter(Boolean).slice(0, n) : []);
-  const id = uid('mt');
   const milestones = (Array.isArray(r.appointments) ? r.appointments : [])
     .filter((a) => a && txt(a.title))
     .slice(0, 12)
@@ -163,16 +163,18 @@ export function addMeeting(projectId, r, { transcript = '', date, source = 'ki' 
   const kinds = CONSTRAINT_KINDS.map((k) => k.key);
   // contacts: ids named by the AI if they exist, otherwise found by name
   const known = getState().contacts || {};
-  const cidOf = (id, text) => (id && known[id] ? id : text ? matchContact(text) : null);
+  const cidOf = (cid, text) => (cid && known[cid] ? cid : text ? matchContact(text) : null);
   const contactIds = [...new Set([...(Array.isArray(r.contactIds) ? r.contactIds : []).filter((x) => known[x]), ...(Array.isArray(r.participants) ? r.participants : []).map((x) => matchContact(x)).filter(Boolean)])];
   const todos = (Array.isArray(r.todos) ? r.todos : [])
     .filter((t) => t && txt(t.text))
     .slice(0, 20)
     .map((t) => ({ id: uid('b'), text: txt(t.text, 240), kind: kinds.includes(t.kind) ? t.kind : 'organisatorisch', done: false, due: iso(t.due), who: txt(t.who, 60), contactId: /^ich$/i.test(String(t.who || '').trim()) ? null : cidOf(t.contactId, t.who), meetingId: id }));
-  const meeting = {
-    id,
+  const fields = {
     date: iso(r.date) || iso(date) || todayISO(),
+    time: /^\d{1,2}:\d{2}$/.test(r.time || '') ? r.time.padStart(5, '0') : null,
     title: txt(r.title, 140) || 'Besprechung',
+    isMeeting: r.isMeeting !== false,
+    meetingType: txt(r.meetingType, 160),
     participants: list(r.participants, 10),
     contactIds,
     summary: txt(r.summary, 2000),
@@ -180,19 +182,49 @@ export function addMeeting(projectId, r, { transcript = '', date, source = 'ki' 
     decisions: list(r.decisions),
     openQuestions: list(r.openQuestions),
     costs: (Array.isArray(r.costs) ? r.costs : []).filter((c) => c && txt(c.label) && Number(c.amount) > 0).slice(0, 10).map((c) => ({ label: txt(c.label, 120), amount: Math.round(Number(c.amount)) })),
-    transcript: txt(transcript, 60000),
+  };
+  return { fields, milestones, todos };
+}
+
+// Stores a meeting note on a project and adds the appointments as milestones and the to-dos as tasks.
+export function addMeeting(projectId, r, { transcript = '', date, source = 'ki', extra = {} } = {}) {
+  const id = uid('mt');
+  const { fields, milestones, todos } = meetingFromAi(id, r, date);
+  const meeting = {
+    id,
+    ...fields,
+    transcript: String(transcript ?? '').trim().slice(0, 60000),
     milestoneIds: milestones.map((m) => m.id),
     todoIds: todos.map((t) => t.id),
     source,
+    ...(source === 'ki' ? { ai: { at: Date.now() } } : {}),
+    ...extra,
     createdAt: Date.now(),
   };
   patchProject(projectId, (p) => ({ ...p, meetings: [meeting, ...(p.meetings || [])], milestones: [...(p.milestones || []), ...milestones], constraints: [...(p.constraints || []), ...todos] }));
   return { id, milestones: milestones.length, todos: todos.length };
 }
 
+// Spoken note saved first, prepared by the AI afterwards: fills in the meeting in place. derive = false
+// (e.g. when older notes are prepared later) leaves milestones and to-dos alone.
+export function applyMeetingAi(projectId, meetingId, r, { derive = true } = {}) {
+  const { fields, milestones, todos } = meetingFromAi(meetingId, r, null);
+  const ms = derive ? milestones : [];
+  const td = derive ? todos : [];
+  patchProject(projectId, (p) => ({
+    ...p,
+    meetings: (p.meetings || []).map((m) =>
+      m.id === meetingId ? { ...m, ...fields, date: fields.date || m.date, milestoneIds: [...(m.milestoneIds || []), ...ms.map((x) => x.id)], todoIds: [...(m.todoIds || []), ...td.map((x) => x.id)], ai: { at: Date.now() } } : m,
+    ),
+    milestones: [...(p.milestones || []), ...ms],
+    constraints: [...(p.constraints || []), ...td],
+  }));
+  return { milestones: ms.length, todos: td.length };
+}
+
 // ---------- general notes (not tied to a project) ----------
 // first sentence (abbreviations like "Nr." do not end it) or the first words
-function autoTitle(t) {
+export function autoTitle(t) {
   const first = t.split('\n')[0];
   const m = first.match(/^(.{12,70}?[^A-ZÄÖÜa-zäöü.][.!?]|.{12,70}?[a-zäöüß]{3}[.!?])(\s|$)/);
   if (m) return m[1].replace(/[.!?]$/, '');
@@ -203,7 +235,8 @@ export function addNote({ title = '', text = '', date, source = 'manuell' } = {}
   const id = uid('n-');
   const now = Date.now();
   const t = String(text || '').trim();
-  putDoc('notes', id, { id, title: String(title || '').trim().slice(0, 140) || autoTitle(t), text: t.slice(0, 20000), date: date || todayISO(), source, createdAt: now, updatedAt: now }, 50);
+  const own = String(title || '').trim().slice(0, 140);
+  putDoc('notes', id, { id, title: own || autoTitle(t), titleManual: !!own, text: t.slice(0, 20000), date: date || todayISO(), source, createdAt: now, updatedAt: now }, 50);
   return id;
 }
 export const updateNote = (id, patch) => updateDoc('notes', id, (n) => ({ ...n, ...patch, updatedAt: Date.now() }), 300);

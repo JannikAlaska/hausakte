@@ -199,7 +199,11 @@ export function houseContext(d, { withProjects = true, withComponents = true, wi
   if (notes.length) {
     L.push('');
     L.push('NOTIZEN (allgemein, ohne Projekt)');
-    for (const n of notes.slice(0, 30)) L.push(`- [${n.id}] ${n.date} ${n.title}: ${String(n.text || '').replace(/\s+/g, ' ').slice(0, 160)}`);
+    for (const n of notes.slice(0, 30)) {
+      const m = n.ai?.isMeeting ? n.ai.meeting : null;
+      const meet = m ? ` [Termin: ${m.what || ''}${m.date ? ` am ${m.date}` : ''}${m.participants?.length ? `, dabei ${m.participants.join(', ')}` : ''}${m.decisions?.length ? `; beschlossen: ${m.decisions.join('; ')}` : ''}]` : '';
+      L.push(`- [${n.id}] ${n.date} ${n.title}${meet}: ${String(n.ai?.text || n.text || '').replace(/\s+/g, ' ').slice(0, 200)}`);
+    }
   }
   const contacts = Object.values(d.contacts || {});
   if (contacts.length) {
@@ -424,6 +428,7 @@ Die Notiz wurde automatisch aus Sprache in Text umgewandelt und kann Erkennungsf
 Datum der Besprechung: ${date || todayISO()} (heute ist ${todayISO()}). Rechne relative Angaben wie „nächsten Dienstag“, „in zwei Wochen“ oder „Ende November“ von diesem Datum aus in YYYY-MM-DD um.
 Termine (appointments) nur, wenn ein Zeitpunkt genannt oder klar ableitbar ist (z. B. Montage, Zählerwechsel, Besichtigung, Abnahme, Rückruf, Angebotsfrist); Uhrzeit, falls genannt.
 Aufgaben (todos) sind konkrete nächste Schritte mit Verantwortlichem (who: „ich“ für den Eigentümer oder Firma/Person) und Fälligkeit, wenn erkennbar.
+Prüfe, ob es überhaupt um einen Termin geht (Besprechung, Vor-Ort-Termin, Besichtigung, Telefonat, Beratung, Handwerkertermin) – isMeeting true/false; meetingType nennt die Art und den Anlass. Ist es kein Termin (z. B. eine Idee oder Beobachtung), bleiben participants und decisions leer und date ist das Datum der Notiz.
 Erfinde nichts; Unklares gehört in openQuestions. Lege nichts doppelt an, was schon unten steht. Genannte Preise oder Angebotssummen in costs (Euro brutto).
 
 PROJEKT
@@ -443,7 +448,34 @@ GESPROCHENE NOTIZ
 
 ${JSON_RULES}
 Format:
-{"title":"Kurzer Titel, z. B. Vor-Ort-Termin Elektriker PV","date":"YYYY-MM-DD","participants":["Person oder Firma"],"contactIds":["Kontakt-ID der Teilnehmer"],"summary":"2–4 Sätze","points":["Besprochener Punkt"],"decisions":["Entscheidung oder Vereinbarung"],"openQuestions":["Offene Frage"],"appointments":[{"title":"Termin","date":"YYYY-MM-DD","time":"HH:MM oder null","note":"kurz"}],"todos":[{"text":"Was ist zu tun","who":"ich|Firma|Person","contactId":"Kontakt-ID oder null","due":"YYYY-MM-DD oder null","kind":"${CONSTRAINT_KINDS.map((k) => k.key).join('|')}"}],"costs":[{"label":"Position","amount":1234}]}`;
+{"title":"Kurzer Titel, z. B. Vor-Ort-Termin Elektriker PV","isMeeting":true,"meetingType":"z. B. Vor-Ort-Termin mit dem Elektriker zum Zählerschrank","date":"YYYY-MM-DD","time":"HH:MM oder null","participants":["Person oder Firma"],"contactIds":["Kontakt-ID der Teilnehmer"],"summary":"2–4 Sätze","points":["Besprochener Punkt"],"decisions":["Entscheidung oder Vereinbarung"],"openQuestions":["Offene Frage"],"appointments":[{"title":"Termin","date":"YYYY-MM-DD","time":"HH:MM oder null","note":"kurz"}],"todos":[{"text":"Was ist zu tun","who":"ich|Firma|Person","contactId":"Kontakt-ID oder null","due":"YYYY-MM-DD oder null","kind":"${CONSTRAINT_KINDS.map((k) => k.key).join('|')}"}],"costs":[{"label":"Position","amount":1234}]}`;
+  return askJSON(prompt, { signal });
+}
+
+// ---------- general notes from a voice memo: clean text, and whether it records an appointment ----------
+export async function aiNote(text, d, { date, signal } = {}) {
+  const contacts = Object.values(d.contacts || {});
+  const projects = Object.values(d.projects || {}).filter((p) => !p.archived);
+  const noteDate = date || todayISO();
+  const prompt = `Du hilfst beim Führen einer Hausakte zur Modernisierung eines Wohnhauses. Die folgende Notiz wurde eingesprochen und automatisch in Text umgewandelt – sie kann Erkennungsfehler, Füllwörter, Wiederholungen und fehlende Satzzeichen enthalten.
+1. Bereite den Inhalt sauber auf (text): korrigiere offensichtlich falsch erkannte Wörter, Fachbegriffe, Namen und Zahlen (z. B. „Wechsel Richter“ = Wechselrichter, „Zähler Schrank“ = Zählerschrank), entferne Füllwörter und Wiederholungen, setze Satzzeichen und gliedere in kurze Absätze. Aufzählungen als eigene Zeilen, die mit "- " beginnen. Ich-Form beibehalten. Nichts hinzuerfinden, nichts Wichtiges weglassen.
+2. Gib einen kurzen, treffenden Titel (title).
+3. Prüfe, ob es um einen Termin geht – Besprechung, Vor-Ort-Termin, Besichtigung, Telefonat, Beratung, Handwerker- oder Behördentermin (isMeeting). Wenn ja (meeting): um welchen Termin es geht (what: Art und Anlass), wann er war (date; relative Angaben wie „gestern“ oder „letzten Dienstag“ vom Notizdatum aus umrechnen; ist nichts genannt, das Notizdatum), Uhrzeit falls genannt, wer dabei war (participants; „ich“ für den Eigentümer, Firmen und Personen so genau wie genannt) und was beschlossen oder vereinbart wurde (decisions). Wenn nein: isMeeting false und meeting null.
+4. Offene Fragen und nächste Schritte (mit Datum und Zuständigem, falls genannt) als Listen. Leere Listen, wenn nichts genannt ist.
+Notizdatum: ${noteDate} (heute ist ${todayISO()}).
+
+BEKANNTE KONTAKTE (ordne Teilnehmer über die ID zu, wenn eindeutig)
+${contacts.map(contactLine).join('\n') || 'keine'}
+
+PROJEKTE (projectId nur, wenn die Notiz eindeutig zu einem gehört)
+${projects.map((p) => `[${p.id}] ${p.title}`).join('\n') || 'keine'}
+
+GESPROCHENE NOTIZ
+"""${String(text).slice(0, 40000)}"""
+
+${JSON_RULES}
+Format:
+{"title":"Kurzer Titel","text":"Aufbereiteter Text mit Absätzen und - Aufzählungen","isMeeting":true,"meeting":{"what":"z. B. Vor-Ort-Termin mit dem Elektriker zur Zählerschrank-Erneuerung","date":"YYYY-MM-DD","time":"HH:MM oder null","participants":["Person oder Firma"],"contactIds":["Kontakt-ID"],"decisions":["Beschluss oder Vereinbarung"]},"openQuestions":["Offene Frage"],"nextSteps":[{"text":"Was ist zu tun","date":"YYYY-MM-DD oder null","who":"ich|Person|Firma oder null"}],"projectId":"Projekt-ID oder null"}`;
   return askJSON(prompt, { signal });
 }
 
