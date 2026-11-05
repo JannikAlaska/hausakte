@@ -425,20 +425,70 @@ export function FurnitureSymbol({ f, px, sel, ghost }) {
   );
 }
 
-// all pieces of a floor; rugs first so everything else lies on top
+// ---------- name in the plan (only pieces with their own label) ----------
+// split a longer label into two lines at the space nearest the middle
+function labelLines(text) {
+  const t = String(text || '').trim().replace(/\s+/g, ' ');
+  if (t.length <= 14 || !t.includes(' ')) return [t];
+  let best = -1;
+  for (let i = 0; i < t.length; i++) if (t[i] === ' ' && (best < 0 || Math.abs(i - t.length / 2) < Math.abs(best - t.length / 2))) best = i;
+  return [t.slice(0, best), t.slice(best + 1)];
+}
+
+// text along the piece's longer side, always readable (never upside down), sized to fit the piece
+export function furnLabelLayout(f, px) {
+  const one = [String(f.label || '').trim().replace(/\s+/g, ' ')];
+  if (!one[0]) return null;
+  const { w, d } = furnSize(f);
+  const along = d > w * 1.15;
+  const long = along ? d : w;
+  const short = along ? w : d;
+  let ang = normRot((f.rot || 0) + (along ? 90 : 0));
+  if (ang >= 90 && ang < 270) ang = normRot(ang + 180); // readable from below or from the right
+  const fit = (lines) => Math.min((short * 0.8) / (lines.length * 1.15), (long * 0.92) / (0.56 * Math.max(...lines.map((l) => l.length), 1)));
+  const max = px(11);
+  // one line when it fits at full size or is not much smaller than two lines would be
+  const two = labelLines(one[0]);
+  const lines = two.length > 1 && fit(one) < max && fit(two) > fit(one) * 1.25 ? two : one;
+  const fs = Math.min(max, Math.max(px(6.5), fit(lines)));
+  return { lines, ang, fs };
+}
+
+export function FurnitureLabel({ f, px, dy = 0 }) {
+  const L = furnLabelLayout(f, px);
+  if (!L) return null;
+  const { lines, ang, fs } = L;
+  const y0 = dy - ((lines.length - 1) * fs * 1.15) / 2 + fs * 0.35;
+  return (
+    <g transform={`translate(${f.x},${f.y}) rotate(${ang})`} className="svg-furn-label" style={{ pointerEvents: 'none' }} opacity={f.hidden ? 0.5 : 1}>
+      <text textAnchor="middle" fontSize={fs} strokeWidth={fs * 0.32}>
+        {lines.map((l, i) => (
+          <tspan key={i} x={0} y={y0 + i * fs * 1.15}>
+            {l}
+          </tspan>
+        ))}
+      </text>
+    </g>
+  );
+}
+
+// all pieces of a floor; rugs first so everything else lies on top; labels on top of all pieces
 export function PlanFurniture({ list, sel, px, faded }) {
   const sorted = [...(list || [])].sort((a, b) => (furnType(a.type).kind === 'rug' ? 0 : 1) - (furnType(b.type).kind === 'rug' ? 0 : 1));
+  const wrap = (f, el) =>
+    faded ? (
+      <g key={f.id} className={faded(f) ? 'is-faded' : undefined}>
+        {el}
+      </g>
+    ) : (
+      <React.Fragment key={f.id}>{el}</React.Fragment>
+    );
+  const isSel = (f) => sel?.kind === 'furn' && sel.id === f.id;
   return (
     <g className="svg-furniture">
-      {sorted.map((f) =>
-        faded ? (
-          <g key={f.id} className={faded(f) ? 'is-faded' : undefined}>
-            <FurnitureSymbol f={f} px={px} sel={sel?.kind === 'furn' && sel.id === f.id} />
-          </g>
-        ) : (
-          <FurnitureSymbol key={f.id} f={f} px={px} sel={sel?.kind === 'furn' && sel.id === f.id} />
-        ),
-      )}
+      {sorted.map((f) => wrap(f, <FurnitureSymbol f={f} px={px} sel={isSel(f)} />))}
+      {/* the selected piece shows its name together with its size (FurnitureHandles) */}
+      {sorted.filter((f) => String(f.label || '').trim() && !isSel(f)).map((f) => wrap(f, <FurnitureLabel f={f} px={px} />))}
     </g>
   );
 }
@@ -455,10 +505,16 @@ export function FurnitureHandles({ f, px, s }) {
   const rot = normRot(f.rot || 0);
   const flip = rot > 90 && rot <= 270;
   const fs = Math.min(px(11.5), Math.max(0.08, Math.min(w, d) / 4));
+  // a named piece: name above, size below, both in the name's reading direction
+  const L = String(f.label || '').trim() ? furnLabelLayout(f, px) : null;
+  const gap = L ? Math.max(L.fs, fs) * 0.25 : 0;
+  const labelDy = L ? -(L.lines.length * L.fs * 1.15) / 2 - gap / 2 : 0;
+  const sizeDy = L ? fs / 2 + gap / 2 : 0;
   return (
     <g>
-      <g transform={`translate(${f.x},${f.y}) rotate(${(f.rot || 0) + (flip ? 180 : 0)})`} style={{ pointerEvents: 'none' }}>
-        <text x={0} y={fs * 0.35} textAnchor="middle" fontSize={fs} className="svg-furn-size">
+      {L ? <FurnitureLabel f={f} px={px} dy={labelDy} /> : null}
+      <g transform={`translate(${f.x},${f.y}) rotate(${L ? L.ang : (f.rot || 0) + (flip ? 180 : 0)})`} style={{ pointerEvents: 'none' }}>
+        <text x={0} y={fs * 0.35 + sizeDy} textAnchor="middle" fontSize={fs} className="svg-furn-size">
           {cm(w)} × {cm(d)}
         </text>
       </g>

@@ -960,6 +960,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 }
 
 /* furniture */
+.svg-furn-label text { font-family: var(--font-body); font-weight: 600; fill: var(--ink); paint-order: stroke; stroke: var(--surface); stroke-linejoin: round; stroke-opacity: 0.9; }
 .svg-furn-size { font-family: var(--font-body); font-weight: 600; fill: var(--accent-ink, var(--accent)); paint-order: stroke; stroke: var(--surface); stroke-width: 0.025px; }
 .furn-cats { gap: 5px; }
 .furn-cats .chip { padding: 3px 9px; font-size: 12px; }
