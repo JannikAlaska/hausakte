@@ -390,7 +390,8 @@ export function furnitureParts(f) {
     default:
       box(w, h, d, 0, 0, 0);
   }
-  return P;
+  // mirrored: left and right swapped (e.g. corner sofa, desk with drawers on the other side)
+  return f.mirror ? P.map((q) => ({ ...q, at: [-q.at[0], q.at[1], q.at[2]] })) : P;
 }
 
 // ---------- plan geometry ----------

@@ -11,7 +11,7 @@ import { roomType, projectKind, status as statusOf, ROOM_COLORS, lineKind, fixtu
 import { sortFloors, roomArea, isDone } from './metrics.js';
 import { sunPosition, sunVector, yearSteps, poa, houseGeo, shadeColor } from './solar.js';
 import { fmtFixed, fmtDayMonth, todayISO, escapeHtml } from './util.js';
-import { furnitureParts, furnType } from './furniture.js';
+import { furnitureParts, furnType, furnSize } from './furniture.js';
 import { roomFocus, roomDims, inwardNormal, statusShown } from './focus.js';
 
 
@@ -818,6 +818,12 @@ export class HouseScene {
         if (!list.length) continue;
         const r = furnitureGroup(list, baseOf);
         if (isFaded) r.mats.forEach((m) => fadeMat(m, 0.28));
+        if (!ctx)
+          r.grp.children.forEach((m) => {
+            m.userData.pick = { type: 'floor', floorId: f.id };
+            m.userData.furnOf = { floor: f, list, baseOf };
+            pick(m);
+          });
         grp.add(r.grp);
         mats.push(...r.mats);
       }
@@ -1893,6 +1899,7 @@ export class HouseScene {
     this.selection = sel;
     // a wall selected while a room is focused keeps that focus (sel.focus)
     const fr = sel?.type === 'room' ? sel : sel?.focus?.type === 'room' ? sel.focus : null;
+    // (walls and furniture selected while a room is focused carry it in sel.focus)
     const focus = fr ? { floorId: fr.floorId, roomId: fr.roomId } : null;
     if (JSON.stringify(focus) !== JSON.stringify(this.focus || null)) {
       this.focus = focus;
@@ -1908,6 +1915,24 @@ export class HouseScene {
       this.selWallObj = null;
     }
     const sel = this.selection;
+    if (sel?.type === 'furn') {
+      const e = this.floorEntries?.find((x) => x.floor.id === sel.floorId);
+      const x = e?.floor.furniture?.find((q) => q.id === sel.furnId);
+      if (x) {
+        const { w, d, h } = furnSize(x);
+        const box = new THREE.BoxGeometry(w + 0.04, h + 0.04, d + 0.04);
+        box.rotateY((-(x.rot || 0) * Math.PI) / 180);
+        box.translate(x.x, (x.elev ?? furnType(x.type).elev ?? 0) + h / 2, x.y);
+        const grp = new THREE.Group();
+        grp.add(new THREE.Mesh(box, new THREE.MeshBasicMaterial({ color: this.accent, transparent: true, opacity: 0.16, depthWrite: false })));
+        grp.add(new THREE.LineSegments(new THREE.EdgesGeometry(box), new THREE.LineBasicMaterial({ color: this.accent })));
+        grp.position.y = e.floor.elevation;
+        grp.userData.noShade = true;
+        grp.userData.noXray = true;
+        e.group.add(grp);
+        this.selWallObj = grp;
+      }
+    }
     if (sel?.type === 'wall') {
       const e = this.floorEntries?.find((x) => x.floor.id === sel.floorId);
       const w = e?.floor.walls?.find((x) => x.id === sel.wallId);
@@ -1976,6 +2001,27 @@ export class HouseScene {
     for (const h of hits) {
       const pk = h.object.userData.pick;
       if (!pk) continue;
+      // furniture is merged per storey too: the piece whose footprint holds the hit point
+      const fo = h.object.userData.furnOf;
+      if (fo) {
+        const lp = h.object.worldToLocal(h.point.clone());
+        let best = null;
+        for (const x of fo.list) {
+          const { w, d, h: ht } = furnSize(x);
+          const a = ((x.rot || 0) * Math.PI) / 180;
+          const dx = lp.x - x.x,
+            dy = lp.z - x.y;
+          const lx = dx * Math.cos(a) + dy * Math.sin(a),
+            ly = -dx * Math.sin(a) + dy * Math.cos(a);
+          if (Math.abs(lx) > w / 2 + 0.03 || Math.abs(ly) > d / 2 + 0.03) continue;
+          const base = fo.baseOf(x) - fo.floor.elevation + (x.elev ?? furnType(x.type).elev ?? 0);
+          const inside = lp.y >= base - 0.05 && lp.y <= base + ht + 0.05;
+          const score = (inside ? 0 : 100) + w * d;
+          if (!best || score < best.score) best = { x, score };
+        }
+        if (best) return { type: 'furn', floorId: fo.floor.id, furnId: best.x.id };
+        continue;
+      }
       // walls are merged per storey: find the wall at the point that was hit
       const f = h.object.userData.wallsOf;
       if (f) {

@@ -8,6 +8,7 @@ export const ICON_PATHS = {
   chart: 'M4 20V4M4 20h16M8 16v-5M12 16V8M16 16v-3',
   gauge: 'M3.5 16.5a8.5 8.5 0 1 1 17 0M12 16.5l4-5.5M12 16.5h.01M6.2 10.2l1.2 1M17.8 10.2l-1.2 1M12 6.5V8',
   more: 'M5 12h.01M12 12h.01M19 12h.01',
+  flip: 'M12 3v18M9 7 4 12l5 5zM15 7l5 5-5 5z',
   tasks: 'M4 6h3M4 12h3M4 18h3M10 6h10M10 12h10M10 18h10',
   gantt: 'M3 5h8M6 10h10M9 15h9M5 20h6',
   bolt: 'M13 2 4.5 13.5H11L10 22l8.5-11.5H12z',

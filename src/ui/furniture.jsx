@@ -418,7 +418,7 @@ export function FurnitureSymbol({ f, px, sel, ghost }) {
       );
   }
   return (
-    <g transform={`translate(${f.x},${f.y}) rotate(${f.rot || 0})`} opacity={ghost ? 0.75 : f.hidden ? 0.4 : 1} style={ghost ? { pointerEvents: 'none' } : undefined}>
+    <g transform={`translate(${f.x},${f.y}) rotate(${f.rot || 0})${f.mirror ? ' scale(-1,1)' : ''}`} opacity={ghost ? 0.75 : f.hidden ? 0.4 : 1} style={ghost ? { pointerEvents: 'none' } : undefined}>
       <title>{f.label || t.name}</title>
       {el}
     </g>
@@ -569,6 +569,9 @@ function RotateButtons({ f, set }) {
       <button type="button" className="icon-btn" title="90° nach rechts drehen" aria-label="90° nach rechts drehen" onClick={() => set({ rot: normRot(rot + 90) })}>
         <Icon name="rotR" size={17} />
       </button>
+      <button type="button" className={`icon-btn ${f.mirror ? 'is-active' : ''}`} title={f.mirror ? 'Spiegelung aufheben (M)' : 'Links/rechts spiegeln (M)'} aria-label="Spiegeln" aria-pressed={!!f.mirror} onClick={() => set({ mirror: !f.mirror })}>
+        <Icon name="flip" size={17} />
+      </button>
     </div>
   );
 }
@@ -612,7 +615,7 @@ export function FurnitureToolProps({ type, setType, selected, mutate, onDelete, 
       <h4>{selected ? 'Nächstes Möbelstück' : 'Möbelstück wählen'}</h4>
       <FurnitureCatalog value={type} onPick={setType} />
       <p className="small muted">
-        Wähle ein Möbelstück und klicke in den Grundriss. {standsAtWall(type) ? 'Es stellt sich mit der Rückseite an die nächste Wand.' : 'Es wird frei an die Stelle gesetzt.'} Ziehen verschiebt, der runde Griff dreht, das Eckquadrat ändert die Größe. Taste R dreht um 90°.
+        Wähle ein Möbelstück und klicke in den Grundriss. {standsAtWall(type) ? 'Es stellt sich mit der Rückseite an die nächste Wand.' : 'Es wird frei an die Stelle gesetzt.'} Ziehen verschiebt, der runde Griff dreht, das Eckquadrat ändert die Größe. Taste R dreht um 90°, M spiegelt.
       </p>
     </div>
   );
@@ -662,7 +665,7 @@ export function FurnitureProps({ f, floor, mutate, onDelete, onSelect }) {
         </Field>
       ) : null}
       {isRadiator(f) ? <RadiatorFields f={f} set={set} /> : null}
-      <Field label="Drehung">
+      <Field label="Drehung und Spiegeln" hint={f.mirror ? 'Gespiegelt: links und rechts sind vertauscht.' : 'Letzter Knopf spiegelt links/rechts (Taste M).'}>
         <RotateButtons f={f} set={set} />
       </Field>
       <div className="hstack wrap" style={{ gap: 6 }}>

@@ -51,7 +51,7 @@ function SceneView({ data, sceneRef }) {
         // a room becomes the focus; in the whole-house view its storey is opened so it can be seen
         if (hit.type === 'room') return setUI(u.mode === 'all' && u.view === 'modell' ? { selection: hit, mode: 'floor', floorId: hit.floorId } : { selection: hit });
         // a wall: selectable (to hide it); a focused room stays focused meanwhile
-        if (hit.type === 'wall') return setUI({ selection: { ...hit, focus: u.selection?.type === 'room' ? u.selection : u.selection?.focus || null } });
+        if (hit.type === 'wall' || hit.type === 'furn') return setUI({ selection: { ...hit, focus: u.selection?.type === 'room' ? u.selection : u.selection?.focus || null } });
         if (hit.type === 'floor') return setUI({ selection: hit });
         if (hit.type === 'roof') return setUI({ selection: hit });
       },

@@ -1,6 +1,9 @@
 import { Icon } from './icons.jsx';
 import { IconBtn, Seg, Btn, Pill, InstallFilter } from './common.jsx';
 import { roomDims } from '../focus.js';
+import { furnSize, furnName } from '../furniture.js';
+import { roomOfPoint } from '../planops.js';
+import { updateDoc } from '../store.js';
 import { useUI, setUI, openDrawer, go, showFloor, hideWall, setHiddenWalls, toast } from './state.js';
 import { portfolio, sortFloors, floorStats, componentWear, isDone, roomArea, buildingStats, liveProjects } from '../metrics.js';
 import { projectKind, status as statusOf, roomType } from '../catalog.js';
@@ -331,6 +334,50 @@ export function SelectionCard({ data }) {
             Dach bearbeiten
           </Btn>
           <IconBtn icon="x" label="Auswahl aufheben" onClick={() => setUI({ selection: null })} />
+        </div>
+      </div>
+    );
+  }
+  if (sel.type === 'furn') {
+    const f = data.floors[sel.floorId];
+    const x = f?.furniture?.find((q) => q.id === sel.furnId);
+    if (!x) return null;
+    const { w, d, h } = furnSize(x);
+    const room = roomOfPoint(f, { x: x.x, y: x.y });
+    const setF = (patch) => updateDoc('floors', f.id, (fl) => ({ ...fl, furniture: (fl.furniture || []).map((q) => (q.id === x.id ? { ...q, ...patch } : q)) }), 200);
+    const rot = Math.round((((x.rot || 0) % 360) + 360) % 360);
+    return (
+      <div className="selcard">
+        <div className="sel-crumb">
+          {f.short} · {f.name}
+          {room ? ` · ${room.name}` : ''}
+        </div>
+        <div className="sel-main">
+          <span className="sel-swatch wall" aria-hidden="true">
+            <Icon name="sofa" size={16} />
+          </span>
+          <div>
+            <b>{x.label || furnName(x)}</b>
+            <div className="sel-meta">
+              <Pill tone="accent">
+                {Math.round(w * 100)} × {Math.round(d * 100)} × {Math.round(h * 100)} cm
+              </Pill>
+              <span>{rot}°</span>
+              {x.mirror ? <span>gespiegelt</span> : null}
+            </div>
+          </div>
+        </div>
+        <div className="sel-actions">
+          <Btn small kind={x.mirror ? 'soft' : 'primary'} icon="flip" onClick={() => setF({ mirror: !x.mirror })} aria-pressed={!!x.mirror}>
+            {x.mirror ? 'Zurückspiegeln' : 'Spiegeln'}
+          </Btn>
+          <Btn small kind="ghost" icon="rotR" onClick={() => setF({ rot: (rot + 90) % 360 })}>
+            Drehen
+          </Btn>
+          <Btn small kind="ghost" icon="plan" onClick={() => { setUI({ floorId: f.id }); go('grundriss'); }}>
+            Grundriss
+          </Btn>
+          <IconBtn icon="x" label="Auswahl aufheben" onClick={() => setUI({ selection: sel.focus || null })} />
         </div>
       </div>
     );

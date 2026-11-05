@@ -636,6 +636,9 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
         if (e.key.toLowerCase() === 'r') {
           e.preventDefault();
           setFurn(fi.id, { rot: normRot((fi.rot || 0) + (e.shiftKey ? -90 : 90)) });
+        } else if (e.key.toLowerCase() === 'm') {
+          e.preventDefault();
+          setFurn(fi.id, { mirror: !fi.mirror });
         } else if (mv) {
           e.preventDefault();
           setFurn(fi.id, { x: r3(fi.x + mv[0]), y: r3(fi.y + mv[1]) });
@@ -1207,7 +1210,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
   const focusDims = focus ? roomDims(focus.room, floor) : null;
   const hiddenSet = new Set(ui.hiddenWalls || []);
   const hints = {
-    select: selFurn ? 'Möbel ziehen verschiebt es (rastet an Wänden ein, Alt = frei), runder Griff dreht, Eckquadrat ändert die Größe. R dreht um 90°, Pfeiltasten verschieben um 1 cm.' : 'Klicken wählt Wände, Öffnungen, Räume, Treppen und Möbel. Wand ziehen verschiebt sie, Endpunkte ziehen ändert die Länge. Leere Fläche ziehen verschiebt die Ansicht.',
+    select: selFurn ? 'Möbel ziehen verschiebt es (rastet an Wänden ein, Alt = frei), runder Griff dreht, Eckquadrat ändert die Größe. R dreht um 90°, M spiegelt, Pfeiltasten verschieben um 1 cm.' : 'Klicken wählt Wände, Öffnungen, Räume, Treppen und Möbel. Wand ziehen verschiebt sie, Endpunkte ziehen ändert die Länge. Leere Fläche ziehen verschiebt die Ansicht.',
     furniture: `${furnType(furnKey).name} (${Math.round(furnType(furnKey).w * 100)} × ${Math.round(furnType(furnKey).d * 100)} cm): in den Grundriss klicken zum Platzieren. Ziehen verschiebt, runder Griff dreht, Eckquadrat ändert die Größe.`,
     wall: chain ? 'Weiter klicken für die nächste Wand · Länge eintippen + Enter · Esc oder Doppelklick beendet' : 'Startpunkt klicken. Punkte rasten an Wandenden und auf Wänden ein.',
     room: 'In einen geschlossenen Bereich klicken – der Raum wird aus den Wänden erkannt.',
