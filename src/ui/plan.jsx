@@ -2,7 +2,9 @@
 import { Icon, ICON_PATHS } from './icons.jsx';
 import { Btn, IconBtn, Field, TextInput, NumInput, Select, Toggle, Pill, Sheet, Seg, ConfirmBtn, Empty, InstallFilter } from './common.jsx';
 import { useUI, setUI, getUI, openDrawer, toast, go, hideWall, showWall } from './state.js';
-import { roomFocus, roomDims, inwardNormal, statusShown } from '../focus.js';
+import { roomFocus, roomDims, inwardNormal, statusShown, inRoom } from '../focus.js';
+import { PlanPhotoSpots, PlanSpotProps, spotBusy } from './photos.jsx';
+import { photoDocs, deleteSpot } from '../photos.js';
 import { downscaleImage } from './documents.jsx';
 import { ROOM_TYPES, roomType, ROOM_COLORS, LINE_KINDS, LINE_ZONES, lineKind, FIXTURE_KINDS, fixtureKind, fixtureZ } from '../catalog.js';
 import { DocList, UploadButton } from './documents.jsx';
@@ -88,6 +90,37 @@ function hitPoint(p, points, tol) {
   }
   return best?.pt || null;
 }
+const hitSpot = (p, spots, tol) => {
+  let best = null;
+  for (const q of spots || []) {
+    const d = dist(p, [q.x, q.y]);
+    if (d < tol && (!best || d < best.d)) best = { q, d };
+  }
+  return best?.q || null;
+};
+
+// sidebar while the photo tool is active: how it works and the spots of this floor
+function PhotoToolInfo({ spots, counts, onSelect }) {
+  return (
+    <div className="stack">
+      <p className="small">Ein Fotopunkt markiert eine Stelle, die du über die Zeit fotografierst – z. B. eine Wand vor und nach dem Verputzen oder den Zählerschrank. Klicke dazu in den Grundriss.</p>
+      <p className="small muted">Die Fotos erscheinen als Pins im Grundriss und im 3D-Modell, mit Vorher/Nachher-Vergleich und im Bautagebuch des Projekts.</p>
+      {spots.length ? (
+        <>
+          <h4>Fotopunkte dieser Etage ({spots.length})</h4>
+          <div className="chips">
+            {spots.map((q) => (
+              <button key={q.id} type="button" className="chip" onClick={() => onSelect(q.id)}>
+                <Icon name="camera" size={13} /> {q.label || 'Fotopunkt'} <span className="tab-count">{counts.get(q.id) || 0}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
 // a drawn line that ends on a fixture goes into the wall axis, to the fixture height and out to the face
 function wireEnds(pts, points, walls) {
   let out = pts.map((q) => [...q]);
@@ -485,8 +518,19 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
   const clearFocus = () => {
     if (getUI().selection?.type === 'room') setUI({ selection: null });
   };
+  // "show in plan" from a photo spot elsewhere
+  useEffect(() => {
+    const ps = ui.planSpot;
+    if (!ps || ps.floorId !== floor.id) return;
+    setTool('select');
+    setSel({ kind: 'photo', id: ps.spotId });
+    setUI({ planSpot: null, planPhotos: true });
+  }, [ui.planSpot, floor.id]);
   const showLines = ui.planLines !== false || tool === 'line' || tool === 'riser' || tool === 'fixture';
   const showFurn = ui.planFurniture !== false || tool === 'furniture';
+  const showPhotos = !ctx && (ui.planPhotos !== false || tool === 'photo');
+  const photoSpots = ctx ? [] : floor.photoSpots || [];
+  const fresh = useRef(null); // a spot just set: removed again if it gets no photo
   const hist = useRef({ undo: [], redo: [] });
   const floorRef = useRef(floor);
   floorRef.current = floor;
@@ -499,6 +543,8 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
   const visPoints = instF === 'alle' ? points : points.filter((q) => statusShown(instF, q.status));
   const dims = floor.dims || [];
   const furniture = floor.furniture || [];
+  const photoCounts = new Map();
+  if (photoSpots.length) for (const d of photoDocs(data)) if (d.spot?.floorId === floor.id) photoCounts.set(d.spot.spotId, (photoCounts.get(d.spot.spotId) || 0) + 1);
   const fitPts = useCallback(() => walls.flatMap((w) => [w.a, w.b]).concat(guide ? [[guide.x - 1, guide.y - 1], [guide.x + guide.w + 1, guide.y + guide.d + 1]] : []).concat(floor.underlay ? [[floor.underlay.x, floor.underlay.y], [floor.underlay.x + floor.underlay.w, floor.underlay.y + floor.underlay.w * (floor.underlay.aspect || 0.7)]] : []), [floor.id]);
   const { size, view, setView, fit } = useViewport(boxRef, fitPts, floor.id);
   const { pointers, pinch } = usePanZoom(svgRef, view, setView);
@@ -538,6 +584,19 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
     if (JSON.stringify(n.lines || []) !== JSON.stringify(floor.lines || [])) write(n, 600);
   }, [floor.id]);
 
+  // a photo spot that was just set and got no photo disappears again when something else is selected
+  useEffect(() => {
+    const id = fresh.current;
+    if (!id || sel?.id === id) return;
+    fresh.current = null;
+    setTimeout(() => {
+      const f = floorRef.current;
+      if (!(f.photoSpots || []).some((q) => q.id === id) || spotBusy(id)) return;
+      if (photoDocs(getState()).some((d) => d.spot?.floorId === f.id && d.spot?.spotId === id)) return;
+      mutate((x) => ({ ...x, photoSpots: (x.photoSpots || []).filter((q) => q.id !== id) }), { undo: false, refresh: false });
+    }, 800);
+  }, [sel?.id]);
+
   const toWorld = (e) => {
     const r = svgRef.current.getBoundingClientRect();
     return [(e.clientX - r.left - view.tx) / view.s, (e.clientY - r.top - view.ty) / view.s];
@@ -559,6 +618,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
     if (sel.kind === 'dim') mutate((f) => ({ ...f, dims: (f.dims || []).filter((d) => d.id !== sel.id) }), { refresh: false });
     if (sel.kind === 'point') mutate((f) => ({ ...f, points: (f.points || []).filter((q) => q.id !== sel.id), lines: (f.lines || []).filter((l) => l.stubFor !== sel.id) }), { refresh: false });
     if (sel.kind === 'furn') mutate((f) => ({ ...f, furniture: (f.furniture || []).filter((x) => x.id !== sel.id) }), { refresh: false });
+    if (sel.kind === 'photo') deleteSpot(floor.id, sel.id);
     setSel(null);
   };
 
@@ -688,6 +748,19 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
       setCursor(null);
       return;
     }
+    if (tool === 'photo') {
+      const hs = hitSpot(p, photoSpots, 12 / view.s);
+      if (hs) {
+        setSel({ kind: 'photo', id: hs.id });
+        setDrag({ kind: 'spotMove', id: hs.id, p0: p, x0: hs.x, y0: hs.y, from: deepClone(floor) });
+        return;
+      }
+      const id = uid('ps');
+      mutate((f) => ({ ...f, photoSpots: [...(f.photoSpots || []), { id, x: r3(p[0]), y: r3(p[1]), label: '', createdAt: Date.now() }] }), { refresh: false });
+      fresh.current = id;
+      setSel({ kind: 'photo', id });
+      return;
+    }
     if (tool === 'line') {
       const sp = snapPoint(p, snapOpts(chain?.pts[chain.pts.length - 1])).p;
       const z = zoneZ(lineOpts, floor);
@@ -797,6 +870,14 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
       const d = dims.find((x) => x.id === sel.id);
       const end = d && ['a', 'b'].find((k) => dist(p, d[k]) < 10 / view.s);
       if (end) return setDrag({ kind: 'dimPt', id: d.id, end, from: deepClone(floor) });
+    }
+    if (showPhotos) {
+      const hs = hitSpot(p, photoSpots, 11 / view.s);
+      if (hs) {
+        setSel({ kind: 'photo', id: hs.id });
+        setDrag({ kind: 'spotMove', id: hs.id, p0: p, x0: hs.x, y0: hs.y, from: deepClone(floor) });
+        return;
+      }
     }
     const hd = hitDim(p, dims, tolM);
     if (hd) {
@@ -1058,6 +1139,17 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
       drag.moved = true;
       return;
     }
+    if (drag.kind === 'spotMove') {
+      const sp = (f.photoSpots || []).find((x) => x.id === drag.id);
+      if (!sp) return;
+      const nx = r3(drag.x0 + p[0] - drag.p0[0]),
+        ny = r3(drag.y0 + p[1] - drag.p0[1]);
+      if (!drag.moved && Math.hypot(nx - drag.x0, ny - drag.y0) < 0.03) return;
+      Object.assign(sp, { x: nx, y: ny });
+      save(f, { undo: false, refresh: false });
+      drag.moved = true;
+      return;
+    }
     if (drag.kind === 'item') {
       const it = f.items.find((x) => x.id === drag.id);
       it.x = r3(Math.round((drag.x0 + p[0] - drag.p0[0]) / grid) * grid);
@@ -1203,6 +1295,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
   const selPoint = sel?.kind === 'point' ? points.find((q) => q.id === sel.id) : null;
   const selDim = sel?.kind === 'dim' ? dims.find((d) => d.id === sel.id) : null;
   const selFurn = sel?.kind === 'furn' ? furniture.find((x) => x.id === sel.id) : null;
+  const selSpot = sel?.kind === 'photo' ? photoSpots.find((x) => x.id === sel.id) : null;
   const hlRoom = hlSide ? (floor.rooms || []).find((r) => r.id === hlSide.roomId) || null : null;
   const focusSel = !ctx && ui.selection?.type === 'room' && ui.selection.floorId === floor.id ? ui.selection : null;
   const focus = focusSel ? roomFocus((floor.rooms || []).find((r) => r.id === focusSel.roomId), floor) : null;
@@ -1223,6 +1316,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
     line: chain ? 'Weiter klicken für den nächsten Punkt · Länge eintippen + Enter setzt das nächste Stück in Cursorrichtung · Höhe rechts ändern = senkrechtes Stück · Doppelklick beendet' : 'Startpunkt der Leitung klicken. Punkte rasten an Wänden ein. Art und Höhe stellst du rechts ein.',
     fixture: `${fixtureKind(fixOpts.kind).wall ? 'Klicke neben die Wand, an der der Anschluss sitzt – er rastet auf dieser Wandseite ein.' : 'Klicke die Stelle im Raum, an der die Lampe hängt.'} Weitere Klicks setzen weitere Anschlüsse, Ziehen verschiebt sie.`,
     riser: 'Klicke die Stelle, an der die Leitung senkrecht verläuft (z. B. Steigleitung, Fallrohr). Von- und Bis-Höhe stellst du rechts ein.',
+    photo: 'Klicke die Stelle, die du fotografierst (z. B. eine Wand vor dem Verputzen). Rechts nimmst du dann Fotos auf – vorher, währenddessen und nachher. Ziehen verschiebt den Punkt.',
     underlay: calib ? (calib.pts.length ? 'Jetzt den zweiten Punkt klicken.' : 'Ersten Punkt einer bekannten Strecke auf dem Plan klicken (z. B. Außenmaß).') : 'Plan ziehen verschiebt ihn. Maßstab über „Kalibrieren“ festlegen.',
   };
 
@@ -1256,8 +1350,9 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
               { value: 'fixture', icon: 'socket', title: 'Anschluss (Steckdose, Schalter, Lampe, Netzwerk, Wasser, Gas)' },
               { value: 'roomPoly', icon: 'edit', title: 'Raum als Polygon' },
               { value: 'measure', icon: 'ruler', title: 'Maß eintragen (Maßlinie)' },
+              { value: 'photo', icon: 'camera', title: 'Foto-Punkt (Fotos mit Ort, vorher/nachher)' },
               { value: 'underlay', icon: 'image', title: 'Plan-Unterlage' },
-            ].filter((o) => !ctx || o.value !== 'underlay')}
+            ].filter((o) => !ctx || (o.value !== 'underlay' && o.value !== 'photo'))}
           />
         </div>
         <div className="plan-canvas" ref={boxRef}>
@@ -1265,6 +1360,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
             {showLines && lines.length + points.length > 0 ? <InstallFilter className="plan-instfilter" /> : null}
             <IconBtn icon={showLines ? 'eye' : 'eyeOff'} label={showLines ? 'Leitungen und Anschlüsse ausblenden' : 'Leitungen und Anschlüsse einblenden'} active={showLines && lines.length + points.length > 0} onClick={() => setUI({ planLines: !showLines })} />
             <IconBtn icon="sofa" className={showFurn ? '' : 'is-struck'} label={showFurn ? 'Möbel ausblenden' : 'Möbel einblenden'} active={showFurn && furniture.length > 0} aria-pressed={showFurn} onClick={() => { if (showFurn && selFurn) setSel(null); setUI({ planFurniture: !showFurn }); }} />
+            {photoSpots.length ? <IconBtn icon="camera" className={showPhotos ? '' : 'is-struck'} label={showPhotos ? 'Fotopunkte ausblenden' : 'Fotopunkte einblenden'} active={showPhotos} aria-pressed={showPhotos} onClick={() => { if (showPhotos && selSpot) setSel(null); setUI({ planPhotos: !showPhotos }); }} /> : null}
             <IconBtn icon="undo" label="Rückgängig (Strg+Z)" onClick={undo} disabled={!hist.current.undo.length} />
             <IconBtn icon="redo" label="Wiederholen (Strg+Y)" onClick={redo} disabled={!hist.current.redo.length} />
             <FullBtn />
@@ -1409,6 +1505,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
               {showLines ? <PlanLines lines={visLines} sel={sel} px={px} faded={focus ? (l) => !focus.lines.has(l.id) : null} /> : null}
               {showLines ? <PlanPoints points={visPoints} sel={sel} px={px} faded={focus ? (q) => !focus.points.has(q.id) : null} /> : null}
               {focus ? <RoomDims room={focus.room} px={px} /> : null}
+              {showPhotos && photoSpots.length ? <PlanPhotoSpots spots={photoSpots} counts={photoCounts} sel={sel} px={px} faded={focus ? (q) => !inRoom(focus.room, q.x, q.y) : null} /> : null}
               {chain && tool === 'line' ? <LinePreview pts={chain.pts} cursor={cursor?.p} kind={lineOpts.kind} px={px} /> : null}
               {cursor?.furn && tool === 'furniture' ? <FurnitureSymbol f={cursor.furn} px={px} ghost /> : null}
               {selFurn && showFurn ? <FurnitureHandles f={selFurn} px={px} s={s} /> : null}
@@ -1502,10 +1599,14 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
         </div>
       </div>
       <PropsPanel
-        title={selFurn && tool !== 'furniture' ? selFurn.label || furnName(selFurn) : tool === 'furniture' ? 'Möbel' : selDim ? `Maß${selDim.label ? ': ' + selDim.label : ''}` : selWall ? 'Wand' : selOpening ? OPENING_NAMES[selOpening.type] : selRoom ? `Raum: ${selRoom.name}` : selItem ? 'Treppe' : selPoint ? fixtureKind(selPoint.kind).name : selLine ? 'Leitung' : tool === 'line' || tool === 'riser' ? 'Neue Leitung' : tool === 'fixture' ? 'Anschluss' : ctx ? 'Nebengebäude' : 'Etage & Einstellungen'}
-        openKey={sel ? sel.kind + sel.id : ['line', 'riser', 'fixture', 'wall', 'furniture'].includes(tool) ? tool : null}
+        title={selSpot ? `Fotopunkt${selSpot.label ? ': ' + selSpot.label : ''}` : tool === 'photo' ? 'Fotos mit Ort' : selFurn && tool !== 'furniture' ? selFurn.label || furnName(selFurn) : tool === 'furniture' ? 'Möbel' : selDim ? `Maß${selDim.label ? ': ' + selDim.label : ''}` : selWall ? 'Wand' : selOpening ? OPENING_NAMES[selOpening.type] : selRoom ? `Raum: ${selRoom.name}` : selItem ? 'Treppe' : selPoint ? fixtureKind(selPoint.kind).name : selLine ? 'Leitung' : tool === 'line' || tool === 'riser' ? 'Neue Leitung' : tool === 'fixture' ? 'Anschluss' : ctx ? 'Nebengebäude' : 'Etage & Einstellungen'}
+        openKey={sel ? sel.kind + sel.id : ['line', 'riser', 'fixture', 'wall', 'furniture', 'photo'].includes(tool) ? tool : null}
       >
-        {tool === 'furniture' ? (
+        {selSpot ? (
+          <PlanSpotProps data={data} floor={floor} spot={selSpot} onDelete={deleteSelection} />
+        ) : tool === 'photo' ? (
+          <PhotoToolInfo spots={photoSpots} counts={photoCounts} onSelect={(id) => setSel({ kind: 'photo', id })} />
+        ) : tool === 'furniture' ? (
           <FurnitureToolProps type={furnKey} setType={(k) => { setFurnKey(k); setSel(null); }} selected={selFurn} mutate={mutate} onDelete={deleteSelection} onDetails={() => setTool('select')} />
         ) : selFurn ? (
           <FurnitureProps f={selFurn} floor={floor} mutate={mutate} onDelete={deleteSelection} onSelect={(id) => setSel({ kind: 'furn', id })} />

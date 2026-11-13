@@ -14,6 +14,7 @@ import {
   createInvoice, invoicePatch, contactFromInvoice, pagesOf,
 } from '../invoices.js';
 import { fmtDate, fmtDayMonth, todayISO, uid, diffDays, isISO } from '../util.js';
+import { TaxSection } from './tax.jsx';
 
 // invoices are exact to the cent
 const fmtEuro = (n) => (n == null || !Number.isFinite(Number(n)) ? '–' : Number(n).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' }));
@@ -603,6 +604,8 @@ export function InvoiceDrawer({ data, drawer }) {
           </Field>
         ) : null}
       </Section>
+
+      <TaxSection d={d} data={data} />
 
       <Section title="Rechnungsdaten">
         <div className="grid2">

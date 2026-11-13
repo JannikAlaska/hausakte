@@ -16,6 +16,8 @@ import { DocumentsSheet } from './ui/documents.jsx';
 import { AssistantDrawer } from './ui/assistant.jsx';
 import { ContactDrawer } from './ui/contacts.jsx';
 import { InvoiceDrawer } from './ui/invoices.jsx';
+import { PhotoSpotDrawer, PhotoViewer } from './ui/photos.jsx';
+import { allSpots } from './photos.js';
 import { CockpitPage } from './ui/cockpit.jsx';
 import { pushWidgets } from './native.js';
 import { prepareOlderNotes } from './notesai.js';
@@ -48,6 +50,7 @@ function SceneView({ data, sceneRef }) {
           return;
         }
         if (hit.type === 'project') return openDrawer({ type: 'project', id: hit.projectId });
+        if (hit.type === 'photo') return openDrawer({ type: 'photos', floorId: hit.floorId, spotId: hit.spotId });
         // a room becomes the focus; in the whole-house view its storey is opened so it can be seen
         if (hit.type === 'room') return setUI(u.mode === 'all' && u.view === 'modell' ? { selection: hit, mode: 'floor', floorId: hit.floorId } : { selection: hit });
         // a wall: selectable (to hide it); a focused room stays focused meanwhile
@@ -82,6 +85,19 @@ function SceneView({ data, sceneRef }) {
     return () => cancelAnimationFrame(id);
   }, [data.house, data.floors, data.projects, data.components]);
 
+  // photo spots as pins (only spots with photos; rebuilt only when they change)
+  const pins = useMemo(
+    () =>
+      allSpots(data)
+        .filter((q) => q.photos.length)
+        .map((q) => ({ id: q.id, floorId: q.floorId, x: q.x, y: q.y, n: q.photos.length, title: q.title, thumb: q.photos[q.photos.length - 1].thumb || null })),
+    [data.documents, data.floors],
+  );
+  const pinKey = JSON.stringify(pins.map((q) => [q.id, q.floorId, q.x, q.y, q.n, q.title, (q.thumb || '').length]));
+  useEffect(() => {
+    sceneRef.current?.setPhotoSpots(pins);
+  }, [pinKey]);
+
   // view mode; the plan editor shows its floor in isolation
   useEffect(() => {
     const s = sceneRef.current;
@@ -90,10 +106,11 @@ function SceneView({ data, sceneRef }) {
       const fid = ui.floorId && ui.floorId !== 'roof' && ui.floorId !== 'site' && !String(ui.floorId).startsWith('ctx:') ? ui.floorId : null;
       const showLines = ui.floorId !== 'site' && ui.planLines !== false;
       const showFurniture = ui.planFurniture !== false;
-      if (fid) s.setView({ mode: 'floor', floorId: fid, showRoof: ui.showRoof, showLabels: ui.showLabels, showLines, showFurniture });
-      else s.setView({ mode: 'all', floorId: null, showRoof: true, showLabels: ui.showLabels, showLines, showFurniture });
-    } else s.setView({ mode: ui.mode, floorId: ui.floorId, showRoof: ui.showRoof, showLabels: ui.showLabels, showLines: ui.showLines === true, showFurniture: ui.showFurniture !== false });
-  }, [ui.view, ui.mode, ui.floorId, ui.showRoof, ui.showLabels, ui.showLines, ui.planLines, ui.showFurniture, ui.planFurniture, data.house]);
+      const showPhotos = ui.planPhotos !== false;
+      if (fid) s.setView({ mode: 'floor', floorId: fid, showRoof: ui.showRoof, showLabels: ui.showLabels, showLines, showFurniture, showPhotos });
+      else s.setView({ mode: 'all', floorId: null, showRoof: true, showLabels: ui.showLabels, showLines, showFurniture, showPhotos });
+    } else s.setView({ mode: ui.mode, floorId: ui.floorId, showRoof: ui.showRoof, showLabels: ui.showLabels, showLines: ui.showLines === true, showFurniture: ui.showFurniture !== false, showPhotos: ui.showPhotos !== false });
+  }, [ui.view, ui.mode, ui.floorId, ui.showRoof, ui.showLabels, ui.showLines, ui.planLines, ui.showFurniture, ui.planFurniture, ui.showPhotos, ui.planPhotos, data.house]);
 
   useEffect(() => {
     sceneRef.current?.setHiddenWalls(ui.hiddenWalls);
@@ -562,6 +579,7 @@ function DrawerHost({ data, sceneRef }) {
   if (d.type === 'roadmap') return <RoadmapDrawer data={data} />;
   if (d.type === 'contact') return <ContactDrawer key={d.id} data={data} drawer={d} />;
   if (d.type === 'invoice') return <InvoiceDrawer key={d.id} data={data} drawer={d} />;
+  if (d.type === 'photos') return <PhotoSpotDrawer key={d.floorId + d.spotId} data={data} drawer={d} />;
   if (d.type === 'assistant') return <AssistantDrawer data={data} drawer={d} sceneRef={sceneRef} />;
   return null;
 }
@@ -764,6 +782,7 @@ function App() {
           {ui.view === 'dokumente' ? <DocumentsSheet data={data} /> : null}
           {sheetOpen && ui.wide ? null : null}
           <DrawerHost data={data} sceneRef={sceneRef} />
+          <PhotoViewer data={data} />
           <Banners data={data} />
         </>
       ) : null}

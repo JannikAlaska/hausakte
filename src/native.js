@@ -85,6 +85,10 @@ if (A) {
   };
   window.__hausakteBack = () => {
     const u = getUI();
+    if (u.viewer) {
+      setUI({ viewer: null });
+      return true;
+    }
     if (document.querySelector('.more-menu')) {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
       return true;

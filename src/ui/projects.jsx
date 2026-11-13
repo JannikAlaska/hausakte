@@ -1,4 +1,5 @@
 import { Icon } from './icons.jsx';
+import { ProjectPhotos } from './photos.jsx';
 import { ProjectInvoices } from './invoices.jsx';
 import { HeatHint } from './energy.jsx';
 import { PvHint } from './solar.jsx';
@@ -366,6 +367,7 @@ const P_TABS = [
   { key: 'aufgaben', label: 'Aufgaben', icon: 'checkCircle' },
   { key: 'besprechungen', label: 'Besprechungen', icon: 'mic' },
   { key: 'ansprechpartner', label: 'Ansprechpartner', icon: 'tag' },
+  { key: 'fotos', label: 'Fotos', icon: 'camera' },
   { key: 'dokumente', label: 'Dokumente', icon: 'file' },
 ];
 
@@ -394,7 +396,7 @@ export function ProjectDrawer({ data, drawer }) {
   };
   const tabs = P_TABS.map((t) => ({
     ...t,
-    count: t.key === 'zeitplan' ? (p.milestones || []).length || null : t.key === 'foerderung' ? (p.funding || []).length || null : t.key === 'aufgaben' ? cons.filter((c) => !c.done).length || null : t.key === 'dokumente' ? docs.length || null : t.key === 'besprechungen' ? (p.meetings || []).length || null : t.key === 'ansprechpartner' ? projectContacts(p, data).length || null : null,
+    count: t.key === 'zeitplan' ? (p.milestones || []).length || null : t.key === 'foerderung' ? (p.funding || []).length || null : t.key === 'aufgaben' ? cons.filter((c) => !c.done).length || null : t.key === 'dokumente' ? docs.filter((d) => d.type !== 'foto').length || null : t.key === 'fotos' ? docs.filter((d) => d.type === 'foto').length || null : t.key === 'besprechungen' ? (p.meetings || []).length || null : t.key === 'ansprechpartner' ? projectContacts(p, data).length || null : null,
     warn: t.key === 'zeitplan' && warns.some((w) => w.kind === 'dependency' || w.kind === 'dates' || w.kind === 'overdue'),
   }));
   const nextMs = [...(p.milestones || [])].filter((m) => !m.done && isISO(m.date)).sort((a, b) => (a.date < b.date ? -1 : 1))[0];
@@ -670,9 +672,11 @@ export function ProjectDrawer({ data, drawer }) {
 
       {tab === 'ansprechpartner' ? <ProjectContacts p={p} data={data} /> : null}
 
+      {tab === 'fotos' ? <ProjectPhotos p={p} data={data} /> : null}
+
       {tab === 'dokumente' ? (
         <Section title="Dokumente" aside={<UploadButton projectId={p.id} small />}>
-          <DocList data={data} filter={(d) => d.projectId === p.id} projectId={p.id} compact />
+          <DocList data={data} filter={(d) => d.projectId === p.id && d.type !== 'foto'} projectId={p.id} compact />
         </Section>
       ) : null}
     </Drawer>

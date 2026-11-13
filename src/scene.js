@@ -529,6 +529,7 @@ export class HouseScene {
     this.buildRoof(floors, roofs, facade);
     this.buildScaffold(floors, roofs);
     this.buildProjectLabels(floors, roofs);
+    this.buildPhotoPins();
     this.computeBounds();
     this.buildEnvironment();
     this.applyView(true);
@@ -1888,6 +1889,30 @@ export class HouseScene {
       });
   }
 
+  // photo spots as pins with the newest photo: [{id, floorId, x, y, n, title, thumb}]
+  setPhotoSpots(list) {
+    this.photoSpots = list || [];
+    this.buildPhotoPins();
+  }
+
+  buildPhotoPins() {
+    for (const e of this.floorEntries || []) {
+      for (const l of e.photoLabels || []) e.group.remove(l);
+      e.photoLabels = [];
+    }
+    for (const q of this.photoSpots || []) {
+      const e = (this.floorEntries || []).find((x) => x.floor.id === q.floorId);
+      if (!e) continue;
+      const img = q.thumb && /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(q.thumb) ? `<img src="${q.thumb}" alt="">` : '<i></i>';
+      const lbl = makeLabel(`${img}${q.n > 1 ? `<span>${q.n}</span>` : ''}`, 'photo', () => this.opts.onPick?.({ type: 'photo', floorId: q.floorId, spotId: q.id }));
+      lbl.element.title = `${q.title} · ${q.n} Foto${q.n === 1 ? '' : 's'}`;
+      lbl.position.set(q.x, e.floor.elevation + 1.6, q.y);
+      e.group.add(lbl);
+      e.photoLabels.push(lbl);
+    }
+    this.updateLabels?.();
+  }
+
   setHiddenWalls(ids) {
     const next = new Set(ids || []);
     const same = this.hiddenWalls && this.hiddenWalls.size === next.size && [...next].every((x) => this.hiddenWalls.has(x));
@@ -2107,6 +2132,8 @@ export class HouseScene {
       const roomsOn =
         showLabels && e.group.visible && ((mode === 'floor' && e.floor.id === floorId) || (mode === 'all' && !showRoof && i === topIdx));
       for (const l of e.roomLabels) l.visible = roomsOn;
+      const photosOn = this.view.showPhotos !== false && e.group.visible && ((mode === 'floor' && e.floor.id === floorId) || mode === 'explode' || (mode === 'all' && !showRoof && i === topIdx));
+      for (const l of e.photoLabels || []) l.visible = photosOn;
       if (e.floorLabel) e.floorLabel.visible = showLabels && mode === 'explode';
     });
     const xr = !!this.view.showLines;

@@ -94,6 +94,25 @@ export function createInvoice({ projectId = null, contactId = null } = {}) {
   return id;
 }
 
+// AI tax suggestion -> doc.inv.tax (see tax.js); a manual choice is kept
+const TAX_KEYS = ['handwerk', 'haushalt', 'energie', 'beratung', 'keine'];
+export function taxFromAi(t, prev = {}) {
+  if (!t || typeof t !== 'object') return prev && Object.keys(prev).length ? prev : null;
+  if (prev?.source === 'manuell') return prev;
+  const kind = TAX_KEYS.includes(t.category) ? t.category : null;
+  const labor = num(t.labor);
+  return {
+    ...(prev || {}),
+    kind,
+    labor: (kind === 'handwerk' || kind === 'haushalt') && labor != null && labor >= 0 ? labor : null,
+    laborShown: t.laborShown === true ? true : t.laborShown === false ? false : null,
+    cash: !!t.cash,
+    reason: String(t.reason ?? '').trim().slice(0, 220),
+    source: 'ki',
+    at: Date.now(),
+  };
+}
+
 // AI result -> document fields; keeps what the user already changed
 export function invoicePatch(d, r, data = getState()) {
   const s = (v, n = 200) => String(v ?? '').trim().slice(0, n);
@@ -124,6 +143,7 @@ export function invoicePatch(d, r, data = getState()) {
     summary: s(r.summary, 300),
     warnings: (Array.isArray(r.warnings) ? r.warnings : []).map((w) => s(w, 200)).slice(0, 6),
     projectReason: projectId && !d.projectId ? s(r.projectReason, 200) : d.inv?.projectReason || '',
+    tax: taxFromAi(r.tax, d.inv?.tax || {}),
     source: 'ki',
     pending: false,
     aiAt: Date.now(),

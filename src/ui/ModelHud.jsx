@@ -1,4 +1,5 @@
 import { Icon } from './icons.jsx';
+import { allSpots } from '../photos.js';
 import { IconBtn, Seg, Btn, Pill, InstallFilter } from './common.jsx';
 import { roomDims } from '../focus.js';
 import { furnSize, furnName } from '../furniture.js';
@@ -100,6 +101,8 @@ export function FloorPanel({ data, compact }) {
   const pointCount = storeys.reduce((n, f) => n + (f.points || []).length, 0);
   const furnCount = storeys.reduce((n, f) => n + (f.furniture || []).length, 0);
   const furnOn = ui.showFurniture !== false;
+  const photosOn = ui.showPhotos !== false;
+  const spotCount = allSpots(data).filter((q) => q.photos.length).length;
   const hidden = new Set(ui.hiddenWalls || []);
   const hiddenCount = floors.reduce((n, f) => n + (f.walls || []).filter((w) => hidden.has(w.id)).length, 0);
   return (
@@ -162,6 +165,24 @@ export function FloorPanel({ data, compact }) {
             </span>
           </button>
         </li>
+        {spotCount ? (
+          <li>
+            <button className={`fp-row ${photosOn ? '' : 'is-dim'}`} aria-pressed={photosOn} onClick={() => setUI({ showPhotos: !photosOn })} title="Fotopunkte im 3D-Modell ein- oder ausblenden (sichtbar in der Etagen-Ansicht)">
+              <span className="fp-short">
+                <Icon name="camera" size={15} />
+              </span>
+              <span className="fp-name">
+                <b>Fotos</b>
+                <span>
+                  {spotCount} Fotopunkt{spotCount === 1 ? '' : 'e'} · {photosOn ? 'in der Etagen-Ansicht' : 'ausgeblendet'}
+                </span>
+              </span>
+              <span className="fp-aside">
+                <Icon name={photosOn ? 'eye' : 'eyeOff'} size={15} />
+              </span>
+            </button>
+          </li>
+        ) : null}
         {hiddenCount ? (
           <li>
             <button className="fp-row is-on" onClick={() => setHiddenWalls([])} title="Alle ausgeblendeten Wände wieder einblenden">

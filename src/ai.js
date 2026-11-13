@@ -6,6 +6,8 @@ import { pointInPoly } from './geometry.js';
 import { roomOfPoint } from './planops.js';
 import { furnLabel } from './furniture.js';
 import { invoiceDocs, invOf, invTotal, invOpen, isOverdue, invoiceSums } from './invoices.js';
+import { taxYear } from './tax.js';
+import { photoDocs, allSpots } from './photos.js';
 import { buildingStats, componentWear, projectCost, sortFloors, consumptionByYear, heatingIndex, roomArea, resolveRef } from './metrics.js';
 import { bearingName } from './roof.js';
 import { todayISO, fmtNum } from './util.js';
@@ -222,6 +224,19 @@ export function houseContext(d, { withProjects = true, withComponents = true, wi
       const vendor = d.contacts?.[x.contactId]?.company || i.vendor || 'unbekannt';
       L.push(`- ${vendor}${i.number ? ` Nr. ${i.number}` : ''}${i.date ? ` vom ${i.date}` : ''}: ${fmtNum(invTotal(x), 2)} €, ${i.status === 'teilbezahlt' ? `teilbezahlt, offen ${fmtNum(invOpen(x), 2)} €` : 'offen'}${i.due ? `, fällig ${i.due}${isOverdue(x) ? ' (überfällig)' : ''}` : ''}${x.projectId && d.projects?.[x.projectId] ? `, Projekt ${d.projects[x.projectId].title}` : ', allgemein'}`);
     }
+    // tax helper (Dokumente › Steuer): estimate for this year and last year
+    const y = new Date().getFullYear();
+    for (const yy of [y, y - 1]) {
+      const ty = taxYear(d, yy);
+      if (!ty.total && !ty.check.length) continue;
+      L.push(`Steuer ${yy} (geschätzt, Dokumente › Steuer): Handwerker § 35a ${fmtNum(ty.handwerk.deduction, 2)} € aus ${fmtNum(ty.handwerk.sum, 2)} € Arbeitskosten (Höchstbetrag 1.200 €), haushaltsnah ${fmtNum(ty.haushalt.deduction, 2)} €, energetisch § 35c ${fmtNum(ty.cSum, 2)} €; zusammen ${fmtNum(ty.total, 2)} €${ty.check.length ? `; ${ty.check.length} Rechnung(en) zu prüfen` : ''}${ty.unclassified.length ? `; ${ty.unclassified.length} noch nicht eingeordnet` : ''}`);
+    }
+  }
+  // photo documentation
+  const photos = photoDocs(d);
+  if (photos.length) {
+    const spots = allSpots(d).filter((q) => q.photos.length);
+    L.push(`FOTOS: ${photos.length} Fotos${spots.length ? `, ${spots.length} Fotopunkte im Grundriss (${spots.slice(0, 12).map((q) => `${q.floor.short || q.floor.name} ${q.title}: ${q.photos.length}`).join('; ')})` : ''}. Neue Fotos mit Ort: Grundriss › Kamera-Werkzeug; je Projekt im Reiter „Fotos“ (Bautagebuch, Vorher/Nachher).`);
   }
   if (withProjects) {
     L.push('');
@@ -605,6 +620,7 @@ ${pages}- total ist der zu zahlende Bruttobetrag; bei Abschlags- oder Schlussrec
 - Ordne die Rechnung einem Projekt aus der Liste zu, wenn sie eindeutig dazu passt (Gewerk, Leistung, Ort), sonst null.
 - Entspricht der Absender einem bekannten Kontakt, gib dessen ID an.
 - Erfinde nichts. Ist das Bild keine Rechnung, setze isInvoice auf false.
+${TAX_AI_RULES}
 
 PROJEKTE
 ${projects || 'keine'}
@@ -614,8 +630,41 @@ ${contacts || 'keine'}
 
 ${JSON_RULES}
 Format:
-{"isInvoice":true,"kind":"rechnung|abschlag|schluss|gutschrift","vendor":{"company":"Firma","name":"Ansprechpartner oder leer","address":"Straße, PLZ Ort","phone":"","email":"","website":""},"contactId":"ID oder null","number":"Rechnungsnummer","date":"YYYY-MM-DD","dueDate":"YYYY-MM-DD oder null","paymentTerms":"z. B. 14 Tage netto, 2 % Skonto bis …","skonto":{"percent":2,"until":"YYYY-MM-DD"},"net":1000,"vatRate":19,"vat":190,"total":1190,"alreadyPaid":0,"items":[{"label":"Position","qty":1,"unit":"Stk","unitPrice":100,"amount":100}],"iban":"","projectId":"ID oder null","projectReason":"kurz, warum dieses Projekt","summary":"1 Satz, was berechnet wurde","warnings":["Auffälligkeit, z. B. Summe passt nicht zu den Positionen, Mehrwertsteuer fehlt, schon überfällig"]}`;
+{"isInvoice":true,"kind":"rechnung|abschlag|schluss|gutschrift","vendor":{"company":"Firma","name":"Ansprechpartner oder leer","address":"Straße, PLZ Ort","phone":"","email":"","website":""},"contactId":"ID oder null","number":"Rechnungsnummer","date":"YYYY-MM-DD","dueDate":"YYYY-MM-DD oder null","paymentTerms":"z. B. 14 Tage netto, 2 % Skonto bis …","skonto":{"percent":2,"until":"YYYY-MM-DD"},"net":1000,"vatRate":19,"vat":190,"total":1190,"alreadyPaid":0,"items":[{"label":"Position","qty":1,"unit":"Stk","unitPrice":100,"amount":100}],"iban":"","projectId":"ID oder null","projectReason":"kurz, warum dieses Projekt","summary":"1 Satz, was berechnet wurde","warnings":["Auffälligkeit, z. B. Summe passt nicht zu den Positionen, Mehrwertsteuer fehlt, schon überfällig"],"tax":${TAX_AI_FORMAT}}`;
   return sample.json(prompt, { images: list, modelTier: 'default', signal: opts.signal, cache: false });
+}
+
+// ---------- tax (§ 35a / § 35c EStG) ----------
+const TAX_AI_RULES = `- Steuer (tax): Ordne die Rechnung für die Einkommensteuer des selbst nutzenden Eigentümers ein (category):
+  handwerk = Handwerkerleistung nach § 35a Abs. 3 EStG (Reparatur, Renovierung, Modernisierung, Wartung, Schornsteinfeger, Neuanlage Garten);
+  haushalt = haushaltsnahe Dienstleistung nach § 35a Abs. 2 (Gartenpflege, Reinigung, Winterdienst, Hausmeister);
+  energie = energetische Einzelmaßnahme nach § 35c (Dämmung von Wand, Dach, Geschossdecke, Kellerdecke; neue Fenster/Außentüren; Lüftungsanlage; neue Heizung bzw. Heizungsoptimierung; digitale Verbrauchsoptimierung) – nur wenn das Projekt KEINEN Zuschuss oder Förderkredit hat, sonst handwerk;
+  beratung = Energieberater zu einer § 35c-Maßnahme; keine = nicht absetzbar (reiner Materialkauf ohne Montage, Geräte, Versorger, Behörden, Gebühren, Versicherung, Planung).
+  labor = Arbeits-, Fahrt- und Maschinenkosten BRUTTO (inkl. anteiliger MwSt.) – aus einem ausgewiesenen Lohnanteil oder aus Positionen wie Arbeitszeit, Montage, Lohn, Anfahrt; Material und Entsorgungsgebühren nicht. Lässt es sich nicht bestimmen: null. laborShown = true, wenn die Arbeitskosten auf der Rechnung erkennbar getrennt stehen. cash = true nur bei Barzahlung (Quittung „bar erhalten“).`;
+const TAX_AI_FORMAT = '{"category":"handwerk|haushalt|energie|beratung|keine","labor":0,"laborShown":true,"cash":false,"reason":"kurz, warum"}';
+
+// classify invoices already entered (text only: sender, summary, positions, project)
+export async function aiTaxClassify(docs, d, opts = {}) {
+  const projects = d.projects || {};
+  const lines = docs.slice(0, 25).map((x) => {
+    const i = x.inv || {};
+    const p = x.projectId ? projects[x.projectId] : null;
+    const fund = (p?.funding || []).filter((f) => f.type === 'zuschuss' || f.type === 'kredit').map((f) => `${f.name || f.type} (${f.status})`).join(', ');
+    const items = (i.items || []).slice(0, 30).map((it) => `  - ${it.label}${it.qty ? ` | ${it.qty} ${it.unit || ''}` : ''}${it.amount != null ? ` | ${it.amount} €` : ''}`).join('\n');
+    const vendor = d.contacts?.[x.contactId]?.company || d.contacts?.[x.contactId]?.name || i.vendor || '';
+    return `RECHNUNG ${x.id}: ${vendor || 'Absender unbekannt'}${i.number ? ` Nr. ${i.number}` : ''}, ${i.date || x.date || ''}; gesamt ${i.total ?? '?'} € (netto ${i.net ?? '?'} €, MwSt. ${i.vatRate ?? '?'} %); ${i.summary || x.name || ''}${p ? `; Projekt: ${p.title} (${projectKind(p.kind).name})${fund ? `, Förderung: ${fund}` : ', ohne Förderung'}` : '; ohne Projekt'}${x.notes ? `; Notiz: ${x.notes}` : ''}
+${items || '  (keine Positionen erfasst)'}`;
+  });
+  const prompt = `Ordne die folgenden Rechnungen rund um ein selbst genutztes Wohnhaus steuerlich ein. Die Positionsbeträge sind meist netto – rechne die Arbeitskosten dann mit dem MwSt.-Satz auf brutto hoch.
+${TAX_AI_RULES}
+Erfinde nichts; ist der Lohnanteil aus den Angaben nicht erkennbar, labor null.
+
+${lines.join('\n\n')}
+
+${JSON_RULES}
+Format:
+{"items":[{"id":"Rechnungs-ID","category":"handwerk|haushalt|energie|beratung|keine","labor":0,"laborShown":true,"cash":false,"reason":"kurz, warum"}]}`;
+  return askJSON(prompt, { signal: opts.signal });
 }
 
 // ---------- chat ----------

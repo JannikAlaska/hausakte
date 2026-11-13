@@ -2,6 +2,7 @@ import { Icon } from './icons.jsx';
 import { NotesPanel } from './notes.jsx';
 import { ContactsPanel } from './contacts.jsx';
 import { InvoicesPanel } from './invoices.jsx';
+import { TaxPanel } from './tax.jsx';
 import { matchContact } from '../contacts.js';
 import { Btn, IconBtn, Select, Sheet, Empty, ConfirmBtn, Pill, Field, TextInput } from './common.jsx';
 import { AiRunner } from './ai-ui.jsx';
@@ -579,7 +580,7 @@ function Account() {
 
 export function DocumentsSheet({ data }) {
   const ui = useUI();
-  const tab = ['notizen', 'kontakte', 'rechnungen'].includes(ui.docTab) ? ui.docTab : 'dateien';
+  const tab = ['notizen', 'kontakte', 'rechnungen', 'steuer'].includes(ui.docTab) ? ui.docTab : 'dateien';
   const [type, setType] = useState('alle');
   const [over, setOver] = useState(false);
   const docs = Object.values(data.documents);
@@ -597,13 +598,14 @@ export function DocumentsSheet({ data }) {
       tabs={[
         { key: 'dateien', label: 'Dateien', icon: 'file', count: docs.length },
         { key: 'rechnungen', label: 'Rechnungen', icon: 'euro', count: invoices.length },
+        { key: 'steuer', label: 'Steuer', icon: 'percent' },
         { key: 'notizen', label: 'Notizen', icon: 'edit', count: notes.length },
         { key: 'kontakte', label: 'Kontakte', icon: 'tag', count: contacts.length },
       ]}
       tab={tab}
       onTab={(t) => setUI({ docTab: t })}
     >
-      {tab === 'kontakte' ? <ContactsPanel data={data} /> : tab === 'notizen' ? <NotesPanel data={data} /> : tab === 'rechnungen' ? <InvoicesPanel data={data} /> : (
+      {tab === 'kontakte' ? <ContactsPanel data={data} /> : tab === 'notizen' ? <NotesPanel data={data} /> : tab === 'rechnungen' ? <InvoicesPanel data={data} /> : tab === 'steuer' ? <TaxPanel data={data} /> : (
       <div className="stack">
         <div
           className={`dropzone ${over ? 'is-over' : ''}`}

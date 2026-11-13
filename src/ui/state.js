@@ -4,7 +4,7 @@ import { getState, subscribe } from '../store.js';
 const VIEWS = ['cockpit', 'modell', 'grundriss', 'gebaeude', 'projekte', 'verbrauch', 'dokumente'];
 
 // short addresses for widgets and links: #rechnungen opens Dokumente > Rechnungen
-const ALIAS = { rechnungen: { view: 'dokumente', docTab: 'rechnungen' }, notizen: { view: 'dokumente', docTab: 'notizen' }, kontakte: { view: 'dokumente', docTab: 'kontakte' } };
+const ALIAS = { rechnungen: { view: 'dokumente', docTab: 'rechnungen' }, notizen: { view: 'dokumente', docTab: 'notizen' }, kontakte: { view: 'dokumente', docTab: 'kontakte' }, steuer: { view: 'dokumente', docTab: 'steuer' } };
 const routeOf = (h) => ALIAS[h] || { view: VIEWS.includes(h) ? h : 'cockpit' };
 
 // walls hidden in the 3D model: a view setting of this device (not part of the house data)
