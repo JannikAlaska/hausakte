@@ -9,6 +9,8 @@ import { bearingName } from '../roof.js';
 import { consumptionByYear, projectCost, liveProjects } from '../metrics.js';
 import { economics, paybackText, LIFE, PRICE_RISE } from '../econ.js';
 import { EconLine } from './econ.jsx';
+import { pvConfig, pvSelection, pvEnergy, pvCosts, layoutSig, feedInFor, inverterKind } from '../pv.js';
+import { PvSetup } from './pvsetup.jsx';
 import { fmtNum, fmtFixed, fmtEuro } from '../util.js';
 
 const { useState, useEffect, useMemo, useRef } = React;
@@ -21,7 +23,9 @@ const dayLabel = (doy) => dateOfDoy(YEAR, doy).toLocaleDateString('de-DE', { day
 export function solarSig(data) {
   const h = data.house || {};
   const floors = Object.values(data.floors || {}).map((f) => [f.id, f.elevation, f.height, f.underRoof, f.kneeWall]).sort();
-  const str = JSON.stringify([h.northAngle, h.geo, h.model?.roofSections, h.model?.chimneys, h.model?.context, h.model?.trees, floors]);
+  // the module layout (size, orientation, count, slopes) changes which modules are analysed
+  const lay = h.solar?.cfg ? layoutSig(pvConfig(h)) : '';
+  const str = JSON.stringify([h.northAngle, h.geo, h.model?.roofSections, h.model?.chimneys, h.model?.context, h.model?.trees, floors]) + lay;
   let x = 0;
   for (let i = 0; i < str.length; i++) x = (x * 31 + str.charCodeAt(i)) | 0;
   return String(x);
@@ -242,18 +246,23 @@ export function SolarCheck({ data }) {
   const ctl = useRef(null);
   const set = (patch) => updateHouse((x) => ({ ...x, solar: { ...(x.solar || {}), ...patch } }), 300);
   const pvProject = liveProjects(data.projects).find((p) => p.kind === 'pv');
+  const sel = useMemo(() => pvSelection(h, Object.values(data.floors || {})), [h, data.floors]);
+  const cfg = sel.cfg;
+  const en = useMemo(() => (result ? pvEnergy(result, cfg) : null), [result, cfg]);
   const st = {
     household: solar.household ?? defaultHousehold(data),
     battery: solar.battery ?? (/speicher/i.test(pvProject?.title || '') ? 8 : 0),
     withHp: solar.withHp ?? liveProjects(data.projects).some((p) => p.kind === 'heizung' && /wärmepumpe/i.test(p.title || '')),
     priceGrid: solar.priceGrid ?? 0.34,
-    feedIn: solar.feedIn ?? 0.078,
+    feedIn: solar.feedIn ?? feedInFor(en?.kwp ?? sel.kwp),
+    feedAuto: solar.feedIn == null,
   };
   const heat = useMemo(() => heatResult(h, Object.values(data.floors), data.components, data.readings), [h, data.floors, data.components, data.readings]);
-  const sim = useMemo(
-    () => (result ? simulateSelfUse({ pvHourly: result.hourly, household: st.household, heatKwh: st.withHp ? heat.heatKwh : 0, wwKwh: st.withHp ? heat.wwKwh : 0, jaz: heat.emitter.jaz, battery: st.battery }) : null),
-    [result, st.household, st.battery, st.withHp, heat],
-  );
+  const simOf = (battery) => simulateSelfUse({ pvHourly: en.hourly, household: st.household, heatKwh: st.withHp ? heat.heatKwh : 0, wwKwh: st.withHp ? heat.wwKwh : 0, jaz: heat.emitter.jaz, battery, batteryEff: cfg.battery.eff / 100 });
+  const sim = useMemo(() => (en ? simOf(st.battery) : null), [en, st.household, st.battery, st.withHp, heat, cfg.battery.eff]);
+  const costs = pvCosts(cfg, { modules: en?.n ?? sel.count, kwp: en?.kwp ?? sel.kwp, battery: st.battery, acKw: en?.acKw });
+  const invest = solar.invest ?? costs.total;
+  const investSource = solar.invest != null ? 'eigene Angabe' : 'Kostenaufstellung';
   const run = async () => {
     const scene = sceneHandle.current;
     if (!scene) return toast('Das 3D-Modell ist noch nicht bereit.', 'warn');
@@ -261,7 +270,7 @@ export function SolarCheck({ data }) {
     setBusy(0);
     try {
       const r = await scene.analyzePv({ signal: ctl.current.signal, onProgress: (p) => setBusy(p) });
-      if (!r) return toast('Keine geeignete Dachfläche für PV-Module gefunden.', 'warn');
+      if (!r) return toast('Keine Module geplant – wähle Dachflächen und Anzahl unter „Anlage planen“.', 'warn');
       set({ result: r, sig: solarSig(data) });
       setUI({ pvHeat: true });
     } catch (e) {
@@ -270,14 +279,26 @@ export function SolarCheck({ data }) {
       setBusy(null);
     }
   };
-  const panelsCount = sceneHandle.current?.pvPanels().length ?? 0;
+  // a changed layout (module size, count, slopes) is analysed again automatically
+  const sig = solarSig(data);
+  const auto = useRef(null);
+  useEffect(() => {
+    if (!stale || busy != null || auto.current === sig || !sel.count) return;
+    const t = setTimeout(() => {
+      auto.current = sig;
+      run();
+    }, 1200);
+    return () => clearTimeout(t);
+  }, [sig, stale, busy]);
   const savings = sim ? sim.self * st.priceGrid + sim.feed * st.feedIn : 0;
-  const econ = usePvEconomics({ data, result, st, heat, sim, pvProject, solar });
+  const econ = usePvEconomics({ data, en, st, cfg, sim, simOf, solar, invest, investSource, costs });
+  const m = cfg.module;
   return (
     <div className="stack">
       <p className="small muted">
-        Für jedes mögliche PV-Modul auf deinem Dach prüft die App über ein ganzes Jahr, wann Nachbarhäuser, Schornstein, Bäume oder das eigene Dach Schatten werfen. Grundlage sind der Sonnenstand an deinem Ort und typische Einstrahlungswerte für das Harzvorland. Den Schattenwurf zu jeder Uhrzeit siehst du im 3D-Modell über das Sonnen-Symbol.
+        Plane die Anlage mit deinen Modulen, dem Wechselrichter und den Kosten aus dem Angebot. Für jedes Modul auf dem Dach prüft die App über ein ganzes Jahr, wann Nachbarhäuser, Schornstein, Bäume oder das eigene Dach Schatten werfen – Grundlage sind der Sonnenstand an deinem Ort und typische Einstrahlungswerte für das Harzvorland.
       </p>
+      <PvSetup data={data} sel={sel} en={en} costs={costs} battery={st.battery} invest={invest} investSource={investSource} pvProject={pvProject} />
       <div className="hstack" style={{ flexWrap: 'wrap' }}>
         {busy != null ? (
           <>
@@ -290,43 +311,47 @@ export function SolarCheck({ data }) {
             </Btn>
           </>
         ) : (
-          <Btn kind={result ? 'soft' : 'primary'} icon="sun" onClick={run}>
-            {result ? 'Neu berechnen' : stale ? 'Neu berechnen (Modell geändert)' : 'Verschattung und Ertrag berechnen'}
+          <Btn kind={result ? 'soft' : 'primary'} icon="sun" onClick={run} disabled={!sel.count}>
+            {result ? 'Neu berechnen' : stale ? 'Neu berechnen (Planung geändert)' : 'Verschattung und Ertrag berechnen'}
           </Btn>
         )}
         <Btn kind="ghost" icon="cube" onClick={() => { setUI({ sunOn: true, pvHeat: !!result, mode: 'all', floorId: null, showRoof: true, showLines: false }); go('modell'); }}>
           Sonnenstand im Modell
         </Btn>
       </div>
-      {stale ? (
+      {stale && busy == null ? (
         <div className="callout callout-warn">
           <Icon name="alert" size={16} />
-          <span>Dach, Umgebung oder Ausrichtung haben sich seit der letzten Berechnung geändert. Bitte neu berechnen.</span>
+          <span>Dach, Umgebung oder Modulbelegung haben sich seit der letzten Berechnung geändert – die Berechnung läuft gleich neu.</span>
         </div>
       ) : null}
-      {!result && !stale && panelsCount === 0 ? (
+      {!result && !stale && sel.max === 0 ? (
         <div className="callout">
           <Icon name="info" size={16} />
-          <span>Auf den Dachflächen ist kein Platz für Module mit gutem Ertrag (Ausrichtung Ost über Süd bis West). Prüfe die Dachflächen im Grundriss unter „Dach“.</span>
+          <span>Auf den gewählten Dachflächen ist kein Platz für Module. Wähle unter „Belegung“ weitere Flächen, kleinere Module oder einen kleineren Randabstand – oder prüfe die Dachflächen im Grundriss unter „Dach“.</span>
         </div>
       ) : null}
-      {result ? (
+      {en ? (
         <>
           <div className="stat-grid">
             <div className="stat">
               <span>Module</span>
-              <b>{result.modules.length} Stück</b>
-              <small>{fmtFixed(result.kwp, 1)} kWp (430 Wp je Modul)</small>
+              <b>
+                {en.n} × {fmtNum(m.wp, 0)} Wp
+              </b>
+              <small>
+                {fmtFixed(en.kwp, 2)} kWp · {fmtFixed(en.n * m.area, 1)} m²
+              </small>
             </div>
             <div className="stat">
               <span>Jahresertrag</span>
-              <b>{fmtNum(Math.round(result.total / 10) * 10, 0)} kWh</b>
-              <small>{fmtNum(result.total / result.kwp, 0)} kWh pro kWp</small>
+              <b>{fmtNum(Math.round(en.total / 10) * 10, 0)} kWh</b>
+              <small>{fmtNum(en.specific, 0)} kWh pro kWp</small>
             </div>
             <div className="stat">
               <span>Verlust durch Verschattung</span>
-              <b>{result.loss < 0.001 ? '< 0,1 %' : `${fmtFixed(result.loss * 100, 1)} %`}</b>
-              <small>ohne Schatten {fmtNum(Math.round(result.free / 10) * 10, 0)} kWh</small>
+              <b>{en.loss < 0.001 ? '< 0,1 %' : `${fmtFixed(en.loss * 100, 1)} %`}</b>
+              <small>ohne Schatten {fmtNum(Math.round(en.free / 10) * 10, 0)} kWh</small>
             </div>
             {sim ? (
               <div className="stat">
@@ -339,6 +364,12 @@ export function SolarCheck({ data }) {
             ) : null}
           </div>
           {econ ? <EconLine e={econ.all} hint={`bei ${fmtEuro(econ.invest)} Investition`} /> : null}
+          <div className="kv-grid pv-losses">
+            <div className="kv"><span>Wirkungsgrad der Anlage (Performance Ratio)</span><b>{fmtNum(en.pr * 100, 0)} %</b></div>
+            <div className="kv"><span>Verlust durch Wärme ({fmtFixed(m.tc, 2)} %/K)</span><b>{fmtFixed(en.tempLoss * 100, 1)} %</b></div>
+            <div className="kv"><span>Wechselrichter {fmtFixed(en.acKw, 1)} kW ({inverterKind(cfg.inverter.kind).name})</span><b>{en.clipShare < 0.001 ? 'keine Begrenzung' : `${fmtFixed(en.clipShare * 100, 1)} % begrenzt`}</b></div>
+            <div className="kv"><span>Leistung nach {m.life} Jahren</span><b>ca. {fmtNum(Math.pow(1 - m.deg / 100, m.life) * 100, 0)} %</b></div>
+          </div>
 
           <div className="panel">
             <div className="panel-head">
@@ -358,7 +389,7 @@ export function SolarCheck({ data }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {result.slopes.map((s) => (
+                  {en.slopes.map((s) => (
                     <tr key={s.key}>
                       <td>
                         {s.label} {s.azimuth != null ? `${bearingName(s.azimuth)} (${fmtNum(s.azimuth, 0)}°)` : 'flach'}, {fmtNum(s.tilt, 0)}°
@@ -374,7 +405,9 @@ export function SolarCheck({ data }) {
                 </tbody>
               </table>
             </div>
-            <p className="small muted" style={{ marginTop: 8 }}>Module mit mehr als 10–15 % Verlust lohnen sich oft nicht oder brauchen Leistungsoptimierer. Berechnet mit einem typischen Jahr, 86 % Systemwirkungsgrad, Schatten nur auf die direkte Sonne.</p>
+            <p className="small muted" style={{ marginTop: 8 }}>
+              Module mit mehr als 10–15 % Verlust lohnen sich oft nicht oder brauchen Leistungsoptimierer. Gerechnet mit einem typischen Jahr, Modultemperatur aus Einstrahlung und Monatstemperatur, {fmtNum(cfg.losses, 1)} % sonstigen Verlusten und {fmtNum(cfg.inverter.eff, 1)} % Wechselrichter-Wirkungsgrad{cfg.inverter.shade > 1 ? '; beim String-Wechselrichter wirkt Teilverschattung etwas stärker' : ''}.
+            </p>
           </div>
 
           {sim ? (
@@ -394,7 +427,7 @@ export function SolarCheck({ data }) {
               <Field label="Haushaltsstrom" hint="ohne Wärmepumpe">
                 <NumInput value={st.household} onChange={(v) => v > 0 && set({ household: v })} unit="kWh/a" digits={0} />
               </Field>
-              <Field label="Batteriespeicher">
+              <Field label="Batteriespeicher" hint="Preis und Wirkungsgrad unter „Anlage planen“">
                 <NumInput value={st.battery} onChange={(v) => v != null && set({ battery: v })} unit="kWh" digits={1} />
               </Field>
               <Field label="Wärmepumpe einrechnen" hint={`ca. ${fmtNum(Math.round((heat.heatKwh / heat.emitter.jaz + heat.wwKwh / 2.6) / 100) * 100, 0)} kWh/a laut Heizlast-Check`}>
@@ -403,8 +436,8 @@ export function SolarCheck({ data }) {
               <Field label="Strompreis">
                 <NumInput value={st.priceGrid} onChange={(v) => v > 0 && set({ priceGrid: v })} unit="€/kWh" digits={2} />
               </Field>
-              <Field label="Einspeisevergütung" hint="bis 10 kWp, Teileinspeisung">
-                <NumInput value={st.feedIn} onChange={(v) => v != null && set({ feedIn: v })} unit="€/kWh" digits={3} />
+              <Field label="Einspeisevergütung" hint={st.feedAuto ? `automatisch nach Anlagengröße (bis 10 kWp ca. 7,7 ct, darüber 6,7 ct)` : 'eigene Angabe'}>
+                <NumInput value={st.feedAuto ? null : st.feedIn} placeholder={fmtFixed(st.feedIn, 3)} onChange={(v) => set({ feedIn: v != null && v >= 0 ? v : null })} unit="€/kWh" digits={3} />
               </Field>
             </div>
             {sim ? (
@@ -418,7 +451,7 @@ export function SolarCheck({ data }) {
             <p className="small muted" style={{ marginTop: 8 }}>Stündliche Simulation mit typischen Tagen je Monat (Standardlastprofil Haushalt, Wärmepumpe nach Heizgradtagen). Echte Werte schwanken mit Wetter und Gewohnheiten um ±10–15 %.</p>
           </div>
 
-          {econ ? <PvEconomics econ={econ} st={st} set={set} /> : null}
+          {econ ? <PvEconomics econ={econ} st={st} set={set} cfg={cfg} /> : null}
         </>
       ) : null}
     </div>
@@ -426,44 +459,50 @@ export function SolarCheck({ data }) {
 }
 
 // ---------- economics: whole system, PV alone, battery as add-on ----------
-const PV_EUR_KWP = 1400,
-  PV_FIXED = 1500, // scaffold, meter cabinet, registration
-  BATTERY_EUR_KWH = 650,
-  DEGRADATION = 0.005;
-
+// cost estimate without a stored configuration (e.g. for other views): default module and costs
 export function pvEstimate(kwp, battery) {
-  return { pv: Math.round((PV_FIXED + PV_EUR_KWP * kwp) / 100) * 100, battery: Math.round((BATTERY_EUR_KWH * battery) / 100) * 100 };
+  const cfg = pvConfig({});
+  const n = Math.round((kwp * 1000) / cfg.module.wp);
+  const c = pvCosts(cfg, { modules: n, kwp, battery });
+  return { pv: Math.round(c.pvOnly / 100) * 100, battery: Math.round(c.battery / 100) * 100 };
 }
 
-// Savings in year y: self-used power replaces rising grid prices, feed-in tariff is fixed for 20 years.
-function pvSaving(sim, st, rise) {
-  return (y) => Math.pow(1 - DEGRADATION, y - 1) * (sim.self * st.priceGrid * Math.pow(1 + rise, y - 1) + sim.feed * (y <= 20 ? st.feedIn : 0.05));
+// Savings in year y: self-used power replaces rising grid prices, feed-in tariff is fixed for 20 years;
+// the modules lose power every year; after the battery's life the system runs without it.
+function pvSaving(simA, st, rise, deg, simAfter, until) {
+  return (y) => {
+    const s = simAfter && y > until ? simAfter : simA;
+    return Math.pow(1 - deg, y - 1) * (s.self * st.priceGrid * Math.pow(1 + rise, y - 1) + s.feed * (y <= 20 ? st.feedIn : 0.05));
+  };
 }
 
-function usePvEconomics({ data, result, st, heat, sim, pvProject, solar }) {
+function usePvEconomics({ data, en, st, cfg, sim, simOf, solar, invest, investSource, costs }) {
   return useMemo(() => {
-    if (!result || !sim) return null;
+    if (!en || !sim) return null;
     const rise = solar.priceRise ?? data.house?.heat?.priceRise ?? PRICE_RISE;
-    const planned = pvProject ? projectCost(pvProject).best : 0;
-    const est = pvEstimate(result.kwp, st.battery);
-    const invest = solar.invest ?? (planned || est.pv + est.battery);
-    const source = solar.invest != null ? 'eigene Angabe' : planned ? 'aus deinem PV-Projekt' : 'Schätzung';
-    const sim0 = st.battery > 0 ? simulateSelfUse({ pvHourly: result.hourly, household: st.household, heatKwh: st.withHp ? heat.heatKwh : 0, wwKwh: st.withHp ? heat.wwKwh : 0, jaz: heat.emitter.jaz, battery: 0 }) : sim;
+    const life = cfg.module.life || LIFE.pv;
+    const deg = cfg.module.deg / 100;
+    const sim0 = st.battery > 0 ? simOf(0) : sim;
     const batSize = st.battery > 0 ? st.battery : 8;
-    const simB = st.battery > 0 ? sim : simulateSelfUse({ pvHourly: result.hourly, household: st.household, heatKwh: st.withHp ? heat.heatKwh : 0, wwKwh: st.withHp ? heat.wwKwh : 0, jaz: heat.emitter.jaz, battery: batSize });
-    const batCost = st.battery > 0 ? Math.min(invest, est.battery) : pvEstimate(0, batSize).battery;
+    const simB = st.battery > 0 ? sim : simOf(batSize);
+    const batCost = st.battery > 0 ? Math.min(invest, costs.battery) : batSize * cfg.battery.price;
     const pvCost = st.battery > 0 ? invest - batCost : invest;
+    // the inverter is replaced after its life (a bit cheaper than today)
+    const invLife = cfg.inverter.life;
+    const invRepl = Math.round(costs.inverter * 0.8);
+    const extra = (y) => (invLife < life && (y - 1) % invLife === 0 && y > 1 && y <= life ? invRepl : 0);
+    const replacements = invLife < life ? Math.floor((life - 1) / invLife) : 0;
     const upkeep = (cost) => Math.round(cost * 0.01);
-    const all = economics({ invest, saving: pvSaving(sim, st, rise), life: LIFE.pv, rise, maintenance: upkeep(invest) });
-    const pvOnly = economics({ invest: pvCost, saving: pvSaving(sim0, st, rise), life: LIFE.pv, rise, maintenance: upkeep(pvCost) });
+    const all = economics({ invest, saving: pvSaving(sim, st, rise, deg, st.battery > 0 ? sim0 : null, LIFE.speicher), life, rise, maintenance: upkeep(invest), extra });
+    const pvOnly = economics({ invest: pvCost, saving: pvSaving(sim0, st, rise, deg), life, rise, maintenance: upkeep(pvCost), extra });
     // the battery shifts surplus into the evening: each stored kWh saves the grid price but loses the feed-in tariff
-    const extra = simB.self - sim0.self;
-    const bat = economics({ invest: batCost, saving: (y) => extra * (st.priceGrid * Math.pow(1 + rise, y - 1) - (y <= 20 ? st.feedIn : 0.05)), life: LIFE.speicher, rise });
-    return { invest, source, rise, pvCost, batCost, batSize, hasBattery: st.battery > 0, extra, all, pvOnly, bat, planned, est };
-  }, [result, sim, st.battery, st.household, st.withHp, st.priceGrid, st.feedIn, heat, pvProject, solar.invest, solar.priceRise, data.house?.heat?.priceRise]);
+    const more = simB.self - sim0.self;
+    const bat = economics({ invest: batCost, saving: (y) => Math.pow(1 - deg, y - 1) * more * (st.priceGrid * Math.pow(1 + rise, y - 1) - (y <= 20 ? st.feedIn : 0.05)), life: LIFE.speicher, rise });
+    return { invest, source: investSource, rise, life, pvCost, batCost, batSize, hasBattery: st.battery > 0, extra: more, all, pvOnly, bat, invRepl, invLife, replacements };
+  }, [en, sim, st.battery, st.household, st.withHp, st.priceGrid, st.feedIn, invest, costs.inverter, costs.battery, cfg, solar.priceRise, data.house?.heat?.priceRise]);
 }
 
-function PvEconomics({ econ, st, set }) {
+function PvEconomics({ econ, st, set, cfg }) {
   const e = econ;
   return (
     <div className="panel">
@@ -471,8 +510,8 @@ function PvEconomics({ econ, st, set }) {
         <h3>Lohnt sich die Anlage?</h3>
       </div>
       <div className="grid3">
-        <Field label="Investition gesamt" hint={e.source === 'Schätzung' ? `Schätzung: ${fmtEuro(PV_EUR_KWP)}/kWp + ${fmtEuro(PV_FIXED)}${st.battery > 0 ? ` + ${fmtEuro(BATTERY_EUR_KWH)}/kWh Speicher` : ''}` : e.source}>
-          <NumInput value={e.invest} onChange={(v) => set({ invest: v > 0 ? v : null })} unit="€" digits={0} />
+        <Field label="Investition gesamt" hint={e.source === 'eigene Angabe' ? 'Preis laut Angebot' : 'aus der Kostenaufstellung unter „Anlage planen“'}>
+          <div className="input inv-ro">{fmtEuro(e.invest)}</div>
         </Field>
         <Field label="Strompreis-Steigerung">
           <NumInput value={Math.round(e.rise * 1000) / 10} onChange={(v) => v != null && set({ priceRise: v / 100 })} unit="%/a" digits={1} />
@@ -481,7 +520,7 @@ function PvEconomics({ econ, st, set }) {
       <div className="stack" style={{ gap: 8, marginTop: 10 }}>
         <div>
           <span className="field-label">{e.hasBattery ? `Gesamtanlage mit ${fmtNum(st.battery, 1)} kWh Speicher` : 'PV-Anlage'}</span>
-          <EconLine e={e.all} hint={`Überschuss nach ${LIFE.pv} Jahren ca. ${fmtEuro(Math.round(e.all.benefit / 500) * 500)}`} />
+          <EconLine e={e.all} hint={`Überschuss nach ${e.life} Jahren ca. ${fmtEuro(Math.round(e.all.benefit / 500) * 500)}`} />
         </div>
         {e.hasBattery ? (
           <div>
@@ -497,7 +536,7 @@ function PvEconomics({ econ, st, set }) {
         </div>
       </div>
       <p className="small muted" style={{ marginTop: 8 }}>
-        Annahmen: eigener Strom ersetzt Netzstrom (Preis +{fmtNum(e.rise * 100, 1)} %/a), Einspeisevergütung 20 Jahre fest, danach ca. 5 ct/kWh; Wartung und Versicherung 1 % der Investition pro Jahr; Leistungsverlust der Module 0,5 %/a; Lebensdauer PV {LIFE.pv} Jahre, Speicher {LIFE.speicher} Jahre. PV-Anlagen bis 30 kWp sind von der Mehrwertsteuer befreit und werden nicht bezuschusst. Ein Speicher rechnet sich meist erst mit Wärmepumpe oder E-Auto – oder wenn er günstig ist.
+        Annahmen: eigener Strom ersetzt Netzstrom (Preis +{fmtNum(e.rise * 100, 1)} %/a), Einspeisevergütung 20 Jahre fest, danach ca. 5 ct/kWh; Wartung und Versicherung 1 % der Investition pro Jahr; Leistungsverlust der Module {fmtFixed(cfg.module.deg, 2)} %/a; Lebensdauer Module {e.life} Jahre, Speicher {LIFE.speicher} Jahre{e.replacements ? `, Wechselrichter ${e.invLife} Jahre – ${e.replacements === 1 ? 'ein Tausch' : `${e.replacements} Tausche`} für je ca. ${fmtEuro(e.invRepl)} eingerechnet` : ''}. PV-Anlagen bis 30 kWp sind von der Mehrwertsteuer befreit und werden nicht bezuschusst. Ein Speicher rechnet sich meist erst mit Wärmepumpe oder E-Auto – oder wenn er günstig ist.
       </p>
     </div>
   );
@@ -506,20 +545,22 @@ function PvEconomics({ econ, st, set }) {
 // Compact hint in PV projects.
 export function PvHint({ data }) {
   const r = solarResult(data);
+  const cfg = pvConfig(data.house);
+  const en = r ? pvEnergy(r, cfg) : null;
   return (
     <div className="callout callout-info" style={{ marginTop: 10 }}>
       <Icon name="sun" size={16} />
       <div style={{ flex: 1 }}>
-        {r ? (
+        {en ? (
           <>
-            Laut 3D-Modell passen <b>{r.modules.length} Module ({fmtFixed(r.kwp, 1)} kWp)</b> aufs Dach, Ertrag ca. <b>{fmtNum(Math.round(r.total / 100) * 100, 0)} kWh/a</b>, Verschattungsverlust {fmtFixed(r.loss * 100, 1)} %.
+            Geplant: <b>{en.n} Module {cfg.module.name} ({fmtFixed(en.kwp, 1)} kWp)</b>, Ertrag ca. <b>{fmtNum(Math.round(en.total / 100) * 100, 0)} kWh/a</b>, Verschattungsverlust {fmtFixed(en.loss * 100, 1)} %.
           </>
         ) : (
-          <>Berechne Ertrag, Verschattung und Eigenverbrauch für dein Dach aus dem 3D-Modell.</>
+          <>Plane Module, Wechselrichter und Kosten und berechne Ertrag, Verschattung und Eigenverbrauch für dein Dach aus dem 3D-Modell.</>
         )}
         <div style={{ marginTop: 6 }}>
           <Btn small icon="sun" onClick={() => { setUI({ buildingTab: 'sonne', drawer: null }); go('gebaeude'); }}>
-            {r ? 'PV-Analyse öffnen' : 'Jetzt berechnen'}
+            {en ? 'PV-Planung öffnen' : 'Jetzt planen'}
           </Btn>
         </div>
       </div>

@@ -1522,3 +1522,30 @@ button, a { -webkit-tap-highlight-color: transparent; }
   .ph-card .ph-thumb { width: 84px; height: 84px; }
   .ph-nav { display: none; }
 }
+
+/* PV planning: module, layout, inverter, battery, costs */
+.pv-setup { display: flex; flex-direction: column; gap: 0; }
+.pv-setup .panel-head { margin-bottom: 4px; }
+.pv-sec { border-top: 1px solid var(--line); }
+.pv-sec > summary { display: flex; align-items: center; gap: 8px; padding: 11px 2px; cursor: pointer; list-style: none; }
+.pv-sec > summary::-webkit-details-marker { display: none; }
+.pv-sec > summary > .ico:first-child { color: var(--accent); flex: none; }
+.pv-sec > summary b { font-size: 13.5px; flex: none; }
+.pv-sec-val { flex: 1; min-width: 0; text-align: right; font-size: 12.5px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pv-sec-chev { flex: none; color: var(--ink-3); transition: transform 0.15s; }
+.pv-sec[open] > summary .pv-sec-chev { transform: rotate(180deg); }
+.pv-sec-body { display: flex; flex-direction: column; gap: 10px; padding: 2px 2px 14px; }
+.pv-facts { margin: 0; }
+.pv-slopes { display: flex; flex-direction: column; gap: 6px; }
+.pv-slope { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); }
+.pv-slope.is-off { opacity: 0.75; background: var(--surface); }
+.pv-slope > .small { padding-left: 46px; }
+.pv-costs { margin-top: 2px; }
+.pv-costs tfoot td { border-top: 1px solid var(--line-2); padding-top: 8px; }
+.pv-losses { padding: 4px 2px; }
+@media (max-width: 760px) {
+  .pv-sec > summary { flex-wrap: wrap; row-gap: 2px; }
+  .pv-sec > summary b { flex: 1; }
+  .pv-sec-val { order: 3; flex-basis: 100%; text-align: left; padding-left: 24px; }
+  .pv-slope > .small { padding-left: 0; }
+}

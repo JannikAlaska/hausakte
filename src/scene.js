@@ -7,6 +7,7 @@ import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { outerOutline, outlineFromWalls, pointInPoly, labelPoint, polyCentroid, polyArea, norm, sub, perp, offsetPolygon, bbox, planarFaces, wallSegs, distToPolyEdges, distToSeg } from './geometry.js';
 import { roofModel, sectionClipPlanes, pvPotential, sectionGeometry } from './roof.js';
+import { pvSelection } from './pv.js';
 import { roomType, projectKind, status as statusOf, ROOM_COLORS, lineKind, fixtureKind } from './catalog.js';
 import { sortFloors, roomArea, isDone } from './metrics.js';
 import { sunPosition, sunVector, yearSteps, poa, houseGeo, shadeColor } from './solar.js';
@@ -985,7 +986,7 @@ export class HouseScene {
     const pvProjects = (this.data.projects || []).filter((p) => p.kind === 'pv' && p.status !== 'pausiert');
     if (pvProjects.length) {
       const done = pvProjects.some(isDone);
-      const pot = pvPotential(this.data.house, floors).filter((p) => p.factor >= 0.8 && p.modules > 0);
+      const pot = pvSelection(this.data.house, floors).slopes;
       const pos = [],
         uv = [];
       for (const p of pot)
@@ -1202,7 +1203,7 @@ export class HouseScene {
 
   // ---------- PV shading analysis ----------
   pvPanels() {
-    const pot = pvPotential(this.data?.house, this.floors || []).filter((p) => p.factor >= 0.8 && p.modules > 0);
+    const pot = pvSelection(this.data?.house, this.floors || []).slopes;
     const out = [];
     for (const p of pot)
       for (const q of p.layout.panels) {
@@ -1242,10 +1243,8 @@ export class HouseScene {
       for (let x = o; x; x = x.parent) if (x.userData?.noShade) return true;
       return false;
     };
-    const KWP = 0.43,
-      PR = 0.86;
+    // irradiation on every module (kWh/m²); the electrical yield follows from the configuration (pv.js)
     const hourly = months.map(() => new Array(24).fill(0));
-    const monthly = new Array(12).fill(0);
     const mods = panels.map((p) => ({ slopeKey: p.slopeKey, free: 0, real: 0 }));
     const org = new THREE.Vector3(),
       dir = new THREE.Vector3();
@@ -1267,30 +1266,25 @@ export class HouseScene {
             const real = shaded ? poa(st, pn.normal, true) : free;
             mods[i].free += (free * m.hours * m.days) / 1000;
             mods[i].real += (real * m.hours * m.days) / 1000;
-            const kwhDay = (real * m.hours * KWP * PR) / 1000;
-            hourly[m.month][Math.floor(st.min / 60)] += kwhDay;
-            monthly[m.month] += kwhDay * m.days;
+            hourly[m.month][Math.floor(st.min / 60)] += (real * m.hours) / 1000;
           }
       });
       onProgress?.((i + 1) / panels.length);
       await new Promise((r) => setTimeout(r, 0));
     }
-    for (const m of mods) {
-      m.loss = m.free ? 1 - m.real / m.free : 0;
-      m.kwh = m.real * KWP * PR;
-    }
+    for (const m of mods) m.loss = m.free ? 1 - m.real / m.free : 0;
     const slopes = [];
     for (const p of panels) if (!slopes.some((x) => x.key === p.slopeKey)) slopes.push({ key: p.slopeKey, label: p.slope.label, azimuth: p.slope.azimuth, tilt: p.slope.tilt });
     for (const sl of slopes) {
       const ms = mods.filter((m) => m.slopeKey === sl.key);
       sl.modules = ms.length;
-      sl.kwp = ms.length * KWP;
-      sl.kwh = ms.reduce((a, m) => a + m.kwh, 0);
-      sl.loss = 1 - ms.reduce((a, m) => a + m.real, 0) / Math.max(1e-6, ms.reduce((a, m) => a + m.free, 0));
+      sl.irr = ms.reduce((a, m) => a + m.real, 0);
+      sl.loss = 1 - sl.irr / Math.max(1e-6, ms.reduce((a, m) => a + m.free, 0));
     }
-    const free = mods.reduce((a, m) => a + m.free * KWP * PR, 0);
-    const total = mods.reduce((a, m) => a + m.kwh, 0);
-    return { at: Date.now(), modules: mods.map((m) => ({ s: m.slopeKey, loss: Math.round(m.loss * 1000) / 1000, kwh: Math.round(m.kwh) })), slopes, kwp: panels.length * KWP, total, free, loss: free ? 1 - total / free : 0, monthly, hourly };
+    const r3 = (v) => Math.round(v * 1000) / 1000;
+    const irr = mods.reduce((a, m) => a + m.real, 0);
+    const freeIrr = mods.reduce((a, m) => a + m.free, 0);
+    return { v: 2, at: Date.now(), n: panels.length, irr, freeIrr, modules: mods.map((m) => ({ s: m.slopeKey, loss: r3(m.loss), irr: Math.round(m.real * 10) / 10 })), slopes, hourlyIrr: hourly.map((row) => row.map(r3)) };
   }
 
   // colours every module by its shading loss (sequential ramp); null hides it

@@ -5,15 +5,16 @@
 export const LIFE = { daemmung: 40, fenster: 30, waermepumpe: 20, pv: 25, speicher: 15 };
 export const PRICE_RISE = 0.03; // energy prices per year
 
-// saving: € in the first year, or a function (year 1..n) → €; maintenance: € per year
-export function economics({ invest, funding = 0, saving, life, rise = PRICE_RISE, maintenance = 0 }) {
+// saving: € in the first year, or a function (year 1..n) → €; maintenance: € per year;
+// extra: optional function (year) → one-off costs in that year (e.g. replacing an inverter)
+export function economics({ invest, funding = 0, saving, life, rise = PRICE_RISE, maintenance = 0, extra = null }) {
   const net = Math.max(0, (invest || 0) - (funding || 0));
   const at = typeof saving === 'function' ? saving : (y) => saving * Math.pow(1 + rise, y - 1);
   let cum = 0,
     years = null,
     total = 0;
   for (let y = 1; y <= 60; y++) {
-    const s = at(y) - maintenance;
+    const s = at(y) - maintenance - (extra ? extra(y) || 0 : 0);
     if (years == null && s > 0 && cum + s >= net) years = y - 1 + (net - cum) / s;
     cum += s;
     if (y <= life) total += s;

@@ -150,12 +150,27 @@ export function yieldFactor(azimuth, tilt) {
   return Math.max(0.35, Math.min(1, tiltF - azLoss));
 }
 
-const PANEL = { w: 1.134, h: 1.722, wp: 430 };
+// default module (see pv.js for the configurable system)
+export const PANEL = { w: 1.134, h: 1.722, wp: 430 };
 
-// Lays out PV modules on one slope (portrait), keeping a margin to all edges.
-export function pvLayout(slope, margin = 0.45) {
+// Lays out PV modules on one slope, keeping a margin to all edges.
+// opts: w/h module size in m (w = short side), wp, orient 'hoch' (portrait) | 'quer' (landscape) | 'auto'
+// (whichever fits more), margin to the edges, gap between modules.
+export function pvLayout(slope, opts = {}) {
+  const o = typeof opts === 'number' ? { margin: opts } : opts;
+  if (o.orient === 'auto') {
+    const a = pvLayoutOne(slope, { ...o, orient: 'hoch' });
+    const b = pvLayoutOne(slope, { ...o, orient: 'quer' });
+    return b.count > a.count ? b : a;
+  }
+  return pvLayoutOne(slope, o);
+}
+
+function pvLayoutOne(slope, { w = PANEL.w, h = PANEL.h, wp = PANEL.wp, orient = 'hoch', margin = 0.45, gap = 0.02 } = {}) {
+  const PW = orient === 'quer' ? Math.max(w, h) : Math.min(w, h); // along the eave
+  const PH = orient === 'quer' ? Math.min(w, h) : Math.max(w, h); // up the slope
   const pts = slope.pts;
-  if (pts.length < 3) return { panels: [], kwp: 0, count: 0 };
+  if (pts.length < 3) return { panels: [], kwp: 0, count: 0, orient };
   // slope-local axes: e1 horizontal along eave, e2 up the slope
   const n = slope.normal;
   let e1 = Math.hypot(n[0], n[1]) < 1e-6 ? [1, 0, 0] : [-n[1], n[0], 0];
@@ -201,24 +216,23 @@ export function pvLayout(slope, margin = 0.45) {
     return d;
   };
   const ok = (q) => inside(q) && edgeDist(q) >= margin - 1e-6;
-  const gap = 0.02;
-  const cols = Math.floor((maxU - minU - 2 * margin + gap) / (PANEL.w + gap));
-  const rows = Math.floor((maxV - minV - 2 * margin + gap) / (PANEL.h + gap));
+  const cols = Math.floor((maxU - minU - 2 * margin + gap) / (PW + gap));
+  const rows = Math.floor((maxV - minV - 2 * margin + gap) / (PH + gap));
   const panels = [];
   if (cols > 0 && rows > 0) {
-    const usedW = cols * (PANEL.w + gap) - gap;
+    const usedW = cols * (PW + gap) - gap;
     const u0 = minU + (maxU - minU - usedW) / 2;
     const v0 = minV + margin;
     for (let r = 0; r < rows; r++)
       for (let c = 0; c < cols; c++) {
-        const a = [u0 + c * (PANEL.w + gap), v0 + r * (PANEL.h + gap)];
-        const corners = [a, [a[0] + PANEL.w, a[1]], [a[0] + PANEL.w, a[1] + PANEL.h], [a[0], a[1] + PANEL.h]];
+        const a = [u0 + c * (PW + gap), v0 + r * (PH + gap)];
+        const corners = [a, [a[0] + PW, a[1]], [a[0] + PW, a[1] + PH], [a[0], a[1] + PH]];
         if (!corners.every(ok)) continue;
         const lift = 0.34; // above the roof skin (0.26 m)
         panels.push(corners.map(([u, v]) => [o[0] + e1[0] * u + e2[0] * v + n[0] * lift, o[1] + e1[1] * u + e2[1] * v + n[1] * lift, o[2] + e1[2] * u + e2[2] * v + n[2] * lift]));
       }
   }
-  return { panels, count: panels.length, kwp: (panels.length * PANEL.wp) / 1000 };
+  return { panels, count: panels.length, kwp: (panels.length * wp) / 1000, orient };
 }
 
 // Eave height for sections without an explicit base: top of the highest floor, or knee wall for attic floors.
@@ -240,12 +254,12 @@ export function roofModel(house, floors) {
   });
 }
 
-// PV potential for every slope: kWp, yield and estimated annual output.
-export function pvPotential(house, floors) {
+// PV potential for every slope: kWp, yield and estimated annual output (lay: module and layout options).
+export function pvPotential(house, floors, lay0 = {}) {
   const out = [];
   for (const { sec, geo } of roofModel(house, floors)) {
     geo.slopes.forEach((s, i) => {
-      const lay = pvLayout(s);
+      const lay = pvLayout(s, lay0);
       const f = yieldFactor(s.azimuth, s.tilt);
       out.push({
         key: sec.id + ':' + i,

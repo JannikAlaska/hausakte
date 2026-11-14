@@ -7,6 +7,7 @@ import { roomOfPoint } from './planops.js';
 import { furnLabel } from './furniture.js';
 import { invoiceDocs, invOf, invTotal, invOpen, isOverdue, invoiceSums } from './invoices.js';
 import { taxYear } from './tax.js';
+import { pvSelection, pvCosts, inverterKind, autoInverterKw } from './pv.js';
 import { photoDocs, allSpots } from './photos.js';
 import { buildingStats, componentWear, projectCost, sortFloors, consumptionByYear, heatingIndex, roomArea, resolveRef } from './metrics.js';
 import { bearingName } from './roof.js';
@@ -92,6 +93,16 @@ export function houseContext(d, { withProjects = true, withComponents = true, wi
     L.push(
       `Dachfläche ${p.azimuth != null ? bearingName(p.azimuth) : 'flach'} ${fmtNum(p.tilt, 0)}°: ${fmtNum(p.area, 1)} m², Platz für ca. ${p.modules} PV-Module (${fmtNum(p.kwp, 1)} kWp, ca. ${fmtNum(p.kwhYear, 0)} kWh/a)`,
     );
+  // PV planning (Gebäude › Sonne & PV)
+  if (d.house?.solar?.cfg || d.house?.solar?.result) {
+    const sel = pvSelection(d.house, floors);
+    const c = sel.cfg;
+    const costs = pvCosts(c, { modules: sel.count, kwp: sel.kwp, battery: d.house.solar.battery || 0 });
+    const ik = inverterKind(c.inverter.kind);
+    L.push(
+      `PV-Planung: ${sel.count} Module ${c.module.name} (${fmtNum(c.module.wp, 0)} Wp, ${fmtNum(c.module.w, 3)} × ${fmtNum(c.module.h, 3)} m, Temperaturkoeffizient ${fmtNum(c.module.tc, 2)} %/K, ${fmtNum(c.module.price, 0)} €/Stück) = ${fmtNum(sel.kwp, 2)} kWp; ${ik.name} ${fmtNum(c.inverter.kw ?? autoInverterKw(sel.kwp), 1)} kW; Speicher ${fmtNum(d.house.solar.battery || 0, 1)} kWh; Kosten laut Aufstellung ca. ${fmtNum(costs.total, 0)} €${d.house.solar.invest ? `, Angebotspreis ${fmtNum(d.house.solar.invest, 0)} €` : ''}`,
+    );
+  }
   L.push('');
   L.push('GESCHOSSE');
   for (const f of floors) {

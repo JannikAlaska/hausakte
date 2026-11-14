@@ -3,6 +3,7 @@
 import { polyArea, polyPerimeter, outerOutline, openingArea } from './geometry.js';
 import { roomType, medium, energyClass, status as statusOf } from './catalog.js';
 import { pvPotential, roofModel } from './roof.js';
+import { pvSelection, pvConfig, layoutOpts } from './pv.js';
 import { todayISO, parseISO } from './util.js';
 
 export const sortFloors = (floors) => [...floors].sort((a, b) => a.elevation - b.elevation);
@@ -45,8 +46,8 @@ export function buildingStats(house, floors) {
   }
   const roofs = roofModel(house, fl);
   const roofArea = roofs.reduce((s, r) => s + r.geo.slopes.reduce((a, sl) => a + sl.area, 0), 0);
-  const pv = pvPotential(house, fl);
-  const pvGood = pv.filter((p) => p.factor >= 0.8 && p.modules > 0);
+  const pv = pvPotential(house, fl, layoutOpts(pvConfig(house)));
+  const pvGood = pvSelection(house, fl).slopes;
   const volume = per.reduce((s, p) => s + p.gross * p.floor.height, 0);
   return {
     perFloor: per,

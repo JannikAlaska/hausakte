@@ -133,7 +133,9 @@ const HDD_SHARE = [0.17, 0.15, 0.13, 0.09, 0.05, 0.015, 0.005, 0.005, 0.03, 0.08
 const COP_MONTH = [0.85, 0.88, 0.95, 1.05, 1.15, 1.2, 1.2, 1.2, 1.1, 1.0, 0.9, 0.85];
 
 // pvHourly: 12 × 24 kWh for an average day per month. Returns yearly sums and monthly values.
-export function simulateSelfUse({ pvHourly, household = 3000, heatKwh = 0, wwKwh = 0, jaz = 3, battery = 0 }) {
+// batteryEff: round-trip efficiency (0.9 = 90 %); the battery charges/discharges at most with half its capacity per hour
+export function simulateSelfUse({ pvHourly, household = 3000, heatKwh = 0, wwKwh = 0, jaz = 3, battery = 0, batteryEff = 0.9 }) {
+  const be = Math.sqrt(Math.max(0.5, Math.min(1, batteryEff)));
   const h0 = H0.map((v) => v / H0.reduce((a, b) => a + b, 0));
   const mSum = H0_MONTH.reduce((s, f, m) => s + f * DAYS[m], 0);
   const hdd = HDD_SHARE.map((v) => v / HDD_SHARE.reduce((a, b) => a + b, 0));
@@ -151,14 +153,14 @@ export function simulateSelfUse({ pvHourly, household = 3000, heatKwh = 0, wwKwh
         const sur = pv[h] - load[h];
         if (sur >= 0) {
           day.self += load[h];
-          const ch = Math.min(sur, Math.max(0, battery - soc) / 0.95, battery * 0.5);
-          soc += ch * 0.95;
+          const ch = Math.min(sur, Math.max(0, battery - soc) / be, battery * 0.5);
+          soc += ch * be;
           day.feed += sur - ch;
         } else {
           day.self += pv[h];
           const need = -sur;
-          const dis = Math.min(need, soc * 0.95, battery * 0.5);
-          soc -= dis / 0.95;
+          const dis = Math.min(need, soc * be, battery * 0.5);
+          soc -= dis / be;
           day.self += dis;
           day.grid += need - dis;
         }
