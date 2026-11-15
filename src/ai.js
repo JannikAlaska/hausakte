@@ -645,6 +645,37 @@ Format:
   return sample.json(prompt, { images: list, modelTier: 'default', signal: opts.signal, cache: false });
 }
 
+// ---------- handwriting -> text ----------
+export async function aiHandwriting(image, d, opts = {}) {
+  const sample = await getSample();
+  if (!sample) throw { code: 'not_granted' };
+  const lim = await getLimits();
+  if (!lim?.images) throw { code: 'images_unavailable' };
+  const names = [
+    ...Object.values(d.contacts || {}).map((c) => [c.company, c.name].filter(Boolean).join(' ')),
+    ...Object.values(d.projects || {}).filter((p) => !p.archived).map((p) => p.title),
+    ...Object.values(d.floors || {}).flatMap((f) => (f.rooms || []).map((r) => r.name)),
+  ].filter(Boolean);
+  const prompt = `Das Bild zeigt eine handschriftliche Notiz – mit einem Stift auf dem Tablet geschrieben, meist auf Deutsch, rund um ein Wohnhaus, seine Renovierung, Handwerker und Termine.${opts.context ? ` Zusammenhang: ${opts.context}.` : ''}
+Übertrage die Handschrift genau in Computerschrift (text):
+- Wortlaut beibehalten: nichts hinzufügen, nichts weglassen, nicht zusammenfassen. Offensichtliche Schreibfehler darfst du still korrigieren.
+- Zeilen und Absätze wie im Original; was nur wegen des Seitenrands umbricht, zu einem Satz zusammenfügen. Aufzählungen (Striche, Punkte, Haken) als Zeilen mit "- ", nummerierte als "1. ".
+- Durchgestrichenes weglassen. Pfeile als "→". Markierte Stellen normal übernehmen.
+- Zahlen, Maße, Preise, Daten, Uhrzeiten und Telefonnummern besonders sorgfältig übernehmen (z. B. 2,40 m, 1.250 €, 12.03., 14:30).
+- Unleserliches als [?]; ein nur vermutetes Wort mit [?] dahinter.
+- Skizzen oder Zeichnungen kurz in eckigen Klammern beschreiben, z. B. [Skizze: Bad mit Maßen 2,10 × 1,80 m].
+- Ist nichts Lesbares zu sehen, text leer.
+Gib außerdem einen kurzen Titel (title, höchstens 8 Wörter), wie sicher du dir bist (confidence: hoch, mittel oder niedrig) und die unsicheren Stellen (unclear).
+
+BEKANNTE NAMEN (helfen beim Entziffern, nur verwenden, wenn sie wirklich dastehen)
+${names.slice(0, 80).join('; ') || 'keine'}
+
+${JSON_RULES}
+Format:
+{"text":"…","title":"…","confidence":"hoch|mittel|niedrig","unclear":["unsichere Stelle"]}`;
+  return sample.json(prompt, { images: [image], modelTier: 'default', signal: opts.signal, cache: false });
+}
+
 // ---------- tax (§ 35a / § 35c EStG) ----------
 const TAX_AI_RULES = `- Steuer (tax): Ordne die Rechnung für die Einkommensteuer des selbst nutzenden Eigentümers ein (category):
   handwerk = Handwerkerleistung nach § 35a Abs. 3 EStG (Reparatur, Renovierung, Modernisierung, Wartung, Schornsteinfeger, Neuanlage Garten);

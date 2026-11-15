@@ -1,15 +1,19 @@
 // Spoken notes prepared by the AI: clean text, and whether they record an appointment (which one, when,
 // who was there, what was decided). Runs right after a note is saved and once for older spoken notes.
-import { getState, updateDoc } from './store.js';
-import { aiNote, aiMeeting, aiErrorText, getSample } from './ai.js';
-import { applyMeetingAi, autoTitle } from './actions.js';
+import { getState, updateDoc, putDoc, deleteDoc, getAssets } from './store.js';
+import { aiNote, aiMeeting, aiHandwriting, aiErrorText, getSample } from './ai.js';
+import { applyMeetingAi, autoTitle, patchProject } from './actions.js';
+import { decodeInk, renderInk } from './ink.js';
+import { uid, todayISO } from './util.js';
 import { toast } from './ui/state.js';
 
 const running = new Set();
+const reading = new Set(); // handwriting being read by the AI
 const subs = new Set();
 const notify = () => subs.forEach((f) => f());
 
 export const isPreparing = (key) => running.has(key);
+export const isReading = (key) => reading.has(key);
 export function usePreparing() {
   const [, tick] = React.useState(0);
   React.useEffect(() => {
@@ -71,8 +75,8 @@ export async function prepareNote(id, { quiet = false } = {}) {
       id,
       (x) => {
         // a title the user typed stays; an automatic one is replaced by the AI's
-        const auto = !x.titleManual && (!x.title || x.title === autoTitle(String(x.text || '').trim()) || x.title === x.ai?.title);
-        return { ...x, ai, aiSkip: false, title: auto && ai.title ? ai.title : x.title, updatedAt: Date.now() };
+        const auto = !x.titleManual && (x.titleAuto || !x.title || x.title === autoTitle(String(x.text || '').trim()) || x.title === x.ai?.title);
+        return { ...x, ai, aiSkip: false, title: auto && ai.title ? ai.title : x.title, titleAuto: false, updatedAt: Date.now() };
       },
       50,
     );
@@ -129,4 +133,128 @@ export async function prepareOlderNotes() {
   for (const n of notes) if (await prepareNote(n.id, { quiet: true })) done++;
   for (const [pid, mid] of meetings) if (await prepareMeeting(pid, mid, { derive: false, quiet: true })) done++;
   if (done) toast(`${done} ältere ${done === 1 ? 'Notiz wurde' : 'Notizen wurden'} von der KI aufbereitet.`, 'ok', 5000);
+}
+
+// ---------- handwriting ----------
+// The handwriting lives in a document of type "handschrift" (strokes + rendered image + preview);
+// a note or a project meeting points to it with inkDoc.
+// store: (file) -> {assetId|dataUrl, contentType, size} (documents.jsx storeFile)
+export async function saveInkDoc({ ink, strokes, docId = null, meta = {}, store }) {
+  const r = await renderInk(strokes);
+  const stored = r?.blob ? await store(r.blob) : null;
+  const id = docId || uid('d-');
+  const prev = getState().documents?.[id];
+  if (prev?.assetId && stored?.assetId && prev.assetId !== stored.assetId) {
+    try {
+      await (await getAssets())?.delete(prev.assetId);
+    } catch {}
+  }
+  putDoc(
+    'documents',
+    id,
+    {
+      ...(prev || {}),
+      id,
+      type: 'handschrift',
+      name: meta.name || prev?.name || 'Handschriftliche Notiz',
+      date: meta.date || prev?.date || todayISO(),
+      projectId: meta.projectId !== undefined ? meta.projectId : prev?.projectId ?? null,
+      noteId: meta.noteId !== undefined ? meta.noteId : prev?.noteId ?? null,
+      meetingId: meta.meetingId !== undefined ? meta.meetingId : prev?.meetingId ?? null,
+      notes: prev?.notes || '',
+      ink,
+      thumb: r?.thumb || null,
+      contentType: 'image/jpeg',
+      ...(stored ? { assetId: stored.assetId || null, dataUrl: stored.dataUrl || null, size: stored.size } : {}),
+      updatedAt: Date.now(),
+    },
+    50,
+  );
+  return id;
+}
+
+export async function deleteInkDoc(id) {
+  const d = id && getState().documents?.[id];
+  if (!d) return;
+  if (d.assetId) {
+    try {
+      await (await getAssets())?.delete(d.assetId);
+    } catch {}
+  }
+  deleteDoc('documents', id);
+}
+
+async function readInk(docId, context) {
+  const doc = getState().documents?.[docId];
+  if (!doc?.ink) throw { code: 'file_missing' };
+  const r = await renderInk(decodeInk(doc.ink).strokes);
+  if (!r?.blob) return { text: '', title: '', confidence: 'niedrig', unclear: [] };
+  const a = await aiHandwriting(r.blob, getState(), { context });
+  return {
+    text: String(a?.text || '').trim().slice(0, 20000),
+    title: String(a?.title || '').trim().slice(0, 140),
+    confidence: ['hoch', 'mittel', 'niedrig'].includes(a?.confidence) ? a.confidence : 'mittel',
+    unclear: (Array.isArray(a?.unclear) ? a.unclear : []).map((x) => String(x).slice(0, 80)).filter(Boolean).slice(0, 8),
+  };
+}
+
+// general note: handwriting -> text, then the usual preparation (title, appointment, next steps)
+export async function transcribeNote(id, { quiet = false, prepare = true } = {}) {
+  const key = 'note:' + id;
+  if (running.has(key)) return false;
+  const n = getState().notes?.[id];
+  if (!n?.inkDoc) return false;
+  running.add(key);
+  reading.add(key);
+  notify();
+  let text = '';
+  try {
+    const r = await readInk(n.inkDoc);
+    text = r.text;
+    updateDoc(
+      'notes',
+      id,
+      (x) => ({ ...x, text, title: x.titleManual ? x.title : r.title || autoTitle(text) || 'Handschriftliche Notiz', titleAuto: !x.titleManual, ai: null, hw: { at: Date.now(), confidence: r.confidence, unclear: r.unclear }, updatedAt: Date.now() }),
+      50,
+    );
+    if (!text && !quiet) toast('Die KI konnte in der Handschrift nichts lesen.', 'warn', 5000);
+  } catch (e) {
+    if (!quiet && e?.code !== 'cancelled') toast('Die KI konnte die Handschrift nicht lesen: ' + aiErrorText(e), 'warn', 6000);
+    return false;
+  } finally {
+    running.delete(key);
+    reading.delete(key);
+    notify();
+  }
+  if (prepare && text.length >= 10) await prepareNote(id, { quiet });
+  else if (!quiet && text) toast('Handschrift in Text umgewandelt');
+  return true;
+}
+
+// project meeting written by hand: handwriting -> transcript, then the meeting preparation (dates, to-dos …)
+export async function transcribeMeeting(projectId, meetingId, { quiet = false, derive = true } = {}) {
+  const key = 'meeting:' + meetingId;
+  if (running.has(key)) return false;
+  const p = getState().projects?.[projectId];
+  const m = p?.meetings?.find((x) => x.id === meetingId);
+  if (!m?.inkDoc) return false;
+  running.add(key);
+  reading.add(key);
+  notify();
+  let text = '';
+  try {
+    const r = await readInk(m.inkDoc, `Besprechung zum Projekt „${p.title}“`);
+    text = r.text;
+    patchProject(projectId, (x) => ({ ...x, meetings: (x.meetings || []).map((y) => (y.id === meetingId ? { ...y, transcript: text, title: y.ai ? y.title : r.title || y.title, hw: { at: Date.now(), confidence: r.confidence, unclear: r.unclear } } : y)) }));
+    if (!text && !quiet) toast('Die KI konnte in der Handschrift nichts lesen.', 'warn', 5000);
+  } catch (e) {
+    if (!quiet && e?.code !== 'cancelled') toast('Die KI konnte die Handschrift nicht lesen: ' + aiErrorText(e), 'warn', 6000);
+    return false;
+  } finally {
+    running.delete(key);
+    reading.delete(key);
+    notify();
+  }
+  if (text.length >= 10) await prepareMeeting(projectId, meetingId, { derive, quiet });
+  return true;
 }

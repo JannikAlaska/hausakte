@@ -275,6 +275,7 @@ export const DOC_TYPES = [
   { key: 'plan', name: 'Plan / Grundriss' },
   { key: 'foto', name: 'Foto' },
   { key: 'visitenkarte', name: 'Visitenkarte' },
+  { key: 'handschrift', name: 'Handschriftliche Notiz' },
   { key: 'angebot', name: 'Angebot' },
   { key: 'rechnung', name: 'Rechnung' },
   { key: 'vertrag', name: 'Vertrag' },

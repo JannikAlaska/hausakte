@@ -3,7 +3,8 @@ import { Icon } from './icons.jsx';
 import { Btn, IconBtn, TextInput, DateInput, ConfirmBtn, Pill } from './common.jsx';
 import { toast, openDrawer } from './state.js';
 import { useAiAvailable } from './ai-ui.jsx';
-import { prepareNote, usePreparing } from '../notesai.js';
+import { prepareNote, usePreparing, isReading, transcribeNote, deleteInkDoc } from '../notesai.js';
+import { InkEditor, InkPreview, createInkNote, updateInkNote } from './ink.jsx';
 import { useDictation, SpeechRec } from './meetings.jsx';
 import { addNote, updateNote, deleteNote } from '../actions.js';
 import { fmtDate, fmtDateShort, todayISO, isISO } from '../util.js';
@@ -12,6 +13,7 @@ const { useState, useEffect } = React;
 
 export function NotesPanel({ data }) {
   const [composer, setComposer] = useState(false);
+  const [ink, setInk] = useState(false);
   const [q, setQ] = useState('');
   const all = Object.values(data.notes || {}).sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : (b.createdAt || 0) - (a.createdAt || 0)));
   const s = q.trim().toLowerCase();
@@ -24,13 +26,27 @@ export function NotesPanel({ data }) {
         <div className="meet-intro">
           <div>
             <b>Allgemeine Notizen</b>
-            <p className="small muted">Für alles, was zu keinem Projekt gehört – Ideen, Telefonnummern, Beobachtungen am Haus. Auch per Sprache oder über den KI-Assistenten („Notiere: …“).</p>
+            <p className="small muted">Für alles, was zu keinem Projekt gehört – Ideen, Telefonnummern, Beobachtungen am Haus. Getippt, gesprochen, mit dem Apple Pencil handschriftlich (die KI wandelt es in Text um) oder über den KI-Assistenten („Notiere: …“).</p>
           </div>
-          <Btn kind="primary" icon="plus" onClick={() => setComposer(true)}>
-            Neue Notiz
-          </Btn>
+          <div className="note-new-btns">
+            <Btn kind="primary" icon="plus" onClick={() => setComposer(true)}>
+              Neue Notiz
+            </Btn>
+            <Btn icon="pen" onClick={() => setInk(true)}>
+              Handschriftlich
+            </Btn>
+          </div>
         </div>
       )}
+      {ink ? (
+        <InkEditor
+          onClose={() => setInk(false)}
+          onSave={async (page) => {
+            await createInkNote(page);
+            setInk(false);
+          }}
+        />
+      ) : null}
       {all.length > 4 ? (
         <div className="search-inline">
           <Icon name="search" size={15} />
@@ -48,6 +64,7 @@ export function NotesPanel({ data }) {
 
 // autoStart: the cockpit's "Notiz sprechen" starts dictation right away
 export function NoteComposer({ onClose, autoStart }) {
+  const [ink, setInk] = useState(false);
   const [title, setTitle] = useState('');
   const [date, setDate] = useState(todayISO());
   const dict = useDictation(() => toast('Das Mikrofon ist für diese Seite nicht freigegeben – tippe die Notiz ein.', 'warn', 6000));
@@ -83,8 +100,21 @@ export function NoteComposer({ onClose, autoStart }) {
         <button type="button" className={`rec-btn ${dict.on ? 'is-on' : ''}`} onClick={() => (dict.on ? dict.stop() : !dict.start(dict.text) && toast('Spracheingabe kann dieser Browser nicht – tippe die Notiz ein.', 'warn'))} aria-label={dict.on ? 'Aufnahme beenden' : 'Notiz einsprechen'}>
           <Icon name={dict.on ? 'stop' : 'mic'} size={22} />
         </button>
-        <div className="small muted">{dict.on ? 'Ich schreibe mit …' : SpeechRec ? 'Antippen und sprechen – oder unten tippen.' : 'Tippe die Notiz unten ein.'}</div>
+        <div className="small muted" style={{ flex: 1 }}>{dict.on ? 'Ich schreibe mit …' : SpeechRec ? 'Antippen und sprechen – oder unten tippen.' : 'Tippe die Notiz unten ein.'}</div>
+        <Btn small icon="pen" onClick={() => { dict.stop(); setInk(true); }}>
+          Handschriftlich
+        </Btn>
       </div>
+      {ink ? (
+        <InkEditor
+          onClose={() => setInk(false)}
+          onSave={async (page) => {
+            await createInkNote(page, { title: title.trim(), date });
+            setInk(false);
+            onClose();
+          }}
+        />
+      ) : null}
       <textarea className="input meet-text" rows={5} value={dict.text} readOnly={dict.on} onChange={(e) => dict.setText(e.target.value)} placeholder="Notiz …" />
       <div className="hstack">
         <Btn kind="primary" icon="check" onClick={save} disabled={!dict.text.trim() && !title.trim()}>
@@ -97,9 +127,13 @@ export function NoteComposer({ onClose, autoStart }) {
 
 function NoteCard({ n, data }) {
   const [edit, setEdit] = useState(false);
+  const [ink, setInk] = useState(false);
   const preparing = usePreparing()('note:' + n.id);
+  const reading = isReading('note:' + n.id);
   const avail = useAiAvailable();
   const ai = n.ai;
+  const inkDoc = n.inkDoc ? data.documents?.[n.inkDoc] : null;
+  const hand = n.source === 'handschrift';
   return (
     <article className={`dsec note-card ${ai?.isMeeting ? 'is-meeting' : ''}`}>
       <header className="meet-head">
@@ -110,7 +144,7 @@ function NoteCard({ n, data }) {
         <div style={{ flex: 1, minWidth: 0 }}>
           {edit ? <TextInput id={'note-title-' + n.id} value={n.title} onChange={(v) => updateNote(n.id, { title: v, titleManual: true })} /> : <h3>{n.title || 'Notiz'}</h3>}
           <div className="note-pills">
-            {n.source === 'ki' ? <Pill tone="info" icon="sparkles">über KI</Pill> : n.source === 'sprache' ? <Pill icon="mic">gesprochen</Pill> : null}
+            {n.source === 'ki' ? <Pill tone="info" icon="sparkles">über KI</Pill> : n.source === 'sprache' ? <Pill icon="mic">gesprochen</Pill> : hand ? <Pill icon="pen">handschriftlich</Pill> : null}
             {ai ? <Pill tone="accent" icon="sparkles">aufbereitet</Pill> : null}
             {ai?.isMeeting ? <Pill tone="warn" icon="calendar">Termin</Pill> : null}
           </div>
@@ -124,13 +158,24 @@ function NoteCard({ n, data }) {
             <i />
             <i />
           </span>
-          Die KI bereitet die Notiz auf …
+          {reading ? 'Die KI liest die Handschrift …' : 'Die KI bereitet die Notiz auf …'}
         </div>
+      ) : null}
+      {ink && inkDoc ? (
+        <InkEditor
+          title={n.title || 'Handschriftliche Notiz'}
+          initial={inkDoc.ink}
+          onClose={() => setInk(false)}
+          onSave={async (page) => {
+            await updateInkNote(n, page);
+            setInk(false);
+          }}
+        />
       ) : null}
       {edit ? (
         <>
           <DateInput value={n.date} onChange={(v) => v && updateNote(n.id, { date: v })} />
-          <span className="field-label">{ai ? 'Originaltext (gesprochen)' : 'Text'}</span>
+          <span className="field-label">{hand ? 'Erkannter Text' : ai ? 'Originaltext (gesprochen)' : 'Text'}</span>
           <TextInput multiline rows={6} value={n.text} onChange={(v) => updateNote(n.id, { text: v })} />
           <div className="hstack" style={{ flexWrap: 'wrap' }}>
             {avail !== false ? (
@@ -138,7 +183,7 @@ function NoteCard({ n, data }) {
                 {ai ? 'Neu aufbereiten' : 'Mit KI aufbereiten'}
               </Btn>
             ) : null}
-            <ConfirmBtn confirmText="Notiz wirklich löschen?" onConfirm={() => { deleteNote(n.id); toast('Notiz gelöscht'); }}>
+            <ConfirmBtn confirmText="Notiz wirklich löschen?" onConfirm={() => { if (n.inkDoc) deleteInkDoc(n.inkDoc); deleteNote(n.id); toast('Notiz gelöscht'); }}>
               Notiz löschen
             </ConfirmBtn>
           </div>
@@ -146,9 +191,26 @@ function NoteCard({ n, data }) {
       ) : ai ? (
         <NoteAi n={n} ai={ai} data={data} />
       ) : n.text ? (
-        <p className="note-text">{n.text}</p>
+        hand ? <RichText text={n.text} /> : <p className="note-text">{n.text}</p>
       ) : null}
-      {!edit && !ai && !preparing && avail !== false && String(n.text || '').trim().length >= 10 ? (
+      {hand && !edit && n.hw && n.hw.confidence !== 'hoch' && n.text ? (
+        <p className="small muted note-hw">
+          <Icon name="info" size={13} /> Erkennung {n.hw.confidence === 'niedrig' ? 'unsicher' : 'größtenteils sicher'}
+          {n.hw.unclear?.length ? ` – bitte prüfen: ${n.hw.unclear.join(', ')}` : ''}. Korrigieren über den Stift oben rechts.
+        </p>
+      ) : null}
+      {hand && !edit ? (
+        <InkPreview
+          doc={inkDoc}
+          onEdit={inkDoc?.ink ? () => setInk(true) : null}
+          onRead={avail !== false && inkDoc?.ink ? () => transcribeNote(n.id) : null}
+          reading={preparing}
+        />
+      ) : null}
+      {hand && !edit && !n.text && !preparing && avail !== false && inkDoc ? (
+        <p className="small muted">Noch nicht in Text umgewandelt – tippe auf „Neu erkennen“.</p>
+      ) : null}
+      {!edit && !ai && !preparing && !hand && avail !== false && String(n.text || '').trim().length >= 10 ? (
         <div>
           <Btn small kind="ai" icon="sparkles" onClick={() => prepareNote(n.id)}>
             Mit KI aufbereiten
@@ -202,7 +264,7 @@ function NoteAi({ n, ai, data }) {
           )}
         </div>
       ) : null}
-      <RichText text={ai.text || n.text} />
+      <RichText text={n.source === 'handschrift' ? n.text : ai.text || n.text} />
       {ai.openQuestions?.length ? (
         <div className="meet-block">
           <span className="field-label">Offene Fragen</span>
@@ -240,7 +302,7 @@ function NoteAi({ n, ai, data }) {
           </button>
         </div>
       ) : null}
-      {n.text && ai.text ? (
+      {n.text && ai.text && n.source !== 'handschrift' ? (
         <details className="small meet-transcript">
           <summary>Gesprochener Originaltext</summary>
           <p>{n.text}</p>

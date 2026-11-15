@@ -190,7 +190,7 @@ export function PhotoViewer({ data }) {
             {ids.length > 1 ? ` · ${i + 1}/${ids.length}` : ''}
           </span>
         </span>
-        <IconBtn icon="info" label="Details" active={info} onClick={() => setInfo(!info)} />
+        {d.type === 'foto' ? <IconBtn icon="info" label="Details" active={info} onClick={() => setInfo(!info)} /> : null}
         <IconBtn icon="x" label="Schließen" onClick={close} />
       </div>
       <div
@@ -215,7 +215,7 @@ export function PhotoViewer({ data }) {
           </>
         ) : null}
       </div>
-      {info ? (
+      {info && d.type === 'foto' ? (
         <div className="ph-viewer-info">
           <PhotoFields d={d} data={data} withSpot onDeleted={() => (ids.length <= 1 ? close() : setUI({ viewer: { ids: ids.filter((x) => x !== d.id), i: Math.min(i, ids.length - 2) } }))} />
           {place ? (

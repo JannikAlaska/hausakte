@@ -5,7 +5,8 @@ import { Btn, IconBtn, Field, TextInput, DateInput, Pill, ConfirmBtn } from './c
 import { useAiAvailable } from './ai-ui.jsx';
 import { toast, openDrawer } from './state.js';
 import { addMeeting, addCost, patchProject } from '../actions.js';
-import { prepareMeeting, usePreparing } from '../notesai.js';
+import { prepareMeeting, usePreparing, isReading, transcribeMeeting, deleteInkDoc } from '../notesai.js';
+import { InkEditor, InkPreview, createInkMeeting, updateInkMeeting } from './ink.jsx';
 import { fmtDate, fmtDateShort, fmtEuro, todayISO, isISO } from '../util.js';
 
 const { useState, useEffect, useRef } = React;
@@ -98,7 +99,7 @@ export function Meetings({ p, data }) {
         <div className="meet-intro">
           <div>
             <b>Besprechung festhalten</b>
-            <p className="small muted">Sprich nach dem Termin kurz ein, was besprochen wurde. Die KI schreibt daraus eine Notiz und trägt Termine und To-dos ins Projekt ein.</p>
+            <p className="small muted">Sprich nach dem Termin kurz ein oder schreib mit dem Apple Pencil, was besprochen wurde. Die KI schreibt daraus eine Notiz und trägt Termine und To-dos ins Projekt ein.</p>
           </div>
           <Btn kind="primary" icon="mic" onClick={() => setOpen(true)}>
             Neue Besprechung
@@ -113,6 +114,7 @@ export function Meetings({ p, data }) {
 function Recorder({ p, data, onClose }) {
   const avail = useAiAvailable();
   const [date, setDate] = useState(todayISO());
+  const [ink, setInk] = useState(false);
   const dict = useDictation((code) =>
     toast(code === 'audio-capture' ? 'Kein Mikrofon gefunden.' : 'Das Mikrofon ist für diese Seite nicht freigegeben. Erlaube den Zugriff in den Browser-Einstellungen – in der Vorschau in claude.ai geht es nicht.', 'warn', 7000),
   );
@@ -146,11 +148,28 @@ function Recorder({ p, data, onClose }) {
         <button type="button" className={`rec-btn ${dict.on ? 'is-on' : ''}`} onClick={toggle} aria-label={dict.on ? 'Aufnahme beenden' : 'Aufnahme starten'}>
           <Icon name={dict.on ? 'stop' : 'mic'} size={22} />
         </button>
-        <div>
+        <div style={{ flex: 1 }}>
           <b>{dict.on ? `Aufnahme läuft · ${mmss(dict.secs)}` : dict.text ? 'Aufnahme pausiert' : 'Tippe zum Aufnehmen'}</b>
           <div className="small muted">{dict.on ? 'Sprich frei – wer war da, was wurde besprochen, welche Termine und nächsten Schritte.' : SpeechRec ? 'Erneut tippen setzt die Aufnahme fort.' : 'Spracheingabe gibt es hier nicht – tippe die Notiz unten ein.'}</div>
         </div>
       </div>
+      <div className="hstack meet-hand">
+        <Btn icon="pen" onClick={() => { dict.stop(); setInk(true); }}>
+          Stattdessen handschriftlich
+        </Btn>
+        <span className="small muted">mit dem Apple Pencil – die KI wandelt die Schrift in Text um</span>
+      </div>
+      {ink ? (
+        <InkEditor
+          title={`Besprechung · ${p.title}`}
+          onClose={() => setInk(false)}
+          onSave={async (page) => {
+            await createInkMeeting(p, page, { date });
+            setInk(false);
+            onClose();
+          }}
+        />
+      ) : null}
       <Field label="Notiz (wird beim Sprechen mitgeschrieben, du kannst sie korrigieren)">
         <textarea className="input meet-text" rows={7} value={dict.text} readOnly={dict.on} onChange={(e) => dict.setText(e.target.value)} placeholder="z. B. Termin mit Elektriker Müller zur PV-Anlage: Zählerschrank muss erneuert werden, Angebot kommt bis Freitag, Montage voraussichtlich in KW 12 …" />
       </Field>
@@ -172,14 +191,19 @@ function Recorder({ p, data, onClose }) {
 
 function MeetingCard({ m, p, data }) {
   const [edit, setEdit] = useState(false);
+  const [ink, setInk] = useState(false);
   const preparing = usePreparing()('meeting:' + m.id);
+  const reading = isReading('meeting:' + m.id);
+  const inkDoc = m.inkDoc ? data.documents?.[m.inkDoc] : null;
   const avail = useAiAvailable();
   const raw = !m.ai && !m.summary && !(m.points || []).length && String(m.transcript || '').trim().length >= 10;
   const set = (patch) => patchProject(p.id, (x) => ({ ...x, meetings: (x.meetings || []).map((y) => (y.id === m.id ? { ...y, ...patch } : y)) }));
   const ms = (p.milestones || []).filter((x) => x.meetingId === m.id);
   const todos = (p.constraints || []).filter((x) => x.meetingId === m.id);
-  const remove = () =>
+  const remove = () => {
+    if (m.inkDoc) deleteInkDoc(m.inkDoc);
     patchProject(p.id, (x) => ({ ...x, meetings: (x.meetings || []).filter((y) => y.id !== m.id) }));
+  };
   const toggleTodo = (id, done) => patchProject(p.id, (x) => ({ ...x, constraints: (x.constraints || []).map((c) => (c.id === id ? { ...c, done } : c)) }));
   const toggleMs = (id, done) => patchProject(p.id, (x) => ({ ...x, milestones: (x.milestones || []).map((c) => (c.id === id ? { ...c, done } : c)) }));
   const takenCosts = new Set((p.costs || []).map((c) => c.label));
@@ -248,7 +272,7 @@ function MeetingCard({ m, p, data }) {
             <i />
             <i />
           </span>
-          Die KI bereitet die Besprechung auf …
+          {reading ? 'Die KI liest die Handschrift …' : 'Die KI bereitet die Besprechung auf …'}
         </div>
       ) : raw && !edit ? (
         <>
@@ -317,9 +341,23 @@ function MeetingCard({ m, p, data }) {
           </ul>
         </div>
       ) : null}
+      {m.inkDoc && !edit ? (
+        <InkPreview doc={inkDoc} onEdit={inkDoc?.ink ? () => setInk(true) : null} onRead={avail !== false && inkDoc?.ink ? () => transcribeMeeting(p.id, m.id, { derive: !m.ai }) : null} reading={preparing} />
+      ) : null}
+      {ink && inkDoc ? (
+        <InkEditor
+          title={m.title || 'Besprechung'}
+          initial={inkDoc.ink}
+          onClose={() => setInk(false)}
+          onSave={async (page) => {
+            await updateInkMeeting(p, m, page);
+            setInk(false);
+          }}
+        />
+      ) : null}
       {m.transcript && !raw ? (
         <details className="small meet-transcript">
-          <summary>Gesprochene Notiz</summary>
+          <summary>{m.source === 'handschrift' ? 'Erkannter Text der Handschrift' : 'Gesprochene Notiz'}</summary>
           <p>{m.transcript}</p>
         </details>
       ) : null}
