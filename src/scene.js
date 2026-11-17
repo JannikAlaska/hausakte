@@ -8,6 +8,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { outerOutline, outlineFromWalls, pointInPoly, labelPoint, polyCentroid, polyArea, norm, sub, perp, offsetPolygon, bbox, planarFaces, wallSegs, distToPolyEdges, distToSeg } from './geometry.js';
 import { roofModel, sectionClipPlanes, pvPotential, sectionGeometry } from './roof.js';
 import { pvSelection } from './pv.js';
+import { People } from './people.js';
 import { roomType, projectKind, status as statusOf, ROOM_COLORS, lineKind, fixtureKind } from './catalog.js';
 import { sortFloors, roomArea, isDone } from './metrics.js';
 import { sunPosition, sunVector, yearSteps, poa, houseGeo, shadeColor } from './solar.js';
@@ -531,6 +532,7 @@ export class HouseScene {
     this.buildScaffold(floors, roofs);
     this.buildProjectLabels(floors, roofs);
     this.buildPhotoPins();
+    this.people?.attach();
     this.computeBounds();
     this.buildEnvironment();
     this.applyView(true);
@@ -1907,6 +1909,17 @@ export class HouseScene {
     this.updateLabels?.();
   }
 
+  // the two residents walking through the house
+  setPeople(on) {
+    if (!this.people) {
+      if (!on) return;
+      this.people = new People(this);
+      this.people.attach();
+      return;
+    }
+    this.people.setVisible(on);
+  }
+
   setHiddenWalls(ids) {
     const next = new Set(ids || []);
     const same = this.hiddenWalls && this.hiddenWalls.size === next.size && [...next].every((x) => this.hiddenWalls.has(x));
@@ -2109,6 +2122,7 @@ export class HouseScene {
         }
     };
     this.floorEntries.forEach(step);
+    this.people?.update(dt);
     if (this.roofEntry) {
       // the attic ceiling clips with the roof; keep it aligned with the roof group
       step(this.roofEntry);

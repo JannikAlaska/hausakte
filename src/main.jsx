@@ -116,6 +116,12 @@ function SceneView({ data, sceneRef }) {
     sceneRef.current?.setHiddenWalls(ui.hiddenWalls);
   }, [ui.hiddenWalls]);
 
+  // the two residents walking through the house (after the house is built)
+  useEffect(() => {
+    const id = requestAnimationFrame(() => requestAnimationFrame(() => sceneRef.current?.setPeople(ui.showPeople !== false && !!data.house)));
+    return () => cancelAnimationFrame(id);
+  }, [ui.showPeople, !!data.house]);
+
   useEffect(() => {
     sceneRef.current?.setInstallFilter(ui.installFilter);
   }, [ui.installFilter]);

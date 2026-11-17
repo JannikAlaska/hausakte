@@ -29,8 +29,19 @@ function loadInstallFilter() {
   }
 }
 
+// the two residents walking through the 3D model (setting of this device)
+const PEOPLE_KEY = 'hausakte-people';
+function loadShowPeople() {
+  try {
+    return localStorage.getItem(PEOPLE_KEY) !== '0';
+  } catch {
+    return true;
+  }
+}
+
 let ui = {
   ...routeFromHash(),
+  showPeople: loadShowPeople(),
   hiddenWalls: loadHiddenWalls(),
   installFilter: loadInstallFilter(),
   mode: 'all', // 'all' | 'floor' | 'explode'
@@ -124,4 +135,11 @@ export function setInstallFilter(v) {
     localStorage.setItem(IF_KEY, f);
   } catch {}
   setUI({ installFilter: f });
+}
+
+export function setShowPeople(on) {
+  try {
+    localStorage.setItem(PEOPLE_KEY, on ? '1' : '0');
+  } catch {}
+  setUI({ showPeople: !!on });
 }

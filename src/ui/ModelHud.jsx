@@ -5,7 +5,7 @@ import { roomDims } from '../focus.js';
 import { furnSize, furnName } from '../furniture.js';
 import { roomOfPoint } from '../planops.js';
 import { updateDoc } from '../store.js';
-import { useUI, setUI, openDrawer, go, showFloor, hideWall, setHiddenWalls, toast } from './state.js';
+import { useUI, setUI, openDrawer, go, showFloor, hideWall, setHiddenWalls, toast, setShowPeople } from './state.js';
 import { portfolio, sortFloors, floorStats, componentWear, isDone, roomArea, buildingStats, liveProjects } from '../metrics.js';
 import { projectKind, status as statusOf, roomType } from '../catalog.js';
 import { ROOF_TYPES } from '../roof.js';
@@ -88,6 +88,7 @@ export function SceneToolbar({ sceneRef }) {
       <IconBtn icon={ui.showRoof ? 'roof' : 'eyeOff'} label={ui.showRoof ? 'Dach ausblenden' : 'Dach einblenden'} active={!ui.showRoof} onClick={() => setUI({ showRoof: !ui.showRoof })} />
       <IconBtn icon="sofa" label={ui.showFurniture !== false ? 'Möbel ausblenden' : 'Möbel einblenden'} active={ui.showFurniture === false} onClick={() => setUI({ showFurniture: ui.showFurniture === false })} />
       <IconBtn icon="tag" label={ui.showLabels ? 'Beschriftung ausblenden' : 'Beschriftung einblenden'} active={!ui.showLabels} onClick={() => setUI({ showLabels: !ui.showLabels })} />
+      <IconBtn icon="people" label={ui.showPeople !== false ? 'Bewohner ausblenden' : 'Bewohner einblenden'} active={ui.showPeople === false} onClick={() => setShowPeople(ui.showPeople === false)} />
       <IconBtn icon="sun" label={ui.sunOn ? 'Sonnenstand ausblenden' : 'Sonnenstand und Schatten'} active={!!ui.sunOn} onClick={() => setUI({ sunOn: !ui.sunOn })} />
     </div>
   );
@@ -162,6 +163,20 @@ export function FloorPanel({ data, compact }) {
             </span>
             <span className="fp-aside">
               <Icon name={furnOn ? 'eye' : 'eyeOff'} size={15} />
+            </span>
+          </button>
+        </li>
+        <li>
+          <button className={`fp-row ${ui.showPeople !== false ? '' : 'is-dim'}`} aria-pressed={ui.showPeople !== false} onClick={() => setShowPeople(ui.showPeople === false)} title="Die beiden Bewohner im 3D-Modell ein- oder ausblenden">
+            <span className="fp-short">
+              <Icon name="people" size={15} />
+            </span>
+            <span className="fp-name">
+              <b>Bewohner</b>
+              <span>{ui.showPeople !== false ? '2 laufen durchs Haus' : 'ausgeblendet'}</span>
+            </span>
+            <span className="fp-aside">
+              <Icon name={ui.showPeople !== false ? 'eye' : 'eyeOff'} size={15} />
             </span>
           </button>
         </li>
