@@ -295,7 +295,7 @@ function person(kind) {
   const H = man ? 1.8 : 1.68;
   const M = (c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.75, flatShading: true });
   const skin = M(man ? '#dcae86' : '#e9c19f');
-  const hairM = M(man ? '#4a3221' : '#8c4a25');
+  const hairM = M(man ? '#4a3221' : '#e2c27c');
   const topM = M(man ? '#3c6ea6' : '#cf5f5b');
   const legM = M(man ? '#2f3644' : '#34445f');
   const shoeM = M('#26262b');
