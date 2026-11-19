@@ -94,7 +94,10 @@ function simplify(pts, eps) {
 }
 
 // ---------- drawing ----------
-const widthAt = (st, p) => (st.k === 'marker' ? st.w : st.w * (0.45 + 0.9 * Math.max(0, Math.min(1, p ?? 0.5))));
+// The Apple Pencil reports normal handwriting as only about 5–25 % of full pressure. The square root lifts light
+// strokes to nearly the chosen width (5 % → 83 %, 15 % → 93 %); pressing harder still makes the line up to 30 % bolder.
+export const pressFactor = (p) => 0.7 + 0.6 * Math.sqrt(Math.max(0, Math.min(1, p ?? 0.35)));
+const widthAt = (st, p) => (st.k === 'marker' ? st.w : st.w * pressFactor(p));
 
 // draws one stroke (or its last segments from index `from`) on a context scaled to page units
 export function drawStroke(ctx, st, from = 0) {

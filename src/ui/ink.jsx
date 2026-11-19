@@ -114,11 +114,30 @@ export function InkEditor({ title = 'Handschriftliche Notiz', initial = null, on
     return () => window.removeEventListener('keydown', onKey, true);
   });
 
+  // iPadOS may first treat a light pencil touch as a scroll, text selection or magnifier gesture and swallow the
+  // start of the stroke; blocking the touch defaults for the pencil (and for fingers while they write) prevents that.
+  // Pointer events keep coming, so drawing, palm rejection and scrolling with the finger work as before.
+  useEffect(() => {
+    const cv = cvRef.current;
+    if (!cv) return;
+    const block = (e) => {
+      const stylus = [...e.changedTouches].some((t) => t.touchType === 'stylus');
+      if (stylus || (live.current.finger && e.touches.length === 1)) e.preventDefault();
+    };
+    cv.addEventListener('touchstart', block, { passive: false });
+    cv.addEventListener('touchmove', block, { passive: false });
+    return () => {
+      cv.removeEventListener('touchstart', block);
+      cv.removeEventListener('touchmove', block);
+    };
+  }, []);
+
   // ---------- pointer input ----------
   const toPage = (ev) => {
     const r = cvRef.current.getBoundingClientRect();
     const s = live.current.view.scale;
-    const pr = ev.pointerType === 'pen' ? (ev.pressure > 0 ? ev.pressure : 0.5) : 0.5;
+    // the first event of a pen stroke may carry no pressure yet; finger and mouse write at an even, medium width
+    const pr = ev.pointerType === 'pen' ? (ev.pressure > 0 ? ev.pressure : 0.2) : 0.35;
     return [(ev.clientX - r.left) / s, (ev.clientY - r.top) / s, pr];
   };
   const grow = (y) => {

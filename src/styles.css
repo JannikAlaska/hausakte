@@ -1624,7 +1624,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .ink-page { position: relative; flex: none; background-color: #fffefb; border-radius: 6px; box-shadow: 0 1px 3px rgba(20, 24, 40, 0.12), 0 8px 24px rgba(20, 24, 40, 0.08);
   background-image: linear-gradient(to right, transparent calc(var(--margin) - 1px), rgba(214, 80, 80, 0.35) calc(var(--margin) - 1px), rgba(214, 80, 80, 0.35) var(--margin), transparent var(--margin)),
     repeating-linear-gradient(to bottom, transparent 0, transparent calc(var(--rule) - 1px), rgba(70, 110, 170, 0.22) calc(var(--rule) - 1px), rgba(70, 110, 170, 0.22) var(--rule)); }
-.ink-canvas { position: absolute; inset: 0; touch-action: none; cursor: crosshair; display: block; }
+.ink-canvas { position: absolute; inset: 0; touch-action: none; cursor: crosshair; display: block; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
 .ink-canvas.tool-erase { cursor: cell; }
 .ink-hint { position: absolute; left: 12%; right: 8%; top: 70px; color: #8a90a3; font-size: 14px; pointer-events: none; line-height: 1.5; }
 .ink-more { margin: 10px 0 4px; }
