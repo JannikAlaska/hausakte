@@ -17,6 +17,7 @@ import { AssistantDrawer } from './ui/assistant.jsx';
 import { ContactDrawer } from './ui/contacts.jsx';
 import { InvoiceDrawer } from './ui/invoices.jsx';
 import { PhotoSpotDrawer, PhotoViewer } from './ui/photos.jsx';
+import { ApplicationDrawer } from './ui/applications.jsx';
 import { allSpots } from './photos.js';
 import { CockpitPage } from './ui/cockpit.jsx';
 import { pushWidgets } from './native.js';
@@ -585,6 +586,7 @@ function DrawerHost({ data, sceneRef }) {
   if (d.type === 'roadmap') return <RoadmapDrawer data={data} />;
   if (d.type === 'contact') return <ContactDrawer key={d.id} data={data} drawer={d} />;
   if (d.type === 'invoice') return <InvoiceDrawer key={d.id} data={data} drawer={d} />;
+  if (d.type === 'application') return <ApplicationDrawer key={d.id} data={data} drawer={d} />;
   if (d.type === 'photos') return <PhotoSpotDrawer key={d.floorId + d.spotId} data={data} drawer={d} />;
   if (d.type === 'assistant') return <AssistantDrawer data={data} drawer={d} sceneRef={sceneRef} />;
   return null;

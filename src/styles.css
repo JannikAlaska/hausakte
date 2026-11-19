@@ -1586,3 +1586,51 @@ button, a { -webkit-tap-highlight-color: transparent; }
   .ink-tools { gap: 8px 10px; }
   .ink-top .btn span { font-size: 12.5px; }
 }
+
+/* application assistant */
+.app-new { display: flex; flex-direction: column; gap: 12px; }
+.app-goal { display: flex; gap: 8px; align-items: flex-start; }
+.app-goal textarea { flex: 1; }
+.rec-btn.small { width: 40px; height: 40px; flex: none; }
+.app-pick { display: flex; flex-wrap: wrap; gap: 6px; }
+.app-files-new, .app-files { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.app-files-new li { display: flex; align-items: center; gap: 6px; font-size: 13px; padding: 4px 8px; border-radius: 8px; background: var(--surface-2); }
+.app-files-new li span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-files li .link { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; }
+.app-card { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; gap: 10px; align-items: center; width: 100%; text-align: left; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--ink); }
+.app-card:hover { border-color: var(--line-2); box-shadow: var(--shadow); }
+.app-card + .app-card { margin-top: 6px; }
+.app-card-icon { width: 38px; height: 38px; border-radius: 10px; background: var(--accent-soft); color: var(--accent-ink); display: grid; place-items: center; }
+.app-card-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.app-card-main b { font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-card-main > span { font-size: 12px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-card-side { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+.app-bar { display: block; height: 5px; border-radius: 3px; background: var(--surface-3); overflow: hidden; margin-top: 4px; }
+.app-bar.is-big { height: 7px; margin: 0 0 4px; }
+.app-bar i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+.app-qs .dsec-body { display: flex; flex-direction: column; gap: 12px; }
+.app-q { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 11px; background: var(--warn-soft); }
+.app-q.is-skip { background: var(--surface-2); }
+.app-q-text { display: flex; flex-direction: column; gap: 2px; font-size: 13.5px; }
+.app-q .link { align-self: flex-start; }
+.app-sec { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.app-field { display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.app-field.is-offen { border-style: dashed; border-color: color-mix(in srgb, var(--warn) 45%, var(--line)); }
+.app-field.is-unsicher { border-color: color-mix(in srgb, var(--warn) 45%, var(--line)); }
+.app-field.is-self { background: var(--surface-2); }
+.app-field-head { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+.app-field-label { font-size: 12px; color: var(--ink-2); font-weight: 600; }
+.app-field-val { display: flex; align-items: center; gap: 4px; font-size: 14px; }
+.app-field-val > span:first-child { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.app-field-val .muted { color: var(--ink-3); font-style: italic; }
+.app-field-edit { display: flex; gap: 4px; align-items: center; }
+.app-field-edit .input { flex: 1; }
+.app-att { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.app-att li { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; }
+.app-att li > .ico { flex: none; margin-top: 2px; color: var(--ink-3); }
+.app-att li.is-ok > .ico { color: var(--accent); }
+.app-att li.is-missing > .ico { color: var(--warn); }
+.app-att-doc { display: inline-flex; gap: 4px; align-items: center; margin-left: 6px; }
+.app-steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 4px; font-size: 13.5px; }
+.app-warn { margin: 0; padding-left: 16px; }
+.app-qa ul { margin: 6px 0 0; padding-left: 18px; }

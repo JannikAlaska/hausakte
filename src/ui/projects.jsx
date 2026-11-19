@@ -1,5 +1,6 @@
 import { Icon } from './icons.jsx';
 import { ProjectPhotos } from './photos.jsx';
+import { ProjectApplications } from './applications.jsx';
 import { ProjectInvoices } from './invoices.jsx';
 import { HeatHint } from './energy.jsx';
 import { PvHint } from './solar.jsx';
@@ -637,6 +638,7 @@ export function ProjectDrawer({ data, drawer }) {
           <Section title="Erfasste Förderung" aside={cost.funding ? fmtEuro(cost.funding) : null}>
             <FundingList p={p} set={set} />
           </Section>
+          <ProjectApplications p={p} data={data} />
           <AiRunner
             title="Fördermöglichkeiten & bester Antragszeitpunkt"
             icon="sparkles"

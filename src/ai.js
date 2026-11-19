@@ -243,6 +243,15 @@ export function houseContext(d, { withProjects = true, withComponents = true, wi
       L.push(`Steuer ${yy} (geschätzt, Dokumente › Steuer): Handwerker § 35a ${fmtNum(ty.handwerk.deduction, 2)} € aus ${fmtNum(ty.handwerk.sum, 2)} € Arbeitskosten (Höchstbetrag 1.200 €), haushaltsnah ${fmtNum(ty.haushalt.deduction, 2)} €, energetisch § 35c ${fmtNum(ty.cSum, 2)} €; zusammen ${fmtNum(ty.total, 2)} €${ty.check.length ? `; ${ty.check.length} Rechnung(en) zu prüfen` : ''}${ty.unclassified.length ? `; ${ty.unclassified.length} noch nicht eingeordnet` : ''}`);
     }
   }
+  // applications prepared with the application assistant
+  const apps = Object.values(d.documents || {}).filter((x) => x.type === 'antrag');
+  if (apps.length) {
+    L.push('ANTRÄGE (Dokumente › Anträge, Antragsassistent)');
+    for (const x of apps.slice(0, 15)) {
+      const a = x.app || {};
+      L.push(`- ${a.title || x.name}: ${a.status || 'entwurf'}${a.analysis?.program ? `, ${a.analysis.program}` : ''}${a.analysis?.deadline ? `, Frist ${a.analysis.deadline}` : ''}${(a.open || []).length ? `, ${a.open.length} offene Fragen` : ''}`);
+    }
+  }
   // photo documentation
   const photos = photoDocs(d);
   if (photos.length) {
@@ -643,6 +652,56 @@ ${JSON_RULES}
 Format:
 {"isInvoice":true,"kind":"rechnung|abschlag|schluss|gutschrift","vendor":{"company":"Firma","name":"Ansprechpartner oder leer","address":"Straße, PLZ Ort","phone":"","email":"","website":""},"contactId":"ID oder null","number":"Rechnungsnummer","date":"YYYY-MM-DD","dueDate":"YYYY-MM-DD oder null","paymentTerms":"z. B. 14 Tage netto, 2 % Skonto bis …","skonto":{"percent":2,"until":"YYYY-MM-DD"},"net":1000,"vatRate":19,"vat":190,"total":1190,"alreadyPaid":0,"items":[{"label":"Position","qty":1,"unit":"Stk","unitPrice":100,"amount":100}],"iban":"","projectId":"ID oder null","projectReason":"kurz, warum dieses Projekt","summary":"1 Satz, was berechnet wurde","warnings":["Auffälligkeit, z. B. Summe passt nicht zu den Positionen, Mehrwertsteuer fehlt, schon überfällig"],"tax":${TAX_AI_FORMAT}}`;
   return sample.json(prompt, { images: list, modelTier: 'default', signal: opts.signal, cache: false });
+}
+
+// ---------- application assistant ----------
+// files: the application papers (images/PDF, may be empty); p: { goal, extra, prev, qa, edits, known, docs, project }
+export async function aiApplication(files, p, d, opts = {}) {
+  const sample = await getSample();
+  if (!sample) throw { code: 'not_granted' };
+  const all = files || [];
+  const list = all.length > 5 ? [...all.slice(0, 4), all[all.length - 1]] : all;
+  if (list.length) {
+    const lim = await getLimits();
+    if (!lim?.images) throw { code: 'images_unavailable' };
+    if (list.some((f) => f.type === 'application/pdf') && !(lim.images.mediaTypes || []).includes('application/pdf')) throw { code: 'pdf_unsupported' };
+  }
+  const qa = (p.qa || []).map((q) => `- ${q.question} → ${q.skip ? '(überspringen – trägt der Nutzer selbst im Formular ein)' : q.answer}`).join('\n');
+  const edits = Object.entries(p.edits || {}).map(([k, v]) => `- ${k.replace('|', ' › ')} = ${v || '(leer)'}`).join('\n');
+  const known = (p.known || []).map((x) => `- ${x.question} → ${x.answer} (aus „${x.from}“)`).join('\n');
+  const prompt = `Du bist der Antragsassistent der App „Hausakte“ für ein selbst genutztes Wohnhaus in Deutschland. Du hilfst dem Eigentümer, einen Antrag vollständig und richtig vorzubereiten – Förderantrag (KfW, BAFA, Land, Kommune), Bauantrag/Genehmigung, Anmeldung beim Netzbetreiber, Versicherungs- oder Steuerformular usw.
+
+ZIEL DES NUTZERS: ${p.goal || 'nicht angegeben'}
+${p.extra ? `ZUSÄTZLICHE HINWEISE DES NUTZERS: ${p.extra}\n` : ''}${p.project ? `ZUGEHÖRIGES PROJEKT: ${p.project}\n` : ''}
+${list.length ? `Die angehängten Dateien sind die Antragsunterlagen des Nutzers (Formular, Merkblatt, Bescheid, Angebot …)${all.length > list.length ? ` – Seiten/Dateien 1–4 und die letzte von ${all.length}` : ''}. Lies sie vollständig.` : p.prev ? 'Die Unterlagen wurden bereits ausgewertet (siehe BISHERIGES ERGEBNIS).' : 'Es wurden keine Unterlagen hochgeladen – lege die Felder und Anlagen an, die für diesen Antrag üblich sind, und sage in warnings, dass das Original-Formular maßgeblich ist.'}
+
+Aufgabe:
+1. Bestimme die Stelle (authority), das Programm bzw. den Antrag (program), eine Frist (deadline) und eine kurze Zusammenfassung (summary: worum es geht, was der Nutzer jetzt tun muss).
+2. fields: alle Felder, die im Formular bzw. Online-Antrag auszufüllen sind – in der Reihenfolge des Formulars, gegliedert nach Abschnitten (section), mit der Bezeichnung wie im Formular (label). Fülle jedes Feld:
+   - aus HAUSDATEN und DOKUMENTE der Bauakte (source "bauakte", sourceNote z. B. „Stammdaten“, „Projekt Heizungstausch, Kosten“, „Angebot Heizungsbau Schulze“),
+   - aus den Antworten des Nutzers (source "antwort") oder aus Angaben früherer Anträge (source "frueher"),
+   - aus den hochgeladenen Unterlagen selbst (source "dokument").
+   Erfinde nichts. Was sich nicht sicher ergibt, bleibt leer (value "", source "offen", status "offen") – dazu gehört eine Frage. Wenn eine Angabe nur ungefähr ableitbar ist, trage sie ein und setze status "unsicher" mit kurzem Hinweis (hint). Hat der Nutzer eine Frage übersprungen, setze bei den betroffenen Feldern self true (trägt er selbst ein) und value "".
+   Formatiere Werte so, wie sie ins Formular gehören (Beträge 12.500,00 €, Daten TT.MM.JJJJ, Flächen 142,5 m²).
+3. questions: nur Fragen, die sich NICHT aus Bauakte, Unterlagen, Antworten oder früheren Angaben beantworten lassen und für den Antrag nötig sind. Zusammenfassen, höchstens 12, kurz und verständlich, mit type (text, zahl, datum, auswahl, janein) und bei auswahl die options. Persönliche Daten (Namen, Geburtsdatum, Steuer-ID, Einkommen, Bankverbindung, Telefon, E-Mail) niemals erfinden – frage danach, wenn das Formular sie verlangt. Stelle keine Frage erneut, die schon beantwortet oder übersprungen wurde.
+4. attachments: erforderliche Anlagen und Nachweise (required true/false); verknüpfe vorhandene Dokumente der Bauakte über docId (nur IDs aus der Liste DOKUMENTE, sonst null).
+5. steps: nächste Schritte in sinnvoller Reihenfolge, mit Datum (due), wenn es eines gibt. warnings: Risiken – Frist, Reihenfolge (z. B. Antrag vor Auftragsvergabe), Ausschlüsse, fehlende Voraussetzungen, widersprüchliche Angaben.
+6. funding: Art der Förderung (zuschuss, kredit, steuer, sonstiges oder null, wenn es keine Förderung ist) und der erwartete Betrag in Euro, falls er sich berechnen lässt.
+${p.prev ? `\nBISHERIGES ERGEBNIS (aktualisiere es mit den neuen Antworten und Korrekturen; behalte Abschnitte und Bezeichnungen der Felder bei):\n${JSON.stringify(p.prev).slice(0, 24000)}\n` : ''}
+${qa ? `ANTWORTEN DES NUTZERS\n${qa}\n` : ''}${edits ? `VOM NUTZER KORRIGIERTE FELDER (gelten so)\n${edits}\n` : ''}${known ? `ANGABEN AUS FRÜHEREN ANTRÄGEN (wiederverwenden, nicht erneut fragen)\n${known}\n` : ''}
+DOKUMENTE DER BAUAKTE
+${p.docs || 'keine'}
+
+HAUSDATEN
+${houseContext(d)}
+
+WISSENSBASIS FÖRDERUNG
+${FUNDING_KNOWLEDGE}
+
+${JSON_RULES}
+Format:
+{"title":"kurzer Titel des Antrags","authority":"Stelle","program":"Programm/Antrag","deadline":"YYYY-MM-DD oder null","deadlineNote":"z. B. vor Auftragsvergabe","summary":"2–3 Sätze","fields":[{"section":"Abschnitt","label":"Feld wie im Formular","value":"Wert oder leer","source":"bauakte|antwort|frueher|dokument|offen","sourceNote":"woher","status":"ok|unsicher|offen","self":false,"hint":"kurzer Ausfüllhinweis oder leer"}],"questions":[{"question":"Frage an den Nutzer","why":"wofür sie gebraucht wird","type":"text|zahl|datum|auswahl|janein","options":["nur bei auswahl"],"fields":["Bezeichnung betroffener Felder"]}],"attachments":[{"label":"Anlage","required":true,"docId":"Dokument-ID oder null","note":"kurz"}],"steps":[{"text":"Schritt","due":"YYYY-MM-DD oder null"}],"warnings":["Hinweis"],"funding":{"type":"zuschuss|kredit|steuer|sonstiges|null","amount":null}}`;
+  return sample.json(prompt, { images: list.length ? list : undefined, modelTier: 'complex', signal: opts.signal, cache: false });
 }
 
 // ---------- handwriting -> text ----------
