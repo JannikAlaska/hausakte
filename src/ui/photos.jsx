@@ -459,3 +459,67 @@ export function PlanPhotoSpots({ spots, counts, sel, px, faded }) {
     </g>
   );
 }
+
+// ---------- all photos (Ablage › Fotos) ----------
+const MONTHS_DE = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
+export function AllPhotos({ data }) {
+  const [proj, setProj] = useState('alle');
+  const all = Object.values(data.documents || {})
+    .filter((d) => d.type === 'foto')
+    .sort(byTaken)
+    .reverse();
+  const list = all.filter((d) => (proj === 'alle' ? true : proj === 'ohne' ? !d.projectId : d.projectId === proj));
+  const used = [...new Set(all.map((d) => d.projectId).filter((id) => id && data.projects?.[id]))];
+  const ids = list.map((d) => d.id);
+  const months = [];
+  for (const d of list) {
+    const k = (d.takenAt || d.date || '').slice(0, 7);
+    let m = months.find((x) => x.k === k);
+    if (!m) months.push((m = { k, items: [] }));
+    m.items.push(d);
+  }
+  return (
+    <div className="stack">
+      <div className="ph-add">
+        <PhotoPicker small onFiles={(files) => addPhotoFiles(files, { projectId: proj !== 'alle' && proj !== 'ohne' ? proj : null })} />
+        <p className="small muted">Fotos mit Ort setzt du im Grundriss (Kamera-Werkzeug), Fotos zu einem Projekt im Projekt unter „Ablage“. Hier siehst du alle zusammen.</p>
+      </div>
+      {all.length ? (
+        <div className="chips">
+          {[
+            ['alle', `Alle (${all.length})`],
+            ['ohne', 'Ohne Projekt'],
+            ...used.map((id) => [id, data.projects[id].title]),
+          ].map(([k, l]) => (
+            <button key={k} type="button" className={`chip ${proj === k ? 'is-on' : ''}`} onClick={() => setProj(k)}>
+              {l}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {months.map((m) => (
+        <div key={m.k} className="ph-day">
+          <div className="ph-day-head">
+            <b>{/^\d{4}-\d\d$/.test(m.k) ? `${MONTHS_DE[Number(m.k.slice(5, 7)) - 1]} ${m.k.slice(0, 4)}` : 'Ohne Datum'}</b>
+            <span className="small muted">
+              {m.items.length} Foto{m.items.length === 1 ? '' : 's'}
+            </span>
+          </div>
+          <div className="ph-grid">
+            {m.items.map((d) => {
+              const f = d.spot ? findSpot(data, d.spot.floorId, d.spot.spotId) : null;
+              return <Thumb key={d.id} d={d} place={f ? spotTitle(f) : d.projectId ? data.projects?.[d.projectId]?.title || '' : ''} onClick={() => openViewer(ids, ids.indexOf(d.id))} />;
+            })}
+          </div>
+        </div>
+      ))}
+      {!all.length ? (
+        <Empty icon="camera" title="Noch keine Fotos">
+          Halte Zustand und Baufortschritt fest – am besten mit Ort im Grundriss, dann gibt es Vorher/Nachher an derselben Stelle.
+        </Empty>
+      ) : !list.length ? (
+        <p className="small muted">Keine Fotos in dieser Auswahl.</p>
+      ) : null}
+    </div>
+  );
+}

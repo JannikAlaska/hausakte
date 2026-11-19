@@ -1,13 +1,13 @@
 // General notes that belong to no project: typed or dictated, editable, deletable. The AI assistant can manage them too.
 import { Icon } from './icons.jsx';
-import { Btn, IconBtn, TextInput, DateInput, ConfirmBtn, Pill } from './common.jsx';
+import { Btn, IconBtn, TextInput, DateInput, ConfirmBtn, Pill, ArchiveSection } from './common.jsx';
 import { toast, openDrawer } from './state.js';
 import { useAiAvailable } from './ai-ui.jsx';
 import { prepareNote, usePreparing, isReading, transcribeNote, deleteInkDoc } from '../notesai.js';
 import { InkEditor, InkPreview, createInkNote, updateInkNote } from './ink.jsx';
 import { useDictation, SpeechRec } from './meetings.jsx';
 import { addNote, updateNote, deleteNote } from '../actions.js';
-import { fmtDate, fmtDateShort, todayISO, isISO } from '../util.js';
+import { fmtDate, fmtDateShort, todayISO, isISO, diffDays } from '../util.js';
 
 const { useState, useEffect } = React;
 
@@ -18,6 +18,11 @@ export function NotesPanel({ data }) {
   const all = Object.values(data.notes || {}).sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : (b.createdAt || 0) - (a.createdAt || 0)));
   const s = q.trim().toLowerCase();
   const list = s ? all.filter((n) => `${n.title} ${n.text}`.toLowerCase().includes(s)) : all;
+  // older notes are folded away; a search looks through all of them
+  const today = todayISO();
+  const old = (n) => !s && !n.pinned && isISO(n.date) && diffDays(n.date, today) > 90;
+  const recent = list.filter((n) => !old(n));
+  const older = list.filter(old);
   return (
     <div className="stack" style={{ gap: 12 }}>
       {composer ? (
@@ -47,15 +52,22 @@ export function NotesPanel({ data }) {
           }}
         />
       ) : null}
-      {all.length > 4 ? (
+      {all.length > 4 || all.some((n) => isISO(n.date) && diffDays(n.date, today) > 90) ? (
         <div className="search-inline">
           <Icon name="search" size={15} />
           <input className="input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Notizen durchsuchen" aria-label="Notizen durchsuchen" />
         </div>
       ) : null}
-      {list.map((n) => (
+      {recent.map((n) => (
         <NoteCard key={n.id} n={n} data={data} />
       ))}
+      <ArchiveSection title="Ältere Notizen" count={older.length} hint="älter als 3 Monate · über die Suche auffindbar">
+        <div className="stack" style={{ gap: 12 }}>
+          {older.map((n) => (
+            <NoteCard key={n.id} n={n} data={data} />
+          ))}
+        </div>
+      </ArchiveSection>
       {!all.length && !composer ? <p className="small muted">Noch keine Notizen.</p> : null}
       {all.length && !list.length ? <p className="small muted">Keine Notiz passt zur Suche.</p> : null}
     </div>

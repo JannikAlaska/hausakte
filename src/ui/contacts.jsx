@@ -1,7 +1,8 @@
 // Contacts shown as business cards: read from a photo of a card or a screenshot, completed from the web by the AI,
 // linked to meetings, to-dos, costs and documents, and collected per project as "Ansprechpartner".
 import { Icon } from './icons.jsx';
-import { Btn, IconBtn, Field, TextInput, Select, Pill, Drawer, Section, ConfirmBtn, Empty } from './common.jsx';
+import { Btn, IconBtn, Field, TextInput, Select, Pill, Drawer, Section, ConfirmBtn, Empty, useEmptyAtOpen, MoreFields, splitFields } from './common.jsx';
+import { LinkedWith } from './links.jsx';
 import { useAiAvailable } from './ai-ui.jsx';
 import { toast, openDrawer, closeDrawer } from './state.js';
 import { uploadFiles } from './documents.jsx';
@@ -219,12 +220,12 @@ export async function importCards(files, { projectId } = {}) {
   return made;
 }
 
-function AddContactBar({ projectId, onManual }) {
+export function AddContactBar({ projectId, onManual, onPicked }) {
   const avail = useAiAvailable();
   const input = useRef(null);
   return (
     <div className="contact-add">
-      <input ref={input} type="file" accept="image/*" multiple hidden onChange={(e) => { const f = [...e.target.files]; e.target.value = ''; if (f.length) importCards(f, { projectId }); }} />
+      <input ref={input} type="file" accept="image/*" multiple hidden onChange={(e) => { const f = [...e.target.files]; e.target.value = ''; if (f.length) { importCards(f, { projectId }); onPicked?.(); } }} />
       {avail !== false ? (
         <Btn kind="primary" icon="camera" onClick={() => input.current?.click()}>
           Visitenkarte oder Screenshot
@@ -343,6 +344,8 @@ export function ContactDrawer({ data, drawer }) {
   const avail = useAiAvailable();
   const [web, setWeb] = useState(null);
   const [linking, setLinking] = useState(false);
+  const [editLinks, setEditLinks] = useState(false);
+  const emptyAtOpen = useEmptyAtOpen(drawer.id, { role: c?.role, trade: c?.trade, website: c?.website, address: c?.address });
   useEffect(() => {
     getLimits().then((l) => setWeb(!!l?.web));
   }, []);
@@ -378,43 +381,42 @@ export function ContactDrawer({ data, drawer }) {
     >
       <ContactCard c={c} busy={busy} />
 
-      {c.web ? (
-        <Section title="Aus dem Internet" aside={c.web.at ? `Stand ${fmtDate(new Date(c.web.at).toISOString().slice(0, 10))}` : null}>
-          {c.web.found === false ? <p className="small muted">Nichts Eindeutiges gefunden.{c.web.note ? ` ${c.web.note}` : ''}</p> : null}
-          {c.web.description ? <p className="meet-summary">{c.web.description}</p> : null}
-          {c.web.services?.length ? (
-            <div className="chips">
-              {c.web.services.map((x, i) => (
-                <span key={i} className="pill">
-                  {x}
-                </span>
-              ))}
-            </div>
-          ) : null}
-          <div>
-            {c.web.hours ? <div className="kv"><span>Öffnungszeiten</span><b>{c.web.hours}</b></div> : null}
-            {c.web.rating ? <div className="kv"><span>Bewertung</span><b>★ {String(c.web.rating.value).replace('.', ',')}{c.web.rating.count ? ` (${c.web.rating.count})` : ''}{c.web.rating.source ? ` · ${c.web.rating.source}` : ''}</b></div> : null}
-            {c.web.certifications?.length ? <div className="kv"><span>Qualifikationen</span><b>{c.web.certifications.join(', ')}</b></div> : null}
-            {c.web.confidence ? <div className="kv"><span>Treffer</span><b>{c.web.confidence === 'hoch' ? 'sicher' : c.web.confidence === 'mittel' ? 'wahrscheinlich' : 'unsicher'}</b></div> : null}
-          </div>
-          {c.web.note && c.web.found !== false ? <p className="small muted">{c.web.note}</p> : null}
-          {c.web.sources?.length ? (
-            <p className="small muted">
-              Quellen:{' '}
-              {c.web.sources.map((s, i) => (
-                <span key={i}>
-                  {i ? ' · ' : ''}
-                  <a className="link" href={s.url} target="_blank" rel="noopener noreferrer">
-                    {s.title}
-                  </a>
-                </span>
-              ))}
-            </p>
-          ) : null}
-        </Section>
-      ) : null}
+      {(() => {
+        const { shown, more } = splitFields(
+          [
+            { k: 'company', core: true, el: <Field label="Firma"><TextInput id={'ct-company-' + c.id} value={c.company} onChange={(v) => set({ company: v })} /></Field> },
+            { k: 'name', core: true, el: <Field label="Name"><TextInput id={'ct-name-' + c.id} value={c.name} onChange={(v) => set({ name: v })} /></Field> },
+            { k: 'phone', core: true, el: <Field label="Telefon"><TextInput id={'ct-phone-' + c.id} value={c.phone} onChange={(v) => set({ phone: v })} /></Field> },
+            { k: 'mobile', core: true, el: <Field label="Mobil"><TextInput id={'ct-mobile-' + c.id} value={c.mobile} onChange={(v) => set({ mobile: v })} /></Field> },
+            { k: 'email', core: true, el: <Field label="E-Mail"><TextInput id={'ct-email-' + c.id} value={c.email} onChange={(v) => set({ email: v })} /></Field> },
+            { k: 'role', label: 'Funktion', el: <Field label="Funktion"><TextInput id={'ct-role-' + c.id} value={c.role} onChange={(v) => set({ role: v })} placeholder="z. B. Elektromeister" /></Field> },
+            { k: 'trade', label: 'Gewerk', el: <Field label="Gewerk"><Select value={c.trade || ''} onChange={(v) => set({ trade: v })} options={[{ value: '', label: '–' }, ...TRADES]} /></Field> },
+            { k: 'website', label: 'Webseite', el: <Field label="Webseite"><TextInput id={'ct-web-' + c.id} value={c.website} onChange={(v) => set({ website: v })} /></Field> },
+            { k: 'address', label: 'Adresse', el: <Field label="Adresse" className="field-wide"><TextInput id={'ct-addr-' + c.id} value={c.address} onChange={(v) => set({ address: v })} /></Field> },
+          ],
+          emptyAtOpen,
+        );
+        return (
+          <Section n={1} title="Kontaktdaten">
+            <div className="grid2">{shown}</div>
+            <MoreFields items={more} />
+            <Field label="Notizen">
+              <TextInput id={'ct-notes-' + c.id} multiline rows={3} value={c.notes} onChange={(v) => set({ notes: v })} />
+            </Field>
+          </Section>
+        );
+      })()}
 
-      <Section title="Verknüpft" aside={total ? `${total}` : null}>
+      <LinkedWith data={data} refTo={{ type: 'contact', id: c.id }} n={2}>
+        {total ? (
+          <div className="more-fields">
+            <button type="button" className="more-toggle" aria-expanded={editLinks} onClick={() => setEditLinks(!editLinks)}>
+              <Icon name={editLinks ? 'chevU' : 'chevD'} size={14} />
+              <b>Zuordnungen bearbeiten</b>
+              {editLinks ? null : <span>{total} Einträge – einzeln lösen</span>}
+            </button>
+            {editLinks ? (
+              <>
         {l.projects.length ? (
           <div className="chips">
             {l.projects.map((p) => (
@@ -468,7 +470,10 @@ export function ContactDrawer({ data, drawer }) {
             </li>
           ))}
         </ul>
-        {!total ? <p className="small muted">Noch nichts verknüpft.</p> : null}
+              </>
+            ) : null}
+          </div>
+        ) : null}
         <div className="hstack" style={{ flexWrap: 'wrap' }}>
           {avail !== false ? (
             <Btn small kind="ghost" icon="sparkles" disabled={linking} onClick={async () => { setLinking(true); const n = await linkContact(c.id); setLinking(false); toast(n ? `${n} Verknüpfung${n > 1 ? 'en' : ''} gesetzt` : 'Keine neuen Verknüpfungen gefunden'); }}>
@@ -486,45 +491,46 @@ export function ContactDrawer({ data, drawer }) {
               ))}
           </select>
         </div>
-      </Section>
+      </LinkedWith>
 
-      <Section title="Kontaktdaten">
-        <div className="grid2">
-          <Field label="Firma">
-            <TextInput id={'ct-company-' + c.id} value={c.company} onChange={(v) => set({ company: v })} />
-          </Field>
-          <Field label="Name">
-            <TextInput id={'ct-name-' + c.id} value={c.name} onChange={(v) => set({ name: v })} />
-          </Field>
-          <Field label="Funktion">
-            <TextInput id={'ct-role-' + c.id} value={c.role} onChange={(v) => set({ role: v })} placeholder="z. B. Elektromeister" />
-          </Field>
-          <Field label="Gewerk">
-            <Select value={c.trade || ''} onChange={(v) => set({ trade: v })} options={[{ value: '', label: '–' }, ...TRADES]} />
-          </Field>
-          <Field label="Telefon">
-            <TextInput id={'ct-phone-' + c.id} value={c.phone} onChange={(v) => set({ phone: v })} />
-          </Field>
-          <Field label="Mobil">
-            <TextInput id={'ct-mobile-' + c.id} value={c.mobile} onChange={(v) => set({ mobile: v })} />
-          </Field>
-          <Field label="E-Mail">
-            <TextInput id={'ct-email-' + c.id} value={c.email} onChange={(v) => set({ email: v })} />
-          </Field>
-          <Field label="Webseite">
-            <TextInput id={'ct-web-' + c.id} value={c.website} onChange={(v) => set({ website: v })} />
-          </Field>
-        </div>
-        <Field label="Adresse">
-          <TextInput id={'ct-addr-' + c.id} value={c.address} onChange={(v) => set({ address: v })} />
-        </Field>
-        <Field label="Notizen">
-          <TextInput id={'ct-notes-' + c.id} multiline rows={3} value={c.notes} onChange={(v) => set({ notes: v })} />
-        </Field>
-      </Section>
+      {c.web ? (
+        <Section n={3} title="Aus dem Internet" aside={c.web.at ? `Stand ${fmtDate(new Date(c.web.at).toISOString().slice(0, 10))}` : null}>
+          {c.web.found === false ? <p className="small muted">Nichts Eindeutiges gefunden.{c.web.note ? ` ${c.web.note}` : ''}</p> : null}
+          {c.web.description ? <p className="meet-summary">{c.web.description}</p> : null}
+          {c.web.services?.length ? (
+            <div className="chips">
+              {c.web.services.map((x, i) => (
+                <span key={i} className="pill">
+                  {x}
+                </span>
+              ))}
+            </div>
+          ) : null}
+          <div>
+            {c.web.hours ? <div className="kv"><span>Öffnungszeiten</span><b>{c.web.hours}</b></div> : null}
+            {c.web.rating ? <div className="kv"><span>Bewertung</span><b>★ {String(c.web.rating.value).replace('.', ',')}{c.web.rating.count ? ` (${c.web.rating.count})` : ''}{c.web.rating.source ? ` · ${c.web.rating.source}` : ''}</b></div> : null}
+            {c.web.certifications?.length ? <div className="kv"><span>Qualifikationen</span><b>{c.web.certifications.join(', ')}</b></div> : null}
+            {c.web.confidence ? <div className="kv"><span>Treffer</span><b>{c.web.confidence === 'hoch' ? 'sicher' : c.web.confidence === 'mittel' ? 'wahrscheinlich' : 'unsicher'}</b></div> : null}
+          </div>
+          {c.web.note && c.web.found !== false ? <p className="small muted">{c.web.note}</p> : null}
+          {c.web.sources?.length ? (
+            <p className="small muted">
+              Quellen:{' '}
+              {c.web.sources.map((s, i) => (
+                <span key={i}>
+                  {i ? ' · ' : ''}
+                  <a className="link" href={s.url} target="_blank" rel="noopener noreferrer">
+                    {s.title}
+                  </a>
+                </span>
+              ))}
+            </p>
+          ) : null}
+        </Section>
+      ) : null}
 
       {card && fileUrl(card) ? (
-        <Section title="Visitenkarte">
+        <Section n={4} title="Visitenkarte">
           <img className="card-photo" src={fileUrl(card)} alt={`Visitenkarte ${contactTitle(c)}`} />
         </Section>
       ) : null}

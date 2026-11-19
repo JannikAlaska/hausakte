@@ -297,3 +297,55 @@ export function InstallFilter({ className = '' }) {
     </label>
   );
 }
+
+// finished things are not deleted but tucked away here: collapsed, counted, still found by search
+export function ArchiveSection({ title = 'Erledigt & Archiv', count, hint, open: forced, children }) {
+  const [open, setOpen] = React.useState(false);
+  if (!count) return null;
+  const on = forced || open;
+  return (
+    <div className={`archive ${on ? 'is-open' : ''}`}>
+      <button type="button" className="archive-head" aria-expanded={on} onClick={() => setOpen(!on)}>
+        <Icon name="archive" size={15} />
+        <b>{title}</b>
+        <span className="tab-count">{count}</span>
+        <span className="archive-hint">{on ? '' : hint || 'eingeklappt'}</span>
+        <Icon name={on ? 'chevU' : 'chevD'} size={15} />
+      </button>
+      {on ? <div className="archive-body">{children}</div> : null}
+    </div>
+  );
+}
+
+// Two-stage forms: rarely used fields that are still empty wait behind "Weitere Angaben"; filled ones are always shown.
+// Which fields count as empty is decided when the form opens, so a field does not jump away while it is being typed in.
+const isBlank = (v) => v == null || v === '' || (Array.isArray(v) && !v.length) || (typeof v === 'number' && Number.isNaN(v));
+export function useEmptyAtOpen(id, values) {
+  const ref = useRef({ id: undefined, set: new Set() });
+  if (ref.current.id !== id) ref.current = { id, set: new Set(Object.entries(values).filter(([, v]) => isBlank(v)).map(([k]) => k)) };
+  return ref.current.set;
+}
+
+// items: [{ k, label, el }] – the hidden fields; grid: class of the field grid inside
+export function MoreFields({ items, grid = 'grid2', label = 'Weitere Angaben' }) {
+  const [open, setOpen] = useState(false);
+  if (!items.length) return null;
+  return (
+    <div className={`more-fields ${open ? 'is-open' : ''}`}>
+      <button type="button" className="more-toggle" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <Icon name={open ? 'chevU' : 'chevD'} size={14} />
+        <b>{label}</b>
+        {open ? null : <span>{items.map((x) => x.label).filter(Boolean).join(', ')}</span>}
+      </button>
+      {open ? <div className={grid}>{items.map((x) => <React.Fragment key={x.k}>{x.el}</React.Fragment>)}</div> : null}
+    </div>
+  );
+}
+
+// splits field entries into the ones shown right away and the ones behind "Weitere Angaben"
+export function splitFields(entries, emptyAtOpen) {
+  const shown = [];
+  const more = [];
+  for (const e of entries) (e.core || !emptyAtOpen.has(e.k) ? shown : more).push(e);
+  return { shown: shown.map((e) => <React.Fragment key={e.k}>{e.el}</React.Fragment>), more };
+}

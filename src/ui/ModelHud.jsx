@@ -5,7 +5,7 @@ import { roomDims } from '../focus.js';
 import { furnSize, furnName } from '../furniture.js';
 import { roomOfPoint } from '../planops.js';
 import { updateDoc } from '../store.js';
-import { useUI, setUI, openDrawer, go, showFloor, hideWall, setHiddenWalls, toast, setShowPeople } from './state.js';
+import { useUI, setUI, openDrawer, go, showFloor, hideWall, setHiddenWalls, toast, setShowPeople, setHudCompact } from './state.js';
 import { portfolio, sortFloors, floorStats, componentWear, isDone, roomArea, buildingStats, liveProjects } from '../metrics.js';
 import { projectKind, status as statusOf, roomType } from '../catalog.js';
 import { ROOF_TYPES } from '../roof.js';
@@ -14,9 +14,10 @@ import { daysUntil } from '../metrics.js';
 import { invoiceDeadlines } from '../invoices.js';
 import { bearingName } from '../roof.js';
 
-const { useMemo } = React;
+const { useMemo, useState, useEffect, useRef } = React;
 
 export function KpiRow({ data }) {
+  const ui = useUI();
   const projects = liveProjects(data.projects);
   const pf = useMemo(() => portfolio(projects), [data.projects]);
   const comps = Object.values(data.components);
@@ -24,6 +25,29 @@ export function KpiRow({ data }) {
   const next = [...pf.next, ...invoiceDeadlines(data)].sort((a, b) => (a.date < b.date ? -1 : 1))[0];
   const dn = next ? daysUntil(next.date) : null;
   const late = pf.overdue;
+  const warnDate = dn != null && dn <= 21;
+  if (ui.kpiCompact)
+    return (
+      <div className="kpis is-compact">
+        <button type="button" className="kpi-line" onClick={() => setHudCompact('kpi', false)} aria-label="Kennzahlen aufklappen" title="Kennzahlen aufklappen">
+          <span>
+            <Icon name="tasks" size={14} /> {pf.done}/{pf.total}
+          </span>
+          <span>
+            <Icon name="euro" size={14} /> {fmtEuro(pf.budget)}
+          </span>
+          <span className={warnDate ? 'is-warn' : ''}>
+            <Icon name="calendar" size={14} /> {next ? fmtDayMonth(next.date) : '–'}
+          </span>
+          {late.length || due.length ? (
+            <span className="is-warn">
+              <Icon name={late.length ? 'clock' : 'alert'} size={14} /> {late.length ? `${late.length} im Verzug` : `${due.length} fällig`}
+            </span>
+          ) : null}
+          <Icon name="chevD" size={14} />
+        </button>
+      </div>
+    );
   return (
     <div className="kpis" role="list">
       <button className="kpi" role="listitem" onClick={() => go('projekte')}>
@@ -69,27 +93,101 @@ export function KpiRow({ data }) {
           <span className="kpi-sub">{late.length ? late.map((p) => p.title).join(', ') : due.length ? due.slice(0, 2).map((c) => c.name).join(', ') : 'Alles im Rahmen'}</span>
         </span>
       </button>
+      <button type="button" className="kpi-fold" onClick={() => setHudCompact('kpi', true)} aria-label="Kennzahlen einklappen" title="Kennzahlen zu einer Zeile einklappen">
+        <Icon name="chevU" size={15} />
+      </button>
     </div>
   );
 }
 
-export function SceneToolbar({ sceneRef }) {
+export function SceneToolbar({ sceneRef, data }) {
   const ui = useUI();
+  const [menu, setMenu] = useState(false);
   const s = () => sceneRef.current;
   return (
-    <div className="toolbar3d" role="toolbar" aria-label="Ansicht">
-      <IconBtn className="tb-opt" icon="plus" label="Hineinzoomen" onClick={() => s()?.zoom(0.78)} />
-      <IconBtn className="tb-opt" icon="minus" label="Herauszoomen" onClick={() => s()?.zoom(1.28)} />
-      <span className="tb-sep tb-opt" />
-      <IconBtn className="tb-opt" icon="rotL" label="Nach links drehen" onClick={() => s()?.rotate(-45)} />
-      <IconBtn className="tb-opt" icon="rotR" label="Nach rechts drehen" onClick={() => s()?.rotate(45)} />
-      <IconBtn icon="home" label="Ansicht zurücksetzen" onClick={() => { setUI({ mode: 'all', floorId: null }); s()?.resetView(); }} />
-      <span className="tb-sep tb-opt" />
-      <IconBtn icon={ui.showRoof ? 'roof' : 'eyeOff'} label={ui.showRoof ? 'Dach ausblenden' : 'Dach einblenden'} active={!ui.showRoof} onClick={() => setUI({ showRoof: !ui.showRoof })} />
-      <IconBtn icon="sofa" label={ui.showFurniture !== false ? 'Möbel ausblenden' : 'Möbel einblenden'} active={ui.showFurniture === false} onClick={() => setUI({ showFurniture: ui.showFurniture === false })} />
-      <IconBtn icon="tag" label={ui.showLabels ? 'Beschriftung ausblenden' : 'Beschriftung einblenden'} active={!ui.showLabels} onClick={() => setUI({ showLabels: !ui.showLabels })} />
-      <IconBtn icon="people" label={ui.showPeople !== false ? 'Bewohner ausblenden' : 'Bewohner einblenden'} active={ui.showPeople === false} onClick={() => setShowPeople(ui.showPeople === false)} />
-      <IconBtn icon="sun" label={ui.sunOn ? 'Sonnenstand ausblenden' : 'Sonnenstand und Schatten'} active={!!ui.sunOn} onClick={() => setUI({ sunOn: !ui.sunOn })} />
+    <>
+      <div className="toolbar3d" role="toolbar" aria-label="Ansicht">
+        <IconBtn className="tb-opt" icon="plus" label="Hineinzoomen" onClick={() => s()?.zoom(0.78)} />
+        <IconBtn className="tb-opt" icon="minus" label="Herauszoomen" onClick={() => s()?.zoom(1.28)} />
+        <span className="tb-sep tb-opt" />
+        <IconBtn className="tb-opt" icon="rotL" label="Nach links drehen" onClick={() => s()?.rotate(-45)} />
+        <IconBtn className="tb-opt" icon="rotR" label="Nach rechts drehen" onClick={() => s()?.rotate(45)} />
+        <IconBtn icon="home" label="Ansicht zurücksetzen" onClick={() => { setUI({ mode: 'all', floorId: null }); s()?.resetView(); }} />
+        <span className="tb-sep" />
+        <IconBtn icon="eye" label="Ansicht: Dach, Möbel, Leitungen, Bewohner …" active={menu} aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu(!menu)} />
+      </div>
+      {menu ? <ViewMenu data={data} onClose={() => setMenu(false)} /> : null}
+    </>
+  );
+}
+
+// everything that can be shown or hidden in the 3D model, in one place
+function ViewMenu({ data, onClose }) {
+  const ui = useUI();
+  const ref = useRef(null);
+  useEffect(() => {
+    const onKey = (e) => e.key === 'Escape' && onClose();
+    const onDown = (e) => {
+      if (ref.current && !ref.current.contains(e.target) && !e.target.closest?.('.toolbar3d')) onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('pointerdown', onDown, true);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('pointerdown', onDown, true);
+    };
+  }, []);
+  const floors = sortFloors(Object.values(data.floors));
+  const storeys = [...floors, ...(data.house?.model?.context || [])];
+  const lineCount = storeys.reduce((n, f) => n + (f.lines || []).filter((l) => !l.auto).length, 0);
+  const pointCount = storeys.reduce((n, f) => n + (f.points || []).length, 0);
+  const furnCount = storeys.reduce((n, f) => n + (f.furniture || []).length, 0);
+  const spotCount = allSpots(data).filter((q) => q.photos.length).length;
+  const hidden = new Set(ui.hiddenWalls || []);
+  const hiddenCount = floors.reduce((n, f) => n + (f.walls || []).filter((w) => hidden.has(w.id)).length, 0);
+  const rows = [
+    { key: 'roof', icon: 'roof', label: 'Dach', on: !!ui.showRoof, sub: ui.showRoof ? 'sichtbar' : 'ausgeblendet – Blick in die oberste Etage', set: (v) => setUI({ showRoof: v }) },
+    { key: 'furn', icon: 'sofa', label: 'Möbel', on: ui.showFurniture !== false, sub: furnCount ? `${furnCount} ${furnCount === 1 ? 'Möbelstück' : 'Möbelstücke'}` : 'im Grundriss einrichten', set: (v) => setUI({ showFurniture: v }) },
+    { key: 'lines', icon: 'pipe', label: 'Leitungen & Anschlüsse', on: ui.showLines === true, sub: lineCount + pointCount ? `Röntgenblick · ${[lineCount ? `${lineCount} Leitungen` : '', pointCount ? `${pointCount} Anschlüsse` : ''].filter(Boolean).join(' · ')}` : 'im Grundriss einzeichnen', set: (v) => setUI({ showLines: v }) },
+    ...(spotCount ? [{ key: 'photos', icon: 'camera', label: 'Fotos', on: ui.showPhotos !== false, sub: `${spotCount} Fotopunkt${spotCount === 1 ? '' : 'e'} · in der Etagen-Ansicht`, set: (v) => setUI({ showPhotos: v }) }] : []),
+    { key: 'people', icon: 'people', label: 'Bewohner', on: ui.showPeople !== false, sub: '2 laufen durchs Haus', set: (v) => setShowPeople(v) },
+    { key: 'labels', icon: 'tag', label: 'Beschriftung', on: !!ui.showLabels, sub: 'Räume, Projekte, Nachbarn', set: (v) => setUI({ showLabels: v }) },
+    { key: 'sun', icon: 'sun', label: 'Sonnenstand & Schatten', on: !!ui.sunOn, sub: 'Tag und Uhrzeit wählen', set: (v) => setUI({ sunOn: v }) },
+  ];
+  return (
+    <div className="view-menu" role="menu" aria-label="Was im 3D-Modell zu sehen ist" ref={ref}>
+      <div className="view-menu-head">
+        <b>Ansicht</b>
+        <IconBtn icon="x" size={15} label="Schließen" onClick={onClose} />
+      </div>
+      {rows.map((r) => (
+        <div key={r.key}>
+          <button type="button" role="menuitemcheckbox" aria-checked={r.on} className={`view-row ${r.on ? 'is-on' : ''}`} onClick={() => r.set(!r.on)}>
+            <span className="view-row-ico">
+              <Icon name={r.icon} size={16} />
+            </span>
+            <span className="view-row-txt">
+              <b>{r.label}</b>
+              <span>{r.sub}</span>
+            </span>
+            <span className={`view-switch ${r.on ? 'is-on' : ''}`} aria-hidden="true">
+              <i />
+            </span>
+          </button>
+          {r.key === 'lines' && r.on && lineCount + pointCount ? <InstallFilter className="fp-filter" /> : null}
+        </div>
+      ))}
+      {hiddenCount ? (
+        <button type="button" className="view-row is-on" onClick={() => setHiddenWalls([])}>
+          <span className="view-row-ico">
+            <Icon name="wall" size={16} />
+          </span>
+          <span className="view-row-txt">
+            <b>Ausgeblendete Wände ({hiddenCount})</b>
+            <span>antippen: alle wieder einblenden</span>
+          </span>
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -97,15 +195,6 @@ export function SceneToolbar({ sceneRef }) {
 export function FloorPanel({ data, compact }) {
   const ui = useUI();
   const floors = sortFloors(Object.values(data.floors)).reverse();
-  const storeys = [...floors, ...(data.house?.model?.context || [])];
-  const lineCount = storeys.reduce((n, f) => n + (f.lines || []).filter((l) => !l.auto).length, 0);
-  const pointCount = storeys.reduce((n, f) => n + (f.points || []).length, 0);
-  const furnCount = storeys.reduce((n, f) => n + (f.furniture || []).length, 0);
-  const furnOn = ui.showFurniture !== false;
-  const photosOn = ui.showPhotos !== false;
-  const spotCount = allSpots(data).filter((q) => q.photos.length).length;
-  const hidden = new Set(ui.hiddenWalls || []);
-  const hiddenCount = floors.reduce((n, f) => n + (f.walls || []).filter((w) => hidden.has(w.id)).length, 0);
   return (
     <div className={`floorpanel ${compact ? 'is-compact' : ''}`}>
       <div className="fp-head">
@@ -123,97 +212,6 @@ export function FloorPanel({ data, compact }) {
         />
       </div>
       <ul className="fp-list">
-        <li>
-          <button className={`fp-row ${ui.mode === 'all' && ui.showRoof ? '' : 'is-dim'}`} onClick={() => setUI({ showRoof: !ui.showRoof })}>
-            <span className="fp-short">
-              <Icon name="roof" size={15} />
-            </span>
-            <span className="fp-name">
-              <b>Dach</b>
-              <span>{ui.showRoof ? 'sichtbar' : 'ausgeblendet'}</span>
-            </span>
-            <span className="fp-aside">
-              <Icon name={ui.showRoof ? 'eye' : 'eyeOff'} size={15} />
-            </span>
-          </button>
-        </li>
-        <li>
-          <button className={`fp-row ${ui.showLines === true ? 'is-on' : 'is-dim'}`} aria-pressed={ui.showLines === true} onClick={() => setUI({ showLines: ui.showLines !== true })} title="Röntgenblick: Wände durchsichtig, Kabel, Rohre und Anschlüsse sichtbar">
-            <span className="fp-short">
-              <Icon name="pipe" size={15} />
-            </span>
-            <span className="fp-name">
-              <b>Leitungen & Anschlüsse</b>
-              <span>{lineCount + pointCount ? (ui.showLines === true ? 'Röntgenblick an' : [lineCount ? `${lineCount} Leitungen` : '', pointCount ? `${pointCount} Anschlüsse` : ''].filter(Boolean).join(' · ')) : 'im Grundriss einzeichnen'}</span>
-            </span>
-            <span className="fp-aside">
-              <Icon name={ui.showLines === true ? 'eye' : 'eyeOff'} size={15} />
-            </span>
-          </button>
-          {ui.showLines === true && lineCount + pointCount ? <InstallFilter className="fp-filter" /> : null}
-        </li>
-        <li>
-          <button className={`fp-row ${furnOn && furnCount ? '' : 'is-dim'}`} aria-pressed={furnOn} onClick={() => setUI({ showFurniture: !furnOn })} title="Möbel im 3D-Modell ein- oder ausblenden">
-            <span className="fp-short">
-              <Icon name="sofa" size={15} />
-            </span>
-            <span className="fp-name">
-              <b>Möbel</b>
-              <span>{furnCount ? `${furnCount} ${furnCount === 1 ? 'Möbelstück' : 'Möbelstücke'} · ${furnOn ? 'sichtbar' : 'ausgeblendet'}` : 'im Grundriss einrichten'}</span>
-            </span>
-            <span className="fp-aside">
-              <Icon name={furnOn ? 'eye' : 'eyeOff'} size={15} />
-            </span>
-          </button>
-        </li>
-        <li>
-          <button className={`fp-row ${ui.showPeople !== false ? '' : 'is-dim'}`} aria-pressed={ui.showPeople !== false} onClick={() => setShowPeople(ui.showPeople === false)} title="Die beiden Bewohner im 3D-Modell ein- oder ausblenden">
-            <span className="fp-short">
-              <Icon name="people" size={15} />
-            </span>
-            <span className="fp-name">
-              <b>Bewohner</b>
-              <span>{ui.showPeople !== false ? '2 laufen durchs Haus' : 'ausgeblendet'}</span>
-            </span>
-            <span className="fp-aside">
-              <Icon name={ui.showPeople !== false ? 'eye' : 'eyeOff'} size={15} />
-            </span>
-          </button>
-        </li>
-        {spotCount ? (
-          <li>
-            <button className={`fp-row ${photosOn ? '' : 'is-dim'}`} aria-pressed={photosOn} onClick={() => setUI({ showPhotos: !photosOn })} title="Fotopunkte im 3D-Modell ein- oder ausblenden (sichtbar in der Etagen-Ansicht)">
-              <span className="fp-short">
-                <Icon name="camera" size={15} />
-              </span>
-              <span className="fp-name">
-                <b>Fotos</b>
-                <span>
-                  {spotCount} Fotopunkt{spotCount === 1 ? '' : 'e'} · {photosOn ? 'in der Etagen-Ansicht' : 'ausgeblendet'}
-                </span>
-              </span>
-              <span className="fp-aside">
-                <Icon name={photosOn ? 'eye' : 'eyeOff'} size={15} />
-              </span>
-            </button>
-          </li>
-        ) : null}
-        {hiddenCount ? (
-          <li>
-            <button className="fp-row is-on" onClick={() => setHiddenWalls([])} title="Alle ausgeblendeten Wände wieder einblenden">
-              <span className="fp-short">
-                <Icon name="wall" size={15} />
-              </span>
-              <span className="fp-name">
-                <b>Ausgeblendete Wände</b>
-                <span>{hiddenCount} · alle einblenden</span>
-              </span>
-              <span className="fp-aside">
-                <Icon name="eye" size={15} />
-              </span>
-            </button>
-          </li>
-        ) : null}
         {floors.map((f) => {
           const st = floorStats(f);
           const on = ui.mode === 'floor' && ui.floorId === f.id;
@@ -253,8 +251,31 @@ const stepTone = (p, today) => {
 };
 
 export function Timeline({ data }) {
+  const ui = useUI();
   const today = todayISO();
   const projects = liveProjects(data.projects).sort((a, b) => (a.start || '9999') < (b.start || '9999') ? -1 : 1);
+  if (ui.tlCompact && projects.length) {
+    const tones = projects.map((p) => stepTone(p, today));
+    const n = (t) => tones.filter((x) => x === t).length;
+    return (
+      <div className="timeline is-compact">
+        <button type="button" className="tl-line" onClick={() => setHudCompact('tl', false)} aria-label="Modernisierungsablauf aufklappen" title="Modernisierungsablauf aufklappen">
+          <Icon name="gantt" size={15} />
+          <b>Ablauf</b>
+          <span className="tl-line-txt">
+            {n('done')}/{projects.length} fertig{n('active') ? ` · ${n('active')} in Umsetzung` : ''}
+            {n('late') ? <em> · {n('late')} im Verzug</em> : null}
+          </span>
+          <span className="tl-mini" aria-hidden="true">
+            {tones.map((t, i) => (
+              <i key={i} className={`tone-${t}`} />
+            ))}
+          </span>
+          <Icon name="chevU" size={14} />
+        </button>
+      </div>
+    );
+  }
   if (!projects.length)
     return (
       <div className="timeline">
@@ -272,9 +293,12 @@ export function Timeline({ data }) {
         <span>
           <Icon name="gantt" size={16} /> Modernisierungsablauf
         </span>
-        <button className="link" onClick={() => go('projekte')}>
-          Zeitplan <Icon name="chevR" size={14} />
-        </button>
+        <span className="tl-head-side">
+          <button className="link" onClick={() => go('projekte')}>
+            Zeitplan <Icon name="chevR" size={14} />
+          </button>
+          <IconBtn icon="chevD" size={15} className="tl-fold" label="Ablauf zu einer Zeile einklappen" onClick={() => setHudCompact('tl', true)} />
+        </span>
       </div>
       <ol className="tl-steps">
         {projects.map((p) => {

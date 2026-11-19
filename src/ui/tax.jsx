@@ -96,8 +96,7 @@ function estimateOf(line) {
 
 const openTax = () => {
   closeDrawer();
-  setUI({ docTab: 'steuer' });
-  go('dokumente');
+  go('steuer');
 };
 
 // ---------- section in the invoice drawer ----------

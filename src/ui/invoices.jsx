@@ -1,7 +1,8 @@
 // Invoices: photo or file in, the AI reads sender, number, dates, amounts and line items; then the invoice is
 // kept with a payment status, in general or for a project.
 import { Icon } from './icons.jsx';
-import { Btn, IconBtn, Field, TextInput, NumInput, Select, DateInput, Pill, Drawer, Section, ConfirmBtn, Empty, Seg } from './common.jsx';
+import { Btn, IconBtn, Field, TextInput, NumInput, Select, DateInput, Pill, Drawer, Section, ConfirmBtn, Empty, Seg, ArchiveSection, useEmptyAtOpen, MoreFields, splitFields } from './common.jsx';
+import { LinkedWith } from './links.jsx';
 import { useAiAvailable } from './ai-ui.jsx';
 import { toast, openDrawer, closeDrawer } from './state.js';
 import { uploadFiles, storeFile } from './documents.jsx';
@@ -311,19 +312,44 @@ const FILTERS = [
   { key: 'bezahlt', name: 'Bezahlt' },
   { key: 'ueberfaellig', name: 'Überfällig' },
 ];
+// paid more than 60 days ago: folded into the archive (still in the sums, the tax helper and the search)
+const ARCHIVE_DAYS = 60;
+export const invArchived = (d) => {
+  const i = invOf(d);
+  const when = i.paidAt || i.date || d.date;
+  return i.status === 'bezahlt' && isISO(when) && diffDays(when, todayISO()) > ARCHIVE_DAYS;
+};
 const passes = (d, f) => (f === 'alle' ? true : f === 'ueberfaellig' ? isOverdue(d) : (invOf(d).status || 'offen') === f);
 
 export function InvoicesPanel({ data }) {
   const [f, setF] = useState('alle');
   const [proj, setProj] = useState('alle');
   const all = invoiceDocs(data);
-  const list = all.filter((d) => passes(d, f) && (proj === 'alle' || (proj === 'none' ? !d.projectId : d.projectId === proj)));
-  const groups = new Map();
-  for (const d of list) {
-    const k = d.projectId && data.projects?.[d.projectId] ? d.projectId : '';
-    if (!groups.has(k)) groups.set(k, []);
-    groups.get(k).push(d);
-  }
+  const shown = all.filter((d) => passes(d, f) && (proj === 'alle' || (proj === 'none' ? !d.projectId : d.projectId === proj)));
+  // with the filter "Bezahlt" everything paid is listed; otherwise old paid invoices are folded away
+  const arch = f === 'bezahlt' ? [] : shown.filter(invArchived);
+  const list = f === 'bezahlt' ? shown : shown.filter((d) => !invArchived(d));
+  const grouped = (items) => {
+    const groups = new Map();
+    for (const d of items) {
+      const k = d.projectId && data.projects?.[d.projectId] ? d.projectId : '';
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(d);
+    }
+    return [...groups].map(([pid, its]) => (
+      <div key={pid || 'none'} className="inv-group">
+        <div className="spread inv-group-head">
+          <span className="field-label">{pid ? data.projects[pid].title : 'Allgemein'}</span>
+          <span className="small muted">
+            {its.length} · {fmtEuro(its.reduce((s, d) => s + invTotal(d), 0))}
+          </span>
+        </div>
+        {its.map((d) => (
+          <InvoiceRow key={d.id} d={d} data={data} />
+        ))}
+      </div>
+    ));
+  };
   const usedProjects = [...new Set(all.map((d) => d.projectId).filter((id) => id && data.projects?.[id]))];
   return (
     <div className="stack">
@@ -341,23 +367,10 @@ export function InvoicesPanel({ data }) {
             </div>
             <Select value={proj} onChange={setProj} options={[{ value: 'alle', label: 'Alle Projekte' }, { value: 'none', label: 'Allgemein (ohne Projekt)' }, ...usedProjects.map((id) => ({ value: id, label: data.projects[id].title }))]} aria-label="Projekt" />
           </div>
-          {list.length ? (
-            [...groups].map(([pid, items]) => (
-              <div key={pid || 'none'} className="inv-group">
-                <div className="spread inv-group-head">
-                  <span className="field-label">{pid ? data.projects[pid].title : 'Allgemein'}</span>
-                  <span className="small muted">
-                    {items.length} · {fmtEuro(items.reduce((s, d) => s + invTotal(d), 0))}
-                  </span>
-                </div>
-                {items.map((d) => (
-                  <InvoiceRow key={d.id} d={d} data={data} />
-                ))}
-              </div>
-            ))
-          ) : (
-            <p className="small muted">Keine Rechnungen für diesen Filter.</p>
-          )}
+          {list.length ? grouped(list) : !arch.length ? <p className="small muted">Keine Rechnungen für diesen Filter.</p> : <p className="small muted">Nichts Offenes – alle Rechnungen sind bezahlt.</p>}
+          <ArchiveSection title="Archiv" count={arch.length} hint={`bezahlt vor mehr als ${ARCHIVE_DAYS} Tagen · ${fmtEuro(arch.reduce((s, d) => s + invTotal(d), 0))}`}>
+            {grouped(arch)}
+          </ArchiveSection>
         </>
       ) : (
         <Empty icon="euro" title="Noch keine Rechnungen">
@@ -387,9 +400,14 @@ export function ProjectInvoices({ p, data }) {
           </span>
         </div>
       ) : null}
-      {list.map((d) => (
+      {list.filter((d) => !invArchived(d)).map((d) => (
         <InvoiceRow key={d.id} d={d} data={data} />
       ))}
+      <ArchiveSection title="Archiv" count={list.filter(invArchived).length} hint="bezahlt, älter">
+        {list.filter(invArchived).map((d) => (
+          <InvoiceRow key={d.id} d={d} data={data} />
+        ))}
+      </ArchiveSection>
       <InvoiceCapture projectId={p.id} compact />
     </div>
   );
@@ -483,6 +501,8 @@ export function InvoiceDrawer({ data, drawer }) {
   const busy = useReading().get(drawer.id);
   const avail = useAiAvailable();
   const fileRef = useRef(null);
+  const i0 = d ? invOf(d) : {};
+  const emptyAtOpen = useEmptyAtOpen(drawer.id, { number: i0.number, kind: i0.kind && i0.kind !== 'rechnung' ? i0.kind : null, due: i0.due, net: i0.net, vat: i0.vat });
   if (!d)
     return (
       <Drawer title="Rechnung nicht gefunden" onClose={closeDrawer}>
@@ -607,39 +627,32 @@ export function InvoiceDrawer({ data, drawer }) {
 
       <TaxSection d={d} data={data} />
 
-      <Section title="Rechnungsdaten">
-        <div className="grid2">
-          <Field label="Rechnungsnummer">
-            <TextInput value={i.number || ''} onChange={(v) => set({ number: v })} placeholder="z. B. RE-2026-0142" />
-          </Field>
-          <Field label="Art">
-            <Select value={i.kind || 'rechnung'} onChange={(v) => set({ kind: v })} options={INV_KINDS.map((k) => ({ value: k.key, label: k.name }))} />
-          </Field>
-          <Field label="Rechnungsdatum">
-            <DateInput value={i.date} onChange={(v) => set({ date: v })} />
-          </Field>
-          <Field label="Fällig am">
-            <DateInput value={i.due} onChange={(v) => set({ due: v })} />
-          </Field>
-        </div>
-        <div className="grid3">
-          <Field label="Netto">
-            <NumInput value={i.net} onChange={(v) => set({ net: v })} unit="€" digits={2} />
-          </Field>
-          <Field label="MwSt.">
-            <NumInput value={i.vat} onChange={(v) => set({ vat: v })} unit="€" digits={2} />
-          </Field>
-          <Field label="Gesamt (brutto)">
-            <NumInput value={i.total} onChange={(v) => set({ total: v })} unit="€" digits={2} />
-          </Field>
-        </div>
-        {i.terms || i.iban ? (
-          <div className="small muted">
-            {i.terms ? <div>Zahlungsbedingungen: {i.terms}</div> : null}
-            {i.iban ? <div>IBAN: {i.iban}</div> : null}
-          </div>
-        ) : null}
-      </Section>
+      {(() => {
+        const { shown, more } = splitFields(
+          [
+            { k: 'date', core: true, el: <Field label="Rechnungsdatum"><DateInput value={i.date} onChange={(v) => set({ date: v })} /></Field> },
+            { k: 'total', core: true, el: <Field label="Gesamt (brutto)"><NumInput value={i.total} onChange={(v) => set({ total: v })} unit="€" digits={2} /></Field> },
+            { k: 'due', label: 'Fällig am', el: <Field label="Fällig am"><DateInput value={i.due} onChange={(v) => set({ due: v })} /></Field> },
+            { k: 'number', label: 'Rechnungsnummer', el: <Field label="Rechnungsnummer"><TextInput value={i.number || ''} onChange={(v) => set({ number: v })} placeholder="z. B. RE-2026-0142" /></Field> },
+            { k: 'kind', label: 'Art', el: <Field label="Art"><Select value={i.kind || 'rechnung'} onChange={(v) => set({ kind: v })} options={INV_KINDS.map((k) => ({ value: k.key, label: k.name }))} /></Field> },
+            { k: 'net', label: 'Netto', el: <Field label="Netto"><NumInput value={i.net} onChange={(v) => set({ net: v })} unit="€" digits={2} /></Field> },
+            { k: 'vat', label: 'MwSt.', el: <Field label="MwSt."><NumInput value={i.vat} onChange={(v) => set({ vat: v })} unit="€" digits={2} /></Field> },
+          ],
+          emptyAtOpen,
+        );
+        return (
+          <Section title="Rechnungsdaten">
+            <div className="grid2">{shown}</div>
+            <MoreFields items={more} />
+            {i.terms || i.iban ? (
+              <div className="small muted">
+                {i.terms ? <div>Zahlungsbedingungen: {i.terms}</div> : null}
+                {i.iban ? <div>IBAN: {i.iban}</div> : null}
+              </div>
+            ) : null}
+          </Section>
+        );
+      })()}
 
       <Section title="Absender & Zuordnung">
         <Field label="Kontakt (Ansprechpartner)">
@@ -676,6 +689,8 @@ export function InvoiceDrawer({ data, drawer }) {
       <Field label="Notizen">
         <TextInput multiline rows={2} value={d.notes || ''} onChange={(v) => setDoc({ notes: v })} placeholder="z. B. überwiesen per Online-Banking, Rückfrage zu Position 3 …" />
       </Field>
+
+      <LinkedWith data={data} refTo={{ type: 'invoice', id: d.id }} />
     </Drawer>
   );
 }

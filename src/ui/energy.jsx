@@ -428,7 +428,7 @@ export function HeatHint({ data }) {
         Heizlast laut 3D-Modell ca. <b>{kw(r.loadKw)}</b> → Wärmepumpe ca. <b>{r.hpSize} kW</b>. Heizkosten mit Wärmepumpe ca. {fmtEuro(r.hp.cost)} statt {fmtEuro(r.oil.cost)} mit Öl.
         <EconLine e={hp.eNew} hint="gegenüber einem neuen Ölkessel, nach KfW-Zuschuss" />
         <div style={{ marginTop: 6 }}>
-          <Btn small icon="flame" onClick={() => { setUI({ buildingTab: 'energie', drawer: null }); go('gebaeude'); }}>
+          <Btn small icon="flame" onClick={() => { setUI({ drawer: null }); go('heizlast'); }}>
             Heizlast-Check öffnen
           </Btn>
         </div>

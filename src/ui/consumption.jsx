@@ -118,7 +118,8 @@ function ClassBar({ value }) {
   );
 }
 
-export function ConsumptionSheet({ data }) {
+// embedded: only the content (inside the Energie area, which has its own sheet)
+export function ConsumptionSheet({ data, embedded }) {
   const readings = Object.values(data.readings);
   const st = buildingStats(data.house, Object.values(data.floors));
   const years = consumptionByYear(readings);
@@ -140,7 +141,7 @@ export function ConsumptionSheet({ data }) {
   });
   const S = SERIES.find((s) => s.key === series);
   return (
-    <Sheet title="Verbräuche" icon="chart" eyebrow={`${readings.length} Einträge`} onClose={() => go('modell')} actions={<AddReading />}>
+    <Wrap embedded={embedded} title="Verbräuche" icon="chart" eyebrow={`${readings.length} Einträge`} onClose={() => go('modell')} actions={<AddReading />}>
       {!readings.length ? (
         <div className="stack">
           <Empty icon="chart" title="Noch keine Verbräuche">
@@ -233,11 +234,13 @@ export function ConsumptionSheet({ data }) {
           </div>
         </div>
       )}
-    </Sheet>
+    </Wrap>
   );
 }
 
-function AddReading() {
+const Wrap = ({ embedded, children, ...rest }) => (embedded ? <>{children}</> : <Sheet {...rest}>{children}</Sheet>);
+
+export function AddReading() {
   const [open, setOpen] = useState(false);
   return (
     <>

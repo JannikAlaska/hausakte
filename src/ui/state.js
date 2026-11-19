@@ -1,11 +1,33 @@
 // UI state shared across components (current view, 3D mode, selection, drawer, toasts).
 import { getState, subscribe } from '../store.js';
 
-const VIEWS = ['cockpit', 'modell', 'grundriss', 'gebaeude', 'projekte', 'verbrauch', 'dokumente'];
+// Six areas: Übersicht (cockpit), Haus (3D model, floor plan, building data), Projekte, Energie, Finanzen, Ablage.
+// Haus has three views of its own; the other areas switch with tabs.
+const VIEWS = ['cockpit', 'modell', 'grundriss', 'gebaeude', 'projekte', 'energie', 'finanzen', 'ablage'];
+export const HOUSE_VIEWS = ['modell', 'grundriss', 'gebaeude'];
+export const areaOf = (view) => (HOUSE_VIEWS.includes(view) ? 'haus' : view);
 
-// short addresses for widgets and links: #rechnungen opens Dokumente > Rechnungen
-const ALIAS = { rechnungen: { view: 'dokumente', docTab: 'rechnungen' }, notizen: { view: 'dokumente', docTab: 'notizen' }, kontakte: { view: 'dokumente', docTab: 'kontakte' }, steuer: { view: 'dokumente', docTab: 'steuer' }, antraege: { view: 'dokumente', docTab: 'antraege' } };
-const routeOf = (h) => ALIAS[h] || { view: VIEWS.includes(h) ? h : 'cockpit' };
+// short addresses for widgets, links and older bookmarks (#rechnungen, #verbrauch, #dokumente …)
+const ALIAS = {
+  verbrauch: { view: 'energie', energyTab: 'verbrauch' },
+  heizlast: { view: 'energie', energyTab: 'heizlast' },
+  pv: { view: 'energie', energyTab: 'pv' },
+  budget: { view: 'finanzen', finTab: 'budget' },
+  rechnungen: { view: 'finanzen', finTab: 'rechnungen' },
+  steuer: { view: 'finanzen', finTab: 'steuer' },
+  antraege: { view: 'finanzen', finTab: 'antraege' },
+  dokumente: { view: 'ablage', docTab: 'dateien' },
+  dateien: { view: 'ablage', docTab: 'dateien' },
+  fotos: { view: 'ablage', docTab: 'fotos' },
+  notizen: { view: 'ablage', docTab: 'notizen' },
+  kontakte: { view: 'ablage', docTab: 'kontakte' },
+};
+let lastHouseView = 'modell'; // "Haus" opens the house view used last
+const routeOf = (h) => {
+  if (h === 'haus') return { view: lastHouseView };
+  const r = ALIAS[h] || { view: VIEWS.includes(h) ? h : 'cockpit' };
+  return HOUSE_VIEWS.includes(r.view) ? { ...r, hausView: r.view } : r;
+};
 
 // walls hidden in the 3D model: a view setting of this device (not part of the house data)
 const HW_KEY = 'hausakte-hidden-walls';
@@ -39,8 +61,20 @@ function loadShowPeople() {
   }
 }
 
+// key figures and project strip over the 3D model can be folded to one line (setting of this device)
+const HUD_KEY = 'hausakte-hud';
+function loadHud() {
+  try {
+    const v = JSON.parse(localStorage.getItem(HUD_KEY) || '{}');
+    return { kpiCompact: !!v.kpi, tlCompact: !!v.tl };
+  } catch {
+    return { kpiCompact: false, tlCompact: false };
+  }
+}
+
 let ui = {
   ...routeFromHash(),
+  ...loadHud(),
   showPeople: loadShowPeople(),
   hiddenWalls: loadHiddenWalls(),
   installFilter: loadInstallFilter(),
@@ -68,6 +102,7 @@ export const subscribeUI = (fn) => {
 };
 export function setUI(patch) {
   ui = { ...ui, ...(typeof patch === 'function' ? patch(ui) : patch) };
+  if (HOUSE_VIEWS.includes(ui.view)) lastHouseView = ui.view;
   for (const f of subs) f();
 }
 
@@ -78,7 +113,7 @@ function routeFromHash() {
 
 export function go(target) {
   const r = routeOf(target);
-  const view = r.view;
+  const view = ALIAS[target] ? target : r.view;
   setUI(r);
   try {
     if (location.hash !== '#' + view) history.replaceState(null, '', '#' + view);
@@ -135,6 +170,14 @@ export function setInstallFilter(v) {
     localStorage.setItem(IF_KEY, f);
   } catch {}
   setUI({ installFilter: f });
+}
+
+export function setHudCompact(part, on) {
+  const next = { kpiCompact: ui.kpiCompact, tlCompact: ui.tlCompact, [part === 'kpi' ? 'kpiCompact' : 'tlCompact']: !!on };
+  try {
+    localStorage.setItem(HUD_KEY, JSON.stringify({ kpi: next.kpiCompact, tl: next.tlCompact }));
+  } catch {}
+  setUI(next);
 }
 
 export function setShowPeople(on) {

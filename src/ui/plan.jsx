@@ -302,6 +302,75 @@ function nextFloorName(floors, above) {
 }
 
 // =====================================================================
+// the drawing tools, sorted into five groups; a group unfolds its tools in a second row
+const TOOL_DEFS = {
+  wall: { icon: 'wall', label: 'Wand' },
+  room: { icon: 'room', label: 'Raum' },
+  roomPoly: { icon: 'edit', title: 'Raum als Polygon' },
+  window: { icon: 'window', title: 'Fenster' },
+  door: { icon: 'door', title: 'Tür' },
+  opening: { icon: 'split', title: 'Durchgang' },
+  stairs: { icon: 'stairs', title: 'Treppe' },
+  furniture: { icon: 'sofa', title: 'Möbel' },
+  line: { icon: 'pipe', title: 'Leitung (Kabel, Rohr)' },
+  riser: { icon: 'riser', title: 'Steigleitung (senkrecht)' },
+  fixture: { icon: 'socket', title: 'Anschluss (Steckdose, Schalter, Lampe, Netzwerk, Wasser, Gas)' },
+  measure: { icon: 'ruler', title: 'Maß eintragen (Maßlinie)' },
+  photo: { icon: 'camera', title: 'Foto-Punkt (Fotos mit Ort, vorher/nachher)' },
+  underlay: { icon: 'image', title: 'Plan-Unterlage' },
+};
+const TOOL_GROUPS = [
+  { key: 'bauen', label: 'Bauen', icon: 'wall', tools: ['wall', 'room', 'roomPoly', 'window', 'door', 'opening', 'stairs'] },
+  { key: 'einrichten', label: 'Einrichten', icon: 'sofa', tools: ['furniture'] },
+  { key: 'installation', label: 'Installation', icon: 'pipe', tools: ['line', 'riser', 'fixture'] },
+  { key: 'messen', label: 'Messen & Fotos', icon: 'ruler', tools: ['measure', 'photo'] },
+  { key: 'unterlage', label: 'Unterlage', icon: 'image', tools: ['underlay'] },
+];
+const groupOfTool = (t) => TOOL_GROUPS.find((g) => g.tools.includes(t)) || null;
+
+function PlanToolbar({ tool, ctx, onTool }) {
+  const lastRef = useRef({});
+  const cur = groupOfTool(tool);
+  const [open, setOpen] = useState(cur?.key || null);
+  useEffect(() => {
+    if (cur) {
+      lastRef.current[cur.key] = tool;
+      setOpen(cur.key);
+    }
+  }, [tool]);
+  const avail = (t) => !ctx || (t !== 'underlay' && t !== 'photo');
+  const groups = TOOL_GROUPS.map((g) => ({ ...g, tools: g.tools.filter(avail) })).filter((g) => g.tools.length);
+  const og = groups.find((g) => g.key === open);
+  const pickGroup = (key) => {
+    if (key === 'select') {
+      setOpen(null);
+      return onTool('select');
+    }
+    const g = groups.find((x) => x.key === key);
+    if (!g) return;
+    setOpen(g.key);
+    const t = lastRef.current[g.key];
+    onTool(g.tools.includes(t) ? t : g.tools[0]);
+  };
+  return (
+    <div className="plan-tools" role="toolbar" aria-label="Werkzeuge">
+      <div className="plan-groups">
+        <Seg
+          small
+          value={tool === 'select' ? 'select' : cur?.key}
+          onChange={pickGroup}
+          options={[{ value: 'select', icon: 'cursor', title: 'Auswählen' }, ...groups.map((g) => ({ value: g.key, icon: g.icon, label: g.label, title: `${g.label}: ${g.tools.map((t) => TOOL_DEFS[t].label || TOOL_DEFS[t].title.split(' (')[0]).join(', ')}` }))]}
+        />
+      </div>
+      {og && og.tools.length > 1 ? (
+        <div className="plan-subtools" aria-label={og.label}>
+          <Seg small value={tool} onChange={onTool} options={og.tools.map((t) => ({ value: t, ...TOOL_DEFS[t] }))} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function PlanEditor({ data }) {
   const ui = useUI();
   const floors = sortFloors(Object.values(data.floors));
@@ -1323,38 +1392,19 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
   return (
     <>
       <div className="plan-main">
-        <div className="plan-tools" role="toolbar" aria-label="Werkzeuge">
-          <Seg
-            small
-            value={tool}
-            onChange={(t) => {
-              setTool(t);
-              if (t !== 'select') setSel(null);
-              setChain(null);
-              setMeasure(null);
-              setCalib(null);
-              setCursor(null);
-              if (t === 'line' || t === 'riser' || t === 'fixture') setUI({ planLines: true });
-            }}
-            options={[
-              { value: 'select', icon: 'cursor', title: 'Auswählen' },
-              { value: 'wall', icon: 'wall', label: 'Wand' },
-              { value: 'room', icon: 'room', label: 'Raum' },
-              { value: 'window', icon: 'window', title: 'Fenster' },
-              { value: 'door', icon: 'door', title: 'Tür' },
-              { value: 'opening', icon: 'split', title: 'Durchgang' },
-              { value: 'stairs', icon: 'stairs', title: 'Treppe' },
-              { value: 'furniture', icon: 'sofa', title: 'Möbel' },
-              { value: 'line', icon: 'pipe', title: 'Leitung (Kabel, Rohr)' },
-              { value: 'riser', icon: 'riser', title: 'Steigleitung (senkrecht)' },
-              { value: 'fixture', icon: 'socket', title: 'Anschluss (Steckdose, Schalter, Lampe, Netzwerk, Wasser, Gas)' },
-              { value: 'roomPoly', icon: 'edit', title: 'Raum als Polygon' },
-              { value: 'measure', icon: 'ruler', title: 'Maß eintragen (Maßlinie)' },
-              { value: 'photo', icon: 'camera', title: 'Foto-Punkt (Fotos mit Ort, vorher/nachher)' },
-              { value: 'underlay', icon: 'image', title: 'Plan-Unterlage' },
-            ].filter((o) => !ctx || (o.value !== 'underlay' && o.value !== 'photo'))}
-          />
-        </div>
+        <PlanToolbar
+          tool={tool}
+          ctx={!!ctx}
+          onTool={(t) => {
+            setTool(t);
+            if (t !== 'select') setSel(null);
+            setChain(null);
+            setMeasure(null);
+            setCalib(null);
+            setCursor(null);
+            if (t === 'line' || t === 'riser' || t === 'fixture') setUI({ planLines: true });
+          }}
+        />
         <div className="plan-canvas" ref={boxRef}>
           <div className="plan-quick">
             {showLines && lines.length + points.length > 0 ? <InstallFilter className="plan-instfilter" /> : null}

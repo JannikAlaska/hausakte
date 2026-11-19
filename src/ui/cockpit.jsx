@@ -29,8 +29,7 @@ const runAction = (a) => {
   else if (a.go) go(a.go);
 };
 const showInvoices = () => {
-  setUI({ docTab: 'rechnungen' });
-  go('dokumente');
+  go('rechnungen');
 };
 
 export function CockpitPage({ data }) {
@@ -598,7 +597,7 @@ function House({ floors }) {
 }
 
 // quick to-do: text, project and an optional date
-function TodoComposer({ data, onClose }) {
+export function TodoComposer({ data, onClose }) {
   const today = todayISO();
   const projects = liveProjects(data.projects)
     .filter((p) => !isDone(p))

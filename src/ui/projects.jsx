@@ -9,7 +9,8 @@ import { Meetings } from './meetings.jsx';
 import { ProjectContacts } from './contacts.jsx';
 import { projectContacts } from '../contacts.js';
 import { AiVerdict } from './econ.jsx';
-import { Btn, IconBtn, Field, TextInput, NumInput, Select, DateInput, Pill, Section, Drawer, Sheet, Empty, ConfirmBtn, Seg } from './common.jsx';
+import { Btn, IconBtn, Field, TextInput, NumInput, Select, DateInput, Pill, Section, Drawer, Sheet, Empty, ConfirmBtn, Seg, ArchiveSection, useEmptyAtOpen, MoreFields } from './common.jsx';
+import { LinkedWith } from './links.jsx';
 import { AiRunner, useAiAvailable, AiUnavailable } from './ai-ui.jsx';
 import { useUI, setUI, openDrawer, closeDrawer, toast, go } from './state.js';
 import { DocList, UploadButton } from './documents.jsx';
@@ -102,28 +103,36 @@ function ProjectList({ data }) {
     { key: 'laufend', title: 'Laufend', items: all.filter((p) => ['umsetzung', 'beauftragt'].includes(p.status)) },
     { key: 'geplant', title: 'In Planung', items: all.filter((p) => ['idee', 'planung', 'angebote'].includes(p.status)) },
     { key: 'pausiert', title: 'Pausiert', items: all.filter((p) => p.status === 'pausiert') },
+  ];
+  // finished and deactivated projects are kept, but folded away
+  const archive = [
     { key: 'fertig', title: 'Abgeschlossen', items: all.filter(isDone) },
     { key: 'aus', title: 'Deaktiviert', items: off, hint: 'Nicht im Zeitplan, Budget und 3D-Modell. Öffnen zum Reaktivieren oder endgültigen Löschen.' },
   ];
+  const group = (g) =>
+    g.items.length ? (
+      <div key={g.key}>
+        <div className="group-title">
+          {g.title} <span className="tab-count">{g.items.length}</span>
+        </div>
+        {g.hint ? <p className="small muted" style={{ margin: '-4px 0 8px' }}>{g.hint}</p> : null}
+        <div className="plist">
+          {g.items
+            .sort((a, b) => ((a.start || '9') < (b.start || '9') ? -1 : 1))
+            .map((p) => (
+              <ProjectRow key={p.id} p={p} data={data} />
+            ))}
+        </div>
+      </div>
+    ) : null;
+  const nArch = archive.reduce((n, g) => n + g.items.length, 0);
   return (
     <div>
-      {groups.map((g) =>
-        g.items.length ? (
-          <div key={g.key}>
-            <div className="group-title">
-              {g.title} <span className="tab-count">{g.items.length}</span>
-            </div>
-            {g.hint ? <p className="small muted" style={{ margin: '-4px 0 8px' }}>{g.hint}</p> : null}
-            <div className="plist">
-              {g.items
-                .sort((a, b) => ((a.start || '9') < (b.start || '9') ? -1 : 1))
-                .map((p) => (
-                  <ProjectRow key={p.id} p={p} data={data} />
-                ))}
-            </div>
-          </div>
-        ) : null,
-      )}
+      {groups.map(group)}
+      {!groups.some((g) => g.items.length) && nArch ? <p className="small muted">Alle Projekte sind abgeschlossen oder deaktiviert.</p> : null}
+      <ArchiveSection count={nArch} hint={[archive[0].items.length ? `${archive[0].items.length} abgeschlossen` : '', off.length ? `${off.length} deaktiviert` : ''].filter(Boolean).join(' · ')}>
+        {archive.map(group)}
+      </ArchiveSection>
     </div>
   );
 }
@@ -360,23 +369,41 @@ function Gantt({ data }) {
 }
 
 // ================= Drawer =================
+// five tabs; each holds the parts it groups (older links to a part open its tab and scroll to it)
 const P_TABS = [
   { key: 'uebersicht', label: 'Übersicht', icon: 'info' },
-  { key: 'zeitplan', label: 'Zeitplan', icon: 'calendar' },
-  { key: 'kosten', label: 'Kosten', icon: 'euro' },
-  { key: 'foerderung', label: 'Förderung', icon: 'flag' },
-  { key: 'aufgaben', label: 'Aufgaben', icon: 'checkCircle' },
-  { key: 'besprechungen', label: 'Besprechungen', icon: 'mic' },
-  { key: 'ansprechpartner', label: 'Ansprechpartner', icon: 'tag' },
-  { key: 'fotos', label: 'Fotos', icon: 'camera' },
-  { key: 'dokumente', label: 'Dokumente', icon: 'file' },
+  { key: 'plan', label: 'Plan', icon: 'calendar', parts: ['zeitplan', 'aufgaben'] },
+  { key: 'geld', label: 'Geld', icon: 'euro', parts: ['kosten', 'foerderung'] },
+  { key: 'austausch', label: 'Austausch', icon: 'mic', parts: ['besprechungen', 'ansprechpartner'] },
+  { key: 'ablage', label: 'Ablage', icon: 'folder', parts: ['fotos', 'dokumente'] },
 ];
+const tabOfPart = (k) => (P_TABS.some((t) => t.key === k) ? k : P_TABS.find((t) => t.parts?.includes(k))?.key || 'uebersicht');
+
+// one part of a merged tab, with an anchor to jump to
+function Part({ k, title, icon, aside, children }) {
+  return (
+    <div className="p-part" id={'pp-' + k}>
+      <div className="p-part-head">
+        <Icon name={icon} size={16} />
+        <h3>{title}</h3>
+        {aside ? <div className="p-part-aside">{aside}</div> : null}
+      </div>
+      {children}
+    </div>
+  );
+}
 
 export function ProjectDrawer({ data, drawer }) {
   const p = data.projects[drawer.id];
   const [autoRun, setAutoRun] = useState(0);
-  const [tab, setTab] = useState(drawer.tab || 'uebersicht');
-  useEffect(() => setTab(drawer.tab || 'uebersicht'), [drawer.id]);
+  const [tab, setTabState] = useState(tabOfPart(drawer.tab || 'uebersicht'));
+  // open a tab, or the tab of a part and scroll to that part
+  const setTab = (k) => {
+    setTabState(tabOfPart(k));
+    if (!P_TABS.some((t) => t.key === k)) setTimeout(() => document.getElementById('pp-' + k)?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 60);
+  };
+  useEffect(() => setTab(drawer.tab || 'uebersicht'), [drawer.id, drawer.tab]);
+  const emptyAtOpen = useEmptyAtOpen(drawer.id, { hints: p?.hints?.trim() });
   if (!p)
     return (
       <Drawer title="Projekt nicht gefunden" onClose={closeDrawer}>
@@ -397,8 +424,8 @@ export function ProjectDrawer({ data, drawer }) {
   };
   const tabs = P_TABS.map((t) => ({
     ...t,
-    count: t.key === 'zeitplan' ? (p.milestones || []).length || null : t.key === 'foerderung' ? (p.funding || []).length || null : t.key === 'aufgaben' ? cons.filter((c) => !c.done).length || null : t.key === 'dokumente' ? docs.filter((d) => d.type !== 'foto').length || null : t.key === 'fotos' ? docs.filter((d) => d.type === 'foto').length || null : t.key === 'besprechungen' ? (p.meetings || []).length || null : t.key === 'ansprechpartner' ? projectContacts(p, data).length || null : null,
-    warn: t.key === 'zeitplan' && warns.some((w) => w.kind === 'dependency' || w.kind === 'dates' || w.kind === 'overdue'),
+    count: t.key === 'plan' ? cons.filter((c) => !c.done).length || null : t.key === 'geld' ? (p.funding || []).length + (p.costs || []).length || null : t.key === 'austausch' ? (p.meetings || []).length + projectContacts(p, data).length || null : t.key === 'ablage' ? docs.length || null : null,
+    warn: (t.key === 'plan' && warns.some((w) => w.kind === 'dependency' || w.kind === 'dates' || w.kind === 'overdue')) || (t.key === 'geld' && warns.some((w) => w.kind === 'funding')),
   }));
   const nextMs = [...(p.milestones || [])].filter((m) => !m.done && isISO(m.date)).sort((a, b) => (a.date < b.date ? -1 : 1))[0];
   return (
@@ -520,19 +547,26 @@ export function ProjectDrawer({ data, drawer }) {
             <ComponentLinks p={p} data={data} set={set} />
           </Section>
 
-          <Section title="Hinweise & Notizen">
-            <Field label="Hinweise" hint="Wird oben hervorgehoben – z. B. Abhängigkeiten, Fristen, Auflagen">
-              <TextInput id={'p-hints-' + p.id} multiline rows={3} value={p.hints || ''} onChange={(v) => set({ hints: v })} placeholder="z. B. Erst nach Zählerschrank-Tausch · Antrag KfW vor Auftrag · Gerüst mit Dach teilen" />
-            </Field>
+          <Section title="Notizen & Hinweise">
             <Field label="Notizen">
               <TextInput id={'p-notes-' + p.id} multiline rows={5} value={p.notes} onChange={(v) => set({ notes: v })} placeholder="Ziele, Wünsche, Gespräche mit Handwerkern …" />
             </Field>
+            {(() => {
+              const hints = (
+                <Field label="Hinweise" hint="Wird oben hervorgehoben – z. B. Abhängigkeiten, Fristen, Auflagen">
+                  <TextInput id={'p-hints-' + p.id} multiline rows={3} value={p.hints || ''} onChange={(v) => set({ hints: v })} placeholder="z. B. Erst nach Zählerschrank-Tausch · Antrag KfW vor Auftrag · Gerüst mit Dach teilen" />
+                </Field>
+              );
+              return emptyAtOpen.has('hints') ? <MoreFields items={[{ k: 'hints', label: 'Hinweise (oben hervorgehoben)', el: hints }]} grid="stack" /> : hints;
+            })()}
           </Section>
+
+          <LinkedWith data={data} refTo={{ type: 'project', id: p.id }} skip={['components']} />
         </>
       ) : null}
 
-      {tab === 'zeitplan' ? (
-        <>
+      {tab === 'plan' ? (
+        <Part k="zeitplan" title="Zeitplan" icon="calendar">
           {warns.filter((w) => ['dependency', 'dates', 'overdue'].includes(w.kind)).length ? (
             <div className="callout callout-warn">
               <Icon name="alert" size={16} />
@@ -570,11 +604,11 @@ export function ProjectDrawer({ data, drawer }) {
             onSave={(rec) => set({ ai: { ...(p.ai || {}), timing: rec } })}
             render={(r) => <TimingResult r={r} p={p} data={data} set={set} />}
           />
-        </>
+        </Part>
       ) : null}
 
-      {tab === 'kosten' ? (
-        <>
+      {tab === 'geld' ? (
+        <Part k="kosten" title="Kosten & Rechnungen" icon="euro">
           <div className="sum-strip">
             <div>
               <span>Kosten</span>
@@ -610,11 +644,11 @@ export function ProjectDrawer({ data, drawer }) {
             onSave={(rec) => set({ ai: { ...(p.ai || {}), costs: rec } })}
             render={(r) => <CostsResult r={r} p={p} />}
           />
-        </>
+        </Part>
       ) : null}
 
-      {tab === 'foerderung' ? (
-        <>
+      {tab === 'geld' ? (
+        <Part k="foerderung" title="Förderung & Anträge" icon="flag">
           {statusOf(p.status).step < 3 ? (
             <div className="callout callout-info">
               <Icon name="info" size={16} />
@@ -650,11 +684,11 @@ export function ProjectDrawer({ data, drawer }) {
             cta="Förderung prüfen"
             autoRun={autoRun}
           />
-        </>
+        </Part>
       ) : null}
 
-      {tab === 'aufgaben' ? (
-        <>
+      {tab === 'plan' ? (
+        <Part k="aufgaben" title="Aufgaben & Rahmenbedingungen" icon="checkCircle">
           <Section title="Rahmenbedingungen & Aufgaben" aside={`${cons.filter((c) => c.done).length}/${cons.length} erledigt`}>
             <Constraints p={p} set={set} data={data} />
           </Section>
@@ -667,19 +701,31 @@ export function ProjectDrawer({ data, drawer }) {
             onSave={(rec) => set({ ai: { ...(p.ai || {}), risks: rec } })}
             render={(r) => <RisksResult r={r} p={p} />}
           />
-        </>
+        </Part>
       ) : null}
 
-      {tab === 'besprechungen' ? <Meetings p={p} data={data} /> : null}
+      {tab === 'austausch' ? (
+        <Part k="besprechungen" title="Besprechungen" icon="mic">
+          <Meetings p={p} data={data} />
+        </Part>
+      ) : null}
 
-      {tab === 'ansprechpartner' ? <ProjectContacts p={p} data={data} /> : null}
+      {tab === 'austausch' ? (
+        <Part k="ansprechpartner" title="Ansprechpartner" icon="tag">
+          <ProjectContacts p={p} data={data} />
+        </Part>
+      ) : null}
 
-      {tab === 'fotos' ? <ProjectPhotos p={p} data={data} /> : null}
+      {tab === 'ablage' ? (
+        <Part k="fotos" title="Fotos & Bautagebuch" icon="camera">
+          <ProjectPhotos p={p} data={data} />
+        </Part>
+      ) : null}
 
-      {tab === 'dokumente' ? (
-        <Section title="Dokumente" aside={<UploadButton projectId={p.id} small />}>
+      {tab === 'ablage' ? (
+        <Part k="dokumente" title="Dokumente" icon="file" aside={<UploadButton projectId={p.id} small />}>
           <DocList data={data} filter={(d) => d.projectId === p.id && d.type !== 'foto'} projectId={p.id} compact />
-        </Section>
+        </Part>
       ) : null}
     </Drawer>
   );
@@ -886,13 +932,17 @@ function Constraints({ p, set, data }) {
   const list = p.constraints || [];
   const upd = (id, patch) => set({ constraints: list.map((c) => (c.id === id ? { ...c, ...patch } : c)) });
   const sugg = (CONSTRAINT_SUGGEST[p.kind] || []).filter((s) => !list.some((c) => c.text === s));
-  return (
-    <>
-      <div className="rows">
-        {list.map((c) => (
+  // ticked items stay in place for now and are folded away next time
+  const [fresh, setFresh] = useState(() => new Set());
+  const isOld = (c) => c.done && !fresh.has(c.id);
+  const tick = (c, done) => {
+    if (done) setFresh((f) => new Set(f).add(c.id));
+    upd(c.id, { done });
+  };
+  const row = (c) => (
           <div key={c.id} className="ms-block">
             <div className={`row row-check ${c.done ? 'is-done' : ''}`}>
-              <input type="checkbox" checked={!!c.done} onChange={(e) => upd(c.id, { done: e.target.checked })} aria-label="Erledigt" />
+              <input type="checkbox" checked={!!c.done} onChange={(e) => tick(c, e.target.checked)} aria-label="Erledigt" />
               <input className="input" value={c.text} onChange={(e) => upd(c.id, { text: e.target.value })} aria-label="Rahmenbedingung" />
               <select className="input select" style={{ width: 130 }} value={c.kind} onChange={(e) => upd(c.id, { kind: e.target.value })} aria-label="Art">
                 {CONSTRAINT_KINDS.map((k) => (
@@ -921,8 +971,14 @@ function Constraints({ p, set, data }) {
               </div>
             ) : null}
           </div>
-        ))}
-      </div>
+  );
+  const done = list.filter(isOld);
+  return (
+    <>
+      <div className="rows">{list.filter((c) => !isOld(c)).map(row)}</div>
+      <ArchiveSection title="Erledigt" count={done.length} hint="abgehakte Aufgaben">
+        <div className="rows">{done.map(row)}</div>
+      </ArchiveSection>
       <div className="chips">
         <button type="button" className="chip chip-add" onClick={() => set({ constraints: [...list, { id: uid('b'), text: '', kind: 'organisatorisch', done: false }] })}>
           <Icon name="plus" size={13} /> Eigene

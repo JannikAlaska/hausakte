@@ -1,9 +1,8 @@
 import { Icon } from './icons.jsx';
-import { Btn, IconBtn, Field, TextInput, NumInput, Select, DateInput, Toggle, Pill, Section, Drawer, Sheet, Empty, ConfirmBtn, Seg, Meter, KV } from './common.jsx';
+import { Btn, IconBtn, Field, TextInput, NumInput, Select, DateInput, Toggle, Pill, Section, Drawer, Sheet, Empty, ConfirmBtn, Seg, Meter, KV, useEmptyAtOpen, MoreFields, splitFields } from './common.jsx';
+import { LinkedWith } from './links.jsx';
 import { AiRunner, useAiAvailable, AiUnavailable } from './ai-ui.jsx';
 import { setUI, openDrawer, closeDrawer, toast, go, showFloor, useUI } from './state.js';
-import { HeatCheck } from './energy.jsx';
-import { SolarCheck } from './solar.jsx';
 import { UploadButton, uploadFiles } from './documents.jsx';
 import { GEWERKE, gewerk, CONDITION, ROOM_TYPES, roomType, BUNDESLAENDER, PROJECT_KINDS, projectKind, energyClass, ENERGY_CLASSES } from '../catalog.js';
 import { buildingStats, componentWear, roomArea, sortFloors, floorStats } from '../metrics.js';
@@ -20,13 +19,14 @@ const CONSTRUCTIONS = ['Massivbau (Mauerwerk)', 'Stahlbeton', 'Holzständerbau',
 
 export function BuildingSheet({ data }) {
   const ui = useUI();
-  const [tab, setTabState] = useState(ui.buildingTab || 'bauteile');
+  const TABS = ['bauteile', 'stamm', 'raeume', 'kennwerte'];
+  const [tab, setTabState] = useState(TABS.includes(ui.buildingTab) ? ui.buildingTab : 'bauteile');
   const setTab = (t) => {
     setTabState(t);
     setUI({ buildingTab: t });
   };
   useEffect(() => {
-    if (ui.buildingTab && ui.buildingTab !== tab) setTabState(ui.buildingTab);
+    if (TABS.includes(ui.buildingTab) && ui.buildingTab !== tab) setTabState(ui.buildingTab);
   }, [ui.buildingTab]);
   const comps = Object.values(data.components);
   const rooms = Object.values(data.floors).reduce((s, f) => s + (f.rooms || []).length, 0);
@@ -41,13 +41,11 @@ export function BuildingSheet({ data }) {
         { key: 'stamm', label: 'Stammdaten', icon: 'home' },
         { key: 'raeume', label: 'Räume', icon: 'room', count: rooms },
         { key: 'kennwerte', label: 'Kennwerte', icon: 'ruler' },
-        { key: 'energie', label: 'Heizlast & Wärmepumpe', icon: 'flame' },
-        { key: 'sonne', label: 'Sonne & PV', icon: 'sun' },
       ]}
       tab={tab}
       onTab={setTab}
     >
-      {tab === 'stamm' ? <MasterData data={data} /> : tab === 'raeume' ? <RoomsTable data={data} /> : tab === 'kennwerte' ? <Metrics data={data} /> : tab === 'energie' ? <HeatCheck data={data} /> : tab === 'sonne' ? <SolarCheck data={data} /> : <Components data={data} />}
+      {tab === 'stamm' ? <MasterData data={data} /> : tab === 'raeume' ? <RoomsTable data={data} /> : tab === 'kennwerte' ? <Metrics data={data} /> : <Components data={data} />}
     </Sheet>
   );
 }
@@ -59,6 +57,19 @@ function MasterData({ data }) {
   const setModel = (patch) => updateHouse((x) => ({ ...x, model: { ...x.model, ...patch } }));
   const st = buildingStats(h, Object.values(data.floors));
   const missing = [!h.state && 'Bundesland', !h.zip && 'PLZ', !h.buildYear && 'Baujahr', !h.purchaseDate && 'Kaufdatum'].filter(Boolean);
+  const emptyAtOpen = useEmptyAtOpen('house', {
+    construction: h.construction,
+    units: h.units,
+    persons: h.persons,
+    plotArea: h.plotArea,
+    ecCls: h.energyCert?.cls,
+    ecValue: h.energyCert?.value,
+    ecValid: h.energyCert?.validUntil,
+    income: h.householdIncome,
+    facadeColor: h.model?.facadeColor,
+    roofColor: h.model?.roofColor,
+    plot: h.model?.plot && Object.values(h.model.plot).some((v) => v) ? 1 : null,
+  });
   return (
     <div className="stack">
       {missing.length ? (
@@ -99,22 +110,27 @@ function MasterData({ data }) {
           <Field label="Gebäudetyp">
             <Select id="h-type" value={h.houseType} onChange={(v) => set({ houseType: v })} options={HOUSE_TYPES.map((b) => ({ value: b, label: b }))} />
           </Field>
-          <Field label="Bauweise">
-            <Select id="h-constr" value={h.construction} placeholder="Unbekannt" onChange={(v) => set({ construction: v })} options={CONSTRUCTIONS.map((b) => ({ value: b, label: b }))} />
-          </Field>
-          <Field label="Wohneinheiten">
-            <NumInput id="h-units" value={h.units} onChange={(v) => set({ units: v })} digits={0} />
-          </Field>
-          <Field label="Personen im Haushalt">
-            <NumInput id="h-persons" value={h.persons} onChange={(v) => set({ persons: v })} digits={0} />
-          </Field>
-          <Field label="Grundstücksfläche">
-            <NumInput id="h-plot" value={h.plotArea} onChange={(v) => set({ plotArea: v })} unit="m²" digits={0} />
-          </Field>
           <Field label="Wohnfläche" hint={`Aus dem Grundriss: ${fmtArea(st.livingComputed)}`}>
             <NumInput id="h-living" value={h.livingAreaOverride} placeholder={fmtFixed(st.livingComputed, 1)} onChange={(v) => set({ livingAreaOverride: v })} unit="m²" digits={1} />
           </Field>
         </div>
+        {(() => {
+          const { shown, more } = splitFields(
+            [
+              { k: 'construction', label: 'Bauweise', el: <Field label="Bauweise"><Select id="h-constr" value={h.construction} placeholder="Unbekannt" onChange={(v) => set({ construction: v })} options={CONSTRUCTIONS.map((b) => ({ value: b, label: b }))} /></Field> },
+              { k: 'units', label: 'Wohneinheiten', el: <Field label="Wohneinheiten"><NumInput id="h-units" value={h.units} onChange={(v) => set({ units: v })} digits={0} /></Field> },
+              { k: 'persons', label: 'Personen', el: <Field label="Personen im Haushalt"><NumInput id="h-persons" value={h.persons} onChange={(v) => set({ persons: v })} digits={0} /></Field> },
+              { k: 'plotArea', label: 'Grundstücksfläche', el: <Field label="Grundstücksfläche"><NumInput id="h-plot" value={h.plotArea} onChange={(v) => set({ plotArea: v })} unit="m²" digits={0} /></Field> },
+            ],
+            emptyAtOpen,
+          );
+          return (
+            <>
+              {shown.length ? <div className="grid3" style={{ marginTop: 12 }}>{shown}</div> : null}
+              <MoreFields items={more} grid="grid3" />
+            </>
+          );
+        })()}
         <div className="hstack" style={{ marginTop: 12, gap: 20 }}>
           <Toggle id="h-self" checked={h.selfUse !== false} onChange={(v) => set({ selfUse: v })} label="Selbst bewohnt" />
           <Toggle id="h-heritage" checked={h.heritage} onChange={(v) => set({ heritage: v })} label="Denkmalschutz" />
@@ -125,48 +141,64 @@ function MasterData({ data }) {
         <div className="panel-head">
           <h3>Energie & Förderung</h3>
         </div>
-        <div className="grid4">
-          <Field label="Energieausweis">
-            <Select id="h-ec-kind" value={h.energyCert?.kind} placeholder="Keiner" onChange={(v) => set({ energyCert: { ...h.energyCert, kind: v } })} options={['Bedarfsausweis', 'Verbrauchsausweis'].map((b) => ({ value: b, label: b }))} />
-          </Field>
-          <Field label="Klasse">
-            <Select id="h-ec-cls" value={h.energyCert?.cls} placeholder="–" onChange={(v) => set({ energyCert: { ...h.energyCert, cls: v } })} options={ENERGY_CLASSES.map((e) => ({ value: e.c, label: e.c }))} />
-          </Field>
-          <Field label="Kennwert">
-            <NumInput id="h-ec-val" value={h.energyCert?.value} onChange={(v) => set({ energyCert: { ...h.energyCert, value: v } })} unit="kWh/m²a" digits={0} />
-          </Field>
-          <Field label="Gültig bis">
-            <DateInput id="h-ec-valid" value={h.energyCert?.validUntil} onChange={(v) => set({ energyCert: { ...h.energyCert, validUntil: v } })} />
-          </Field>
-          <Field label="Zu versteuerndes Haushaltseinkommen (optional)" hint="Nur für die KI-Prüfung des Einkommensbonus" className="field-wide">
-            <NumInput id="h-income" value={h.householdIncome} onChange={(v) => set({ householdIncome: v })} unit="€" digits={0} />
-          </Field>
-        </div>
+        {(() => {
+          const { shown, more } = splitFields(
+            [
+              { k: 'ecKind', core: true, el: <Field label="Energieausweis"><Select id="h-ec-kind" value={h.energyCert?.kind} placeholder="Keiner" onChange={(v) => set({ energyCert: { ...h.energyCert, kind: v } })} options={['Bedarfsausweis', 'Verbrauchsausweis'].map((b) => ({ value: b, label: b }))} /></Field> },
+              { k: 'ecCls', label: 'Klasse', el: <Field label="Klasse"><Select id="h-ec-cls" value={h.energyCert?.cls} placeholder="–" onChange={(v) => set({ energyCert: { ...h.energyCert, cls: v } })} options={ENERGY_CLASSES.map((e) => ({ value: e.c, label: e.c }))} /></Field> },
+              { k: 'ecValue', label: 'Kennwert', el: <Field label="Kennwert"><NumInput id="h-ec-val" value={h.energyCert?.value} onChange={(v) => set({ energyCert: { ...h.energyCert, value: v } })} unit="kWh/m²a" digits={0} /></Field> },
+              { k: 'ecValid', label: 'Gültig bis', el: <Field label="Gültig bis"><DateInput id="h-ec-valid" value={h.energyCert?.validUntil} onChange={(v) => set({ energyCert: { ...h.energyCert, validUntil: v } })} /></Field> },
+              {
+                k: 'income',
+                label: 'Haushaltseinkommen',
+                el: (
+                  <Field label="Zu versteuerndes Haushaltseinkommen (optional)" hint="Nur für die KI-Prüfung des Einkommensbonus" className="field-wide">
+                    <NumInput id="h-income" value={h.householdIncome} onChange={(v) => set({ householdIncome: v })} unit="€" digits={0} />
+                  </Field>
+                ),
+              },
+            ],
+            emptyAtOpen,
+          );
+          return (
+            <>
+              <div className="grid4">{shown}</div>
+              <MoreFields items={more} grid="grid4" />
+            </>
+          );
+        })()}
       </div>
 
       <div className="panel">
         <div className="panel-head">
           <h3>3D-Modell & Lage</h3>
         </div>
-        <div className="grid4">
-          <Field label="Nordrichtung" hint="Drehung des Plans in Grad (0 = oben ist Norden)">
-            <NumInput id="h-north" value={h.northAngle} onChange={(v) => set({ northAngle: v ?? 0 })} unit="°" digits={0} />
-          </Field>
-          <Field label="Geländehöhe" hint="Relativ zum EG-Fußboden">
-            <NumInput id="h-ground" value={h.model?.groundLevel} onChange={(v) => setModel({ groundLevel: v ?? 0 })} unit="m" digits={2} />
-          </Field>
-          <Field label="Fassadenfarbe">
-            <input id="h-facade" className="input" type="color" value={h.model?.facadeColor || '#f1efe9'} onChange={(e) => setModel({ facadeColor: e.target.value })} />
-          </Field>
-          <Field label="Dachfarbe">
-            <input id="h-roofcol" className="input" type="color" value={h.model?.roofColor || '#6b5f5a'} onChange={(e) => setModel({ roofColor: e.target.value })} />
-          </Field>
-          {['x', 'y', 'w', 'd'].map((k) => (
-            <Field key={k} label={{ x: 'Grundstück links', y: 'Grundstück oben', w: 'Grundstücksbreite', d: 'Grundstückstiefe' }[k]}>
-              <NumInput id={'h-plot-' + k} value={h.model?.plot?.[k]} onChange={(v) => setModel({ plot: { ...(h.model?.plot || {}), [k]: v ?? 0 } })} unit="m" digits={1} />
-            </Field>
-          ))}
-        </div>
+        {(() => {
+          const { shown, more } = splitFields(
+            [
+              { k: 'north', core: true, el: <Field label="Nordrichtung" hint="Drehung des Plans in Grad (0 = oben ist Norden)"><NumInput id="h-north" value={h.northAngle} onChange={(v) => set({ northAngle: v ?? 0 })} unit="°" digits={0} /></Field> },
+              { k: 'ground', core: true, el: <Field label="Geländehöhe" hint="Relativ zum EG-Fußboden"><NumInput id="h-ground" value={h.model?.groundLevel} onChange={(v) => setModel({ groundLevel: v ?? 0 })} unit="m" digits={2} /></Field> },
+              { k: 'facadeColor', label: 'Fassadenfarbe', el: <Field label="Fassadenfarbe"><input id="h-facade" className="input" type="color" value={h.model?.facadeColor || '#f1efe9'} onChange={(e) => setModel({ facadeColor: e.target.value })} /></Field> },
+              { k: 'roofColor', label: 'Dachfarbe', el: <Field label="Dachfarbe"><input id="h-roofcol" className="input" type="color" value={h.model?.roofColor || '#6b5f5a'} onChange={(e) => setModel({ roofColor: e.target.value })} /></Field> },
+              ...['x', 'y', 'w', 'd'].map((k) => ({
+                k: 'plot',
+                label: k === 'x' ? 'Grundstück (Lage & Maße)' : '',
+                el: (
+                  <Field key={k} label={{ x: 'Grundstück links', y: 'Grundstück oben', w: 'Grundstücksbreite', d: 'Grundstückstiefe' }[k]}>
+                    <NumInput id={'h-plot-' + k} value={h.model?.plot?.[k]} onChange={(v) => setModel({ plot: { ...(h.model?.plot || {}), [k]: v ?? 0 } })} unit="m" digits={1} />
+                  </Field>
+                ),
+              })).map((e, i) => ({ ...e, k: e.k + i })),
+            ],
+            new Set([...emptyAtOpen].flatMap((k) => (k === 'plot' ? ['plot0', 'plot1', 'plot2', 'plot3'] : [k]))),
+          );
+          return (
+            <>
+              <div className="grid4">{shown}</div>
+              <MoreFields items={more.map((e) => ({ ...e, label: e.label }))} grid="grid4" />
+            </>
+          );
+        })()}
       </div>
       <div className="panel">
         <Field label="Notizen zum Haus">
@@ -371,6 +403,7 @@ export function ComponentDrawer({ data, drawer }) {
   const [aiErr, setAiErr] = useState(null);
   const avail = useAiAvailable();
   const photoRef = useRef(null);
+  const emptyAtOpen = useEmptyAtOpen(drawer.id, { material: c?.material, maker: c?.maker, model: c?.model, qty: c?.qty, unit: c?.unit, uValue: c?.uValue });
   if (!c)
     return (
       <Drawer title="Bauteil nicht gefunden" onClose={closeDrawer}>
@@ -383,7 +416,6 @@ export function ComponentDrawer({ data, drawer }) {
   const floors = sortFloors(Object.values(data.floors));
   const floor = c.floorId ? data.floors[c.floorId] : null;
   const photos = Object.values(data.documents).filter((d) => d.componentId === c.id);
-  const projects = Object.values(data.projects).filter((p) => (p.components || []).includes(c.id));
   const readPhoto = async (file) => {
     setAiBusy(true);
     setAiErr(null);
@@ -421,31 +453,72 @@ export function ComponentDrawer({ data, drawer }) {
       }
     >
       <Section n={1} title="Bauteil">
-        <div className="grid2">
-          <Field label="Gewerk">
-            <Select id={'c-gw-' + c.id} value={c.gewerk} onChange={(v) => set({ gewerk: v })} options={GEWERKE.map((x) => ({ value: x.key, label: x.name }))} />
-          </Field>
-          <Field label="Bezeichnung">
-            <input id={'c-name-' + c.id} className="input" list={'cat-' + c.id} value={c.name} onChange={(e) => {
-              const it = g.items.find((i) => i.name === e.target.value);
-              set({ name: e.target.value, ...(it && !c.life ? { life: it.life } : {}) });
-            }} />
-            <datalist id={'cat-' + c.id}>
-              {g.items.map((it) => (
-                <option key={it.name} value={it.name} />
-              ))}
-            </datalist>
-          </Field>
-          <Field label="Material / Typ" className="field-wide">
-            <TextInput id={'c-mat-' + c.id} value={c.material} onChange={(v) => set({ material: v })} placeholder="z. B. Betondachsteine, Gas-Brennwert 20 kW" />
-          </Field>
-          <Field label="Hersteller">
-            <TextInput id={'c-maker-' + c.id} value={c.maker} onChange={(v) => set({ maker: v })} />
-          </Field>
-          <Field label="Modell">
-            <TextInput id={'c-model-' + c.id} value={c.model} onChange={(v) => set({ model: v })} />
-          </Field>
-        </div>
+        {(() => {
+          const { shown, more } = splitFields(
+            [
+              {
+                k: 'gewerk',
+                core: true,
+                el: (
+                  <Field label="Gewerk">
+                    <Select id={'c-gw-' + c.id} value={c.gewerk} onChange={(v) => set({ gewerk: v })} options={GEWERKE.map((x) => ({ value: x.key, label: x.name }))} />
+                  </Field>
+                ),
+              },
+              {
+                k: 'name',
+                core: true,
+                el: (
+                  <Field label="Bezeichnung">
+                    <input id={'c-name-' + c.id} className="input" list={'cat-' + c.id} value={c.name} onChange={(e) => {
+                      const it = g.items.find((i) => i.name === e.target.value);
+                      set({ name: e.target.value, ...(it && !c.life ? { life: it.life } : {}) });
+                    }} />
+                    <datalist id={'cat-' + c.id}>
+                      {g.items.map((it) => (
+                        <option key={it.name} value={it.name} />
+                      ))}
+                    </datalist>
+                  </Field>
+                ),
+              },
+              {
+                k: 'material',
+                label: 'Material / Typ',
+                el: (
+                  <Field label="Material / Typ" className="field-wide">
+                    <TextInput id={'c-mat-' + c.id} value={c.material} onChange={(v) => set({ material: v })} placeholder="z. B. Betondachsteine, Gas-Brennwert 20 kW" />
+                  </Field>
+                ),
+              },
+              {
+                k: 'maker',
+                label: 'Hersteller',
+                el: (
+                  <Field label="Hersteller">
+                    <TextInput id={'c-maker-' + c.id} value={c.maker} onChange={(v) => set({ maker: v })} />
+                  </Field>
+                ),
+              },
+              {
+                k: 'model',
+                label: 'Modell',
+                el: (
+                  <Field label="Modell">
+                    <TextInput id={'c-model-' + c.id} value={c.model} onChange={(v) => set({ model: v })} />
+                  </Field>
+                ),
+              },
+            ],
+            emptyAtOpen,
+          );
+          return (
+            <>
+              <div className="grid2">{shown}</div>
+              <MoreFields items={more} />
+            </>
+          );
+        })()}
       </Section>
 
       <Section n={2} title="Alter & Zustand">
@@ -471,24 +544,65 @@ export function ComponentDrawer({ data, drawer }) {
         {c.condition ? <span className="small muted">{CONDITION.find((k) => k.v === c.condition)?.name}</span> : null}
       </Section>
 
-      <Section n={3} title="Maße, Kennwerte, Ort">
-        <div className="grid3">
-          <Field label="Menge">
-            <NumInput id={'c-qty-' + c.id} value={c.qty} onChange={(v) => set({ qty: v })} digits={2} />
-          </Field>
-          <Field label="Einheit">
-            <Select id={'c-unit-' + c.id} value={c.unit} placeholder="–" onChange={(v) => set({ unit: v })} options={['m²', 'm', 'Stk', 'kW', 'kWp', 'kWh', 'l'].map((u) => ({ value: u, label: u }))} />
-          </Field>
-          <Field label="U-Wert">
-            <NumInput id={'c-u-' + c.id} value={c.uValue} onChange={(v) => set({ uValue: v })} unit="W/m²K" digits={2} />
-          </Field>
-          <Field label="Etage">
-            <Select id={'c-floor-' + c.id} value={c.floorId} placeholder="Ganzes Haus" onChange={(v) => set({ floorId: v || null, roomId: null })} options={floors.map((f) => ({ value: f.id, label: f.name }))} />
-          </Field>
-          <Field label="Raum" className="field-wide" >
-            <Select id={'c-room-' + c.id} value={c.roomId} placeholder="–" onChange={(v) => set({ roomId: v || null })} options={(floor?.rooms || []).map((r) => ({ value: r.id, label: r.name }))} disabled={!floor} />
-          </Field>
-        </div>
+      <Section n={3} title="Ort, Maße, Kennwerte">
+        {(() => {
+          const { shown, more } = splitFields(
+            [
+              {
+                k: 'floor',
+                core: true,
+                el: (
+                  <Field label="Etage">
+                    <Select id={'c-floor-' + c.id} value={c.floorId} placeholder="Ganzes Haus" onChange={(v) => set({ floorId: v || null, roomId: null })} options={floors.map((f) => ({ value: f.id, label: f.name }))} />
+                  </Field>
+                ),
+              },
+              {
+                k: 'room',
+                core: true,
+                el: (
+                  <Field label="Raum">
+                    <Select id={'c-room-' + c.id} value={c.roomId} placeholder="–" onChange={(v) => set({ roomId: v || null })} options={(floor?.rooms || []).map((r) => ({ value: r.id, label: r.name }))} disabled={!floor} />
+                  </Field>
+                ),
+              },
+              {
+                k: 'qty',
+                label: 'Menge',
+                el: (
+                  <Field label="Menge">
+                    <NumInput id={'c-qty-' + c.id} value={c.qty} onChange={(v) => set({ qty: v })} digits={2} />
+                  </Field>
+                ),
+              },
+              {
+                k: 'unit',
+                label: 'Einheit',
+                el: (
+                  <Field label="Einheit">
+                    <Select id={'c-unit-' + c.id} value={c.unit} placeholder="–" onChange={(v) => set({ unit: v })} options={['m²', 'm', 'Stk', 'kW', 'kWp', 'kWh', 'l'].map((u) => ({ value: u, label: u }))} />
+                  </Field>
+                ),
+              },
+              {
+                k: 'uValue',
+                label: 'U-Wert',
+                el: (
+                  <Field label="U-Wert">
+                    <NumInput id={'c-u-' + c.id} value={c.uValue} onChange={(v) => set({ uValue: v })} unit="W/m²K" digits={2} />
+                  </Field>
+                ),
+              },
+            ],
+            emptyAtOpen,
+          );
+          return (
+            <>
+              <div className="grid3">{shown}</div>
+              <MoreFields items={more} grid="grid3" />
+            </>
+          );
+        })()}
       </Section>
 
       <Section n={4} title="Notizen">
@@ -593,19 +707,7 @@ export function ComponentDrawer({ data, drawer }) {
         </div>
       </Section>
 
-      <Section n={6} title="Projekte">
-        {projects.length ? (
-          <div className="chips">
-            {projects.map((p) => (
-              <button key={p.id} className="chip" onClick={() => openDrawer({ type: 'project', id: p.id })}>
-                <Icon name={projectKind(p.kind).icon} size={13} /> {p.title}
-              </button>
-            ))}
-          </div>
-        ) : (
-          <p className="small muted">Noch kein Projekt für dieses Bauteil.</p>
-        )}
-      </Section>
+      <LinkedWith data={data} refTo={{ type: 'component', id: c.id }} n={6} skip={['photos', 'documents']} />
     </Drawer>
   );
 }
@@ -677,6 +779,7 @@ function RoomsTable({ data }) {
 export function RoomDrawer({ data, drawer }) {
   const f = data.floors[drawer.floorId];
   const r = f?.rooms?.find((x) => x.id === drawer.roomId);
+  const emptyAtOpen = useEmptyAtOpen(drawer.roomId, { height: r?.height, floorCover: r?.floorCover, wallFinish: r?.wallFinish, ceiling: r?.ceiling, heating: r?.heating });
   if (!r)
     return (
       <Drawer title="Raum nicht gefunden" onClose={closeDrawer}>
@@ -707,44 +810,61 @@ export function RoomDrawer({ data, drawer }) {
         </>
       }
     >
-      <Section n={1} title="Raum">
-        <div className="grid2">
-          <Field label="Name">
-            <TextInput id={'r-name-' + r.id} value={r.name} onChange={(v) => set({ name: v })} />
-          </Field>
-          <Field label="Typ">
-            <Select id={'r-type-' + r.id} value={r.type} onChange={(v) => set({ type: v })} options={ROOM_TYPES.map((t) => ({ value: t.key, label: t.name }))} />
-          </Field>
-          <Field label="Fläche" hint={`Aus dem Grundriss (Innenmaß): ${fmtArea(computed)}`}>
-            <NumInput id={'r-area-' + r.id} value={r.area} placeholder={fmtFixed(computed, 2)} onChange={(v) => set({ area: v })} unit="m²" digits={2} />
-          </Field>
-          <Field label="Raumhöhe">
-            <NumInput id={'r-h-' + r.id} value={r.height} placeholder={fmtFixed(f.height - (f.slab ?? 0.2), 2)} onChange={(v) => set({ height: v })} unit="m" digits={2} />
-          </Field>
-        </div>
-      </Section>
-      <Section n={2} title="Ausstattung">
-        <div className="grid2">
-          <Field label="Bodenbelag">
-            <TextInput id={'r-floor-' + r.id} value={r.floorCover} onChange={(v) => set({ floorCover: v })} placeholder="Parkett, Fliesen …" />
-          </Field>
-          <Field label="Wände">
-            <TextInput id={'r-walls-' + r.id} value={r.wallFinish} onChange={(v) => set({ wallFinish: v })} placeholder="Raufaser, Putz …" />
-          </Field>
-          <Field label="Decke">
-            <TextInput id={'r-ceil-' + r.id} value={r.ceiling} onChange={(v) => set({ ceiling: v })} placeholder="Putz, Holz, abgehängt …" />
-          </Field>
-          <Field label="Heizung">
-            <TextInput id={'r-heat-' + r.id} value={r.heating} onChange={(v) => set({ heating: v })} placeholder="2 Heizkörper, FBH …" />
-          </Field>
-        </div>
-        <Field label="Notizen">
-          <TextInput id={'r-notes-' + r.id} multiline value={r.notes} onChange={(v) => set({ notes: v })} placeholder="Steckdosen, Mängel, Ideen …" />
-        </Field>
-      </Section>
+      {(() => {
+        const { shown, more } = splitFields(
+          [
+            { k: 'name', core: true, el: <Field label="Name"><TextInput id={'r-name-' + r.id} value={r.name} onChange={(v) => set({ name: v })} /></Field> },
+            { k: 'type', core: true, el: <Field label="Typ"><Select id={'r-type-' + r.id} value={r.type} onChange={(v) => set({ type: v })} options={ROOM_TYPES.map((t) => ({ value: t.key, label: t.name }))} /></Field> },
+            {
+              k: 'area',
+              core: true,
+              el: (
+                <Field label="Fläche" hint={`Aus dem Grundriss (Innenmaß): ${fmtArea(computed)}`}>
+                  <NumInput id={'r-area-' + r.id} value={r.area} placeholder={fmtFixed(computed, 2)} onChange={(v) => set({ area: v })} unit="m²" digits={2} />
+                </Field>
+              ),
+            },
+            {
+              k: 'height',
+              label: 'Raumhöhe',
+              el: (
+                <Field label="Raumhöhe">
+                  <NumInput id={'r-h-' + r.id} value={r.height} placeholder={fmtFixed(f.height - (f.slab ?? 0.2), 2)} onChange={(v) => set({ height: v })} unit="m" digits={2} />
+                </Field>
+              ),
+            },
+          ],
+          emptyAtOpen,
+        );
+        const eq = splitFields(
+          [
+            { k: 'floorCover', label: 'Bodenbelag', el: <Field label="Bodenbelag"><TextInput id={'r-floor-' + r.id} value={r.floorCover} onChange={(v) => set({ floorCover: v })} placeholder="Parkett, Fliesen …" /></Field> },
+            { k: 'wallFinish', label: 'Wände', el: <Field label="Wände"><TextInput id={'r-walls-' + r.id} value={r.wallFinish} onChange={(v) => set({ wallFinish: v })} placeholder="Raufaser, Putz …" /></Field> },
+            { k: 'ceiling', label: 'Decke', el: <Field label="Decke"><TextInput id={'r-ceil-' + r.id} value={r.ceiling} onChange={(v) => set({ ceiling: v })} placeholder="Putz, Holz, abgehängt …" /></Field> },
+            { k: 'heating', label: 'Heizung', el: <Field label="Heizung"><TextInput id={'r-heat-' + r.id} value={r.heating} onChange={(v) => set({ heating: v })} placeholder="2 Heizkörper, FBH …" /></Field> },
+          ],
+          emptyAtOpen,
+        );
+        return (
+          <>
+            <Section n={1} title="Raum">
+              <div className="grid2">{shown}</div>
+              <MoreFields items={more} />
+            </Section>
+            <Section n={2} title="Ausstattung">
+              {eq.shown.length ? <div className="grid2">{eq.shown}</div> : null}
+              <MoreFields items={eq.more} label={eq.shown.length ? 'Weitere Angaben' : 'Ausstattung eintragen'} />
+              <Field label="Notizen">
+                <TextInput id={'r-notes-' + r.id} multiline value={r.notes} onChange={(v) => set({ notes: v })} placeholder="Steckdosen, Mängel, Ideen …" />
+              </Field>
+            </Section>
+          </>
+        );
+      })()}
       <Section n={3} title="Bauteile im Raum" aside={<Btn small kind="ghost" icon="plus" onClick={() => openDrawer({ type: 'component', id: createComponent({ floorId: f.id, roomId: r.id, name: 'Neues Bauteil' }) })}>Bauteil</Btn>}>
         {comps.length ? comps.map((c) => <CompRow key={c.id} c={c} />) : <p className="small muted">Keine Bauteile zugeordnet.</p>}
       </Section>
+      <LinkedWith data={data} refTo={{ type: 'room', floorId: f.id, roomId: r.id }} n={4} skip={['components']} />
     </Drawer>
   );
 }

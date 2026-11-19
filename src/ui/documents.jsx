@@ -1,9 +1,7 @@
 import { Icon } from './icons.jsx';
 import { NotesPanel } from './notes.jsx';
 import { ContactsPanel } from './contacts.jsx';
-import { InvoicesPanel } from './invoices.jsx';
-import { TaxPanel } from './tax.jsx';
-import { ApplicationsPanel } from './applications.jsx';
+import { AllPhotos } from './photos.jsx';
 import { matchContact } from '../contacts.js';
 import { Btn, IconBtn, Select, Sheet, Empty, ConfirmBtn, Pill, Field, TextInput } from './common.jsx';
 import { AiRunner } from './ai-ui.jsx';
@@ -581,35 +579,34 @@ function Account() {
   );
 }
 
+// Ablage: files, photos, notes and contacts (invoices, tax and applications are in the area "Finanzen")
 export function DocumentsSheet({ data }) {
   const ui = useUI();
-  const tab = ['notizen', 'kontakte', 'rechnungen', 'steuer', 'antraege'].includes(ui.docTab) ? ui.docTab : 'dateien';
+  const tab = ['notizen', 'kontakte', 'fotos'].includes(ui.docTab) ? ui.docTab : 'dateien';
   const [type, setType] = useState('alle');
   const [over, setOver] = useState(false);
   const docs = Object.values(data.documents).filter((d) => d.type !== 'antrag');
   const notes = Object.values(data.notes || {});
   const contacts = Object.values(data.contacts || {});
-  const invoices = docs.filter((d) => d.type === 'rechnung');
+  const photos = docs.filter((d) => d.type === 'foto');
   const counts = Object.fromEntries(DOC_TYPES.map((t) => [t.key, docs.filter((d) => d.type === t.key).length]));
   return (
     <Sheet
-      title="Dokumente & Rechnungen"
+      title="Ablage"
       icon="folder"
-      eyebrow={`${docs.length} Dateien · ${invoices.length} Rechnungen · ${contacts.length} Kontakte`}
+      eyebrow={`${docs.length} Dateien · ${notes.length} Notizen · ${contacts.length} Kontakte`}
       onClose={() => go('modell')}
       actions={tab === 'dateien' ? <UploadButton /> : null}
       tabs={[
         { key: 'dateien', label: 'Dateien', icon: 'file', count: docs.length },
-        { key: 'rechnungen', label: 'Rechnungen', icon: 'euro', count: invoices.length },
-        { key: 'steuer', label: 'Steuer', icon: 'percent' },
-        { key: 'antraege', label: 'Anträge', icon: 'flag', count: docs.filter((d) => d.type === 'antrag').length || null },
+        { key: 'fotos', label: 'Fotos', icon: 'camera', count: photos.length || null },
         { key: 'notizen', label: 'Notizen', icon: 'edit', count: notes.length },
         { key: 'kontakte', label: 'Kontakte', icon: 'tag', count: contacts.length },
       ]}
       tab={tab}
       onTab={(t) => setUI({ docTab: t })}
     >
-      {tab === 'kontakte' ? <ContactsPanel data={data} /> : tab === 'notizen' ? <NotesPanel data={data} /> : tab === 'rechnungen' ? <InvoicesPanel data={data} /> : tab === 'steuer' ? <TaxPanel data={data} /> : tab === 'antraege' ? <ApplicationsPanel data={data} /> : (
+      {tab === 'kontakte' ? <ContactsPanel data={data} /> : tab === 'notizen' ? <NotesPanel data={data} /> : tab === 'fotos' ? <AllPhotos data={data} /> : (
       <div className="stack">
         <div
           className={`dropzone ${over ? 'is-over' : ''}`}

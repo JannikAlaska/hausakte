@@ -2,7 +2,7 @@ import './native-speech.js';
 import { HouseScene } from './scene.js';
 import { initStore, loadDataset, clearAll, exportData, getState, resync, canResync, flushAll } from './store.js';
 import { createTemplate, createEmptyHouse } from './template.js';
-import { useUI, useData, setUI, go, openDrawer, closeDrawer, toast, getUI, sceneHandle } from './ui/state.js';
+import { useUI, useData, setUI, go, openDrawer, closeDrawer, toast, getUI, sceneHandle, areaOf } from './ui/state.js';
 import { SunPanel, solarResult } from './ui/solar.jsx';
 import { localToUtc, doyOf } from './solar.js';
 import { Icon } from './ui/icons.jsx';
@@ -11,7 +11,8 @@ import { KpiRow, SceneToolbar, FloorPanel, Timeline, SelectionCard } from './ui/
 import { ProjectsSheet, ProjectDrawer, RoadmapDrawer } from './ui/projects.jsx';
 import { BuildingSheet, RoomDrawer, ComponentDrawer } from './ui/building.jsx';
 import { PlanEditor } from './ui/plan.jsx';
-import { ConsumptionSheet } from './ui/consumption.jsx';
+import { EnergySheet, FinanceSheet } from './ui/areas.jsx';
+import { NewButton, QuickHost } from './ui/quicknew.jsx';
 import { DocumentsSheet } from './ui/documents.jsx';
 import { AssistantDrawer } from './ui/assistant.jsx';
 import { ContactDrawer } from './ui/contacts.jsx';
@@ -29,15 +30,42 @@ import { isSupabaseMode, getSession, onAuth, signIn, signUp, resetPassword, upda
 
 const { useEffect, useRef, useMemo, useState, useLayoutEffect } = React;
 
-const VIEWS = [
-  { key: 'cockpit', label: 'Cockpit', icon: 'gauge' },
-  { key: 'modell', label: 'Modell', icon: 'cube' },
-  { key: 'grundriss', label: 'Grundriss', icon: 'plan' },
-  { key: 'gebaeude', label: 'Gebäude', icon: 'building' },
+// six areas; "Haus" has three views of its own (3D model, floor plan, building data)
+const AREAS = [
+  { key: 'cockpit', label: 'Übersicht', icon: 'gauge' },
+  { key: 'haus', label: 'Haus', icon: 'building' },
   { key: 'projekte', label: 'Projekte', icon: 'tasks' },
-  { key: 'verbrauch', label: 'Verbrauch', icon: 'chart' },
-  { key: 'dokumente', label: 'Dokumente', icon: 'folder' },
+  { key: 'energie', label: 'Energie', icon: 'bolt' },
+  { key: 'finanzen', label: 'Finanzen', icon: 'euro' },
+  { key: 'ablage', label: 'Ablage', icon: 'folder' },
 ];
+const HOUSE_SUB = [
+  { key: 'modell', label: '3D-Modell', short: '3D', icon: 'cube' },
+  { key: 'grundriss', label: 'Grundriss', short: 'Plan', icon: 'plan' },
+  { key: 'gebaeude', label: 'Gebäudedaten', short: 'Daten', icon: 'list' },
+];
+
+// switch between the three views of the house
+function HouseSwitch({ compact }) {
+  const ui = useUI();
+  return (
+    <div className={`house-switch ${compact ? 'is-compact' : ''}`} role="group" aria-label="Ansicht des Hauses">
+      {HOUSE_SUB.map((v) => (
+        <button key={v.key} type="button" className={`view-btn ${ui.view === v.key ? 'is-on' : ''}`} aria-current={ui.view === v.key ? 'page' : undefined} onClick={() => go(v.key)} title={v.label}>
+          <Icon name={v.icon} size={16} />
+          {compact ? (
+            <span>{v.short}</span>
+          ) : (
+            <>
+              <span className="lbl-long">{v.label}</span>
+              <span className="lbl-short">{v.short}</span>
+            </>
+          )}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 function SceneView({ data, sceneRef }) {
   const host = useRef(null);
@@ -278,16 +306,18 @@ function TopBar({ data }) {
   const pct = pf.total ? Math.round((pf.done / pf.total) * 100) : 0;
   const code = h?.zip || (h?.name || 'Haus').split(/\s+/).map((w) => w[0]).join('').slice(0, 3).toUpperCase();
   const busy = data.saving > 0;
+  const area = areaOf(ui.view);
   return (
-    <header className="topbar float">
+    <header className={`topbar float area-${area}`}>
       <div className="brand">
         <span className="brand-mark">
           <Icon name="home" size={18} stroke={2} />
         </span>
         <span className="brand-name">Hausakte</span>
       </div>
+      {h && area === 'haus' ? <HouseSwitch compact /> : null}
       {h ? (
-        <button className="house-chip" onClick={() => go('gebaeude')} title="Gebäudedaten öffnen">
+        <button className={`house-chip ${area === 'haus' ? 'is-haus' : ''}`} onClick={() => go('gebaeude')} title="Gebäudedaten öffnen">
           <span className="house-code">{code}</span>
           <span className="house-txt">
             <b>{h.name || 'Mein Haus'}{h.city ? ' · ' + h.city : ''}</b>
@@ -298,15 +328,22 @@ function TopBar({ data }) {
         </button>
       ) : null}
       <nav className="views" aria-label="Bereiche">
-        {VIEWS.map((v) => (
-          <button key={v.key} className={`view-btn ${ui.view === v.key ? 'is-on' : ''}`} aria-current={ui.view === v.key ? 'page' : undefined} onClick={() => go(v.key)} title={v.label}>
-            <Icon name={v.icon} size={16} />
-            <span>{v.label}</span>
-          </button>
-        ))}
+        {AREAS.map((v) =>
+          v.key === 'haus' && area === 'haus' ? (
+            <div key={v.key} className="view-group is-on" aria-label="Haus">
+              <HouseSwitch />
+            </div>
+          ) : (
+            <button key={v.key} className={`view-btn ${area === v.key ? 'is-on' : ''}`} aria-current={area === v.key ? 'page' : undefined} onClick={() => go(v.key)} title={v.label}>
+              <Icon name={v.icon} size={16} />
+              <span>{v.label}</span>
+            </button>
+          ),
+        )}
       </nav>
       <span className="top-spacer" />
       <SearchBox data={data} />
+      {h ? <NewButton /> : null}
       <SyncButton data={data} />
       {typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition) ? (
         <button className="voice-btn" aria-label="Sprachbefehl an den Assistenten" title="Sprachbefehl" onClick={() => openDrawer({ type: 'assistant', voice: Date.now() })}>
@@ -396,13 +433,14 @@ function SyncButton({ data }) {
   );
 }
 
-// phone: four main areas, the rest behind "Mehr"
-const NAV_MAIN = ['cockpit', 'modell', 'grundriss', 'projekte'];
+// phone: four main areas, Energie and Ablage behind "Mehr"
+const NAV_MAIN = ['cockpit', 'haus', 'projekte', 'finanzen'];
 function BottomNav() {
   const ui = useUI();
   const [more, setMore] = useState(false);
-  const extra = VIEWS.filter((v) => !NAV_MAIN.includes(v.key));
-  const cur = extra.find((v) => v.key === ui.view);
+  const area = areaOf(ui.view);
+  const extra = AREAS.filter((v) => !NAV_MAIN.includes(v.key));
+  const cur = extra.find((v) => v.key === area);
   useEffect(() => {
     if (!more) return;
     const onKey = (e) => e.key === 'Escape' && setMore(false);
@@ -419,7 +457,7 @@ function BottomNav() {
       {more ? (
         <div className="more-menu" role="menu" aria-label="Weitere Bereiche">
           {extra.map((v) => (
-            <button key={v.key} role="menuitem" className={ui.view === v.key ? 'is-on' : ''} onClick={() => pick(v.key)}>
+            <button key={v.key} role="menuitem" className={area === v.key ? 'is-on' : ''} onClick={() => pick(v.key)}>
               <Icon name={v.icon} size={20} />
               <span>{v.label}</span>
             </button>
@@ -427,8 +465,8 @@ function BottomNav() {
         </div>
       ) : null}
       <nav className="bottomnav" aria-label="Bereiche">
-        {VIEWS.filter((v) => NAV_MAIN.includes(v.key)).map((v) => (
-          <button key={v.key} className={ui.view === v.key ? 'is-on' : ''} aria-current={ui.view === v.key ? 'page' : undefined} onClick={() => pick(v.key)}>
+        {AREAS.filter((v) => NAV_MAIN.includes(v.key)).map((v) => (
+          <button key={v.key} className={area === v.key ? 'is-on' : ''} aria-current={area === v.key ? 'page' : undefined} onClick={() => pick(v.key)}>
             <Icon name={v.icon} size={20} />
             <span>{v.label}</span>
           </button>
@@ -768,7 +806,7 @@ function App() {
       </div>
     );
   return (
-    <div className={`app ${ui.view === 'modell' ? 'has-timeline' : ''}`} style={{ position: 'absolute', inset: 0 }}>
+    <div className={`app ${ui.view === 'modell' ? (ui.tlCompact && !ui.sunOn ? 'has-timeline has-tl-line' : 'has-timeline') : ''}`} style={{ position: 'absolute', inset: 0 }}>
       <SceneView data={data} sceneRef={sceneRef} />
       <TopBar data={data} />
       {ready && hasHouse ? (
@@ -776,7 +814,7 @@ function App() {
           {ui.view === 'modell' ? (
             <>
               <KpiRow data={data} />
-              <SceneToolbar sceneRef={sceneRef} />
+              <SceneToolbar sceneRef={sceneRef} data={data} />
               <FloorPanel data={data} />
               {ui.sunOn ? <SunPanel data={data} /> : <Timeline data={data} />}
               <SelectionCard data={data} />
@@ -786,10 +824,12 @@ function App() {
           {ui.view === 'grundriss' ? <PlanEditor data={data} sceneRef={sceneRef} /> : null}
           {ui.view === 'gebaeude' ? <BuildingSheet data={data} /> : null}
           {ui.view === 'projekte' ? <ProjectsSheet data={data} /> : null}
-          {ui.view === 'verbrauch' ? <ConsumptionSheet data={data} /> : null}
-          {ui.view === 'dokumente' ? <DocumentsSheet data={data} /> : null}
+          {ui.view === 'energie' ? <EnergySheet data={data} /> : null}
+          {ui.view === 'finanzen' ? <FinanceSheet data={data} /> : null}
+          {ui.view === 'ablage' ? <DocumentsSheet data={data} /> : null}
           {sheetOpen && ui.wide ? null : null}
           <DrawerHost data={data} sceneRef={sceneRef} />
+          <QuickHost data={data} />
           <PhotoViewer data={data} />
           <Banners data={data} />
         </>

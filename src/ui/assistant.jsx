@@ -749,8 +749,7 @@ export function AssistantDrawer({ data, drawer }) {
                   openDrawer({ type: 'contact', id: m.id });
                 } else if (m.kind === 'note') {
                   closeDrawer();
-                  setUI({ docTab: 'notizen' });
-                  go('dokumente');
+                  go('notizen');
                 } else if (m.id) openDrawer({ type: 'project', id: m.id, tab: m.tab });
               }}
               style={{ border: 0 }}

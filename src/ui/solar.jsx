@@ -103,7 +103,7 @@ export function SunPanel({ data }) {
       {result ? (
         <Toggle checked={!!ui.pvHeat} onChange={(v) => setUI({ pvHeat: v })} label="PV-Verschattung auf dem Dach zeigen" />
       ) : (
-        <button className="link small" onClick={() => { setUI({ buildingTab: 'sonne' }); go('gebaeude'); }}>
+        <button className="link small" onClick={() => go('pv')}>
           PV-Verschattung berechnen →
         </button>
       )}
@@ -559,7 +559,7 @@ export function PvHint({ data }) {
           <>Plane Module, Wechselrichter und Kosten und berechne Ertrag, Verschattung und Eigenverbrauch für dein Dach aus dem 3D-Modell.</>
         )}
         <div style={{ marginTop: 6 }}>
-          <Btn small icon="sun" onClick={() => { setUI({ buildingTab: 'sonne', drawer: null }); go('gebaeude'); }}>
+          <Btn small icon="sun" onClick={() => { setUI({ drawer: null }); go('pv'); }}>
             {en ? 'PV-Planung öffnen' : 'Jetzt planen'}
           </Btn>
         </div>
