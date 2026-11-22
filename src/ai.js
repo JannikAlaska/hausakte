@@ -401,7 +401,7 @@ ${FUNDING_KNOWLEDGE}
 
 ${JSON_RULES}
 Format:
-{"summary":"Fazit","constraints":[{"text":"Rahmenbedingung als Aufgabe formuliert","kind":"${kinds}"}],"risks":[{"text":"Risiko","mitigation":"Gegenmaßnahme"}],"checks":["Vorab prüfen"]}`;
+{"summary":"Fazit","constraints":[{"text":"Rahmenbedingung als Aufgabe formuliert – genau ein Schritt je Eintrag","kind":"${kinds}"}],"risks":[{"text":"Risiko","mitigation":"Gegenmaßnahme"}],"checks":["Vorab prüfen"]}`;
   return askJSON(prompt, opts);
 }
 
@@ -462,7 +462,7 @@ export async function aiMeeting(p, transcript, d, { date, signal } = {}) {
 Die Notiz wurde automatisch aus Sprache in Text umgewandelt und kann Erkennungsfehler enthalten – korrigiere offensichtlich falsch erkannte Fachbegriffe (z. B. „Wechsel Richter“ = Wechselrichter, „Zähler Schrank“ = Zählerschrank).
 Datum der Besprechung: ${date || todayISO()} (heute ist ${todayISO()}). Rechne relative Angaben wie „nächsten Dienstag“, „in zwei Wochen“ oder „Ende November“ von diesem Datum aus in YYYY-MM-DD um.
 Termine (appointments) nur, wenn ein Zeitpunkt genannt oder klar ableitbar ist (z. B. Montage, Zählerwechsel, Besichtigung, Abnahme, Rückruf, Angebotsfrist); Uhrzeit, falls genannt.
-Aufgaben (todos) sind konkrete nächste Schritte mit Verantwortlichem (who: „ich“ für den Eigentümer oder Firma/Person) und Fälligkeit, wenn erkennbar.
+Aufgaben (todos) sind konkrete nächste Schritte mit Verantwortlichem (who: „ich“ für den Eigentümer oder Firma/Person) und Fälligkeit, wenn erkennbar. Jede Aufgabe ist genau ein Schritt in einem kurzen Satz – mehrere Schritte werden mehrere todos; das Datum steht nur in due, nicht im Text.
 Prüfe, ob es überhaupt um einen Termin geht (Besprechung, Vor-Ort-Termin, Besichtigung, Telefonat, Beratung, Handwerkertermin) – isMeeting true/false; meetingType nennt die Art und den Anlass. Ist es kein Termin (z. B. eine Idee oder Beobachtung), bleiben participants und decisions leer und date ist das Datum der Notiz.
 Erfinde nichts; Unklares gehört in openQuestions. Lege nichts doppelt an, was schon unten steht. Genannte Preise oder Angebotssummen in costs (Euro brutto).
 
@@ -778,6 +778,7 @@ Besprechungen: Erzählt der Nutzer von einem Termin oder Gespräch zu einem Proj
 Kontakte (Handwerker, Berater, Behörden) verwaltest und verknüpfst du mit manage_contact; Fotos von Visitenkarten lädt der Nutzer unter Dokumente › Kontakte oder im Projekt-Reiter „Ansprechpartner“ hoch.
 Allgemeine Notizen ohne Projektbezug (z. B. „Notiere: …“, „Schreib dir auf …“) verwaltest du mit manage_note (anlegen, ändern, ergänzen, löschen). Passt eine Notiz eindeutig zu einem Projekt, frage kurz nach, ob sie als Besprechung ans Projekt soll.
 Grundriss: Für Maße (Türbreiten, Abstände zwischen Fenstern, Wandlängen, Raummaße) hole mit get_floor_plan die Räume, Wände und Öffnungen der Etage und trage das Maß mit add_measurement ein; Leitungslängen änderst du mit update_line. Möbel stellst, änderst oder entfernst du mit manage_furniture (vorher get_floor_plan für Raum- und Wand-IDs; „an die Nordwand“ = Wand mit side Norden im Raum). Heizkörper sind ebenfalls Möbel (Kategorie Heizung, Bauart über radiatorType); ihre geschätzte Wärmeleistung steht im Hauskontext und in get_floor_plan – nutze sie z. B. für die Frage, ob die Heizkörper für eine Wärmepumpe mit niedriger Vorlauftemperatur reichen. Wähle bei mehreren passenden Fenstern die naheliegendsten (gleiche Wand, nebeneinander) und sage kurz, welche du genommen hast. Nachrichten können per Spracheingabe kommen – rechne mit Erkennungsfehlern (z. B. „eins komma fünf“ = 1,5) und frage nach, wenn etwas unklar ist.
+Aufgaben (Rahmenbedingungen/To-dos): Lege jeden Arbeitsschritt als eigene Aufgabe an – nie mehrere Schritte in einem Text („Decke abnehmen; danach Trockenbau …“ sind zwei Aufgaben). Formuliere kurz (ein Satz), Fälligkeit in due (YYYY-MM-DD) statt im Text, Zuständige in who. Reihenfolgen oder Hinweise wie „nach der Elektrik“ dürfen kurz im Text stehen. Willst du einen bestehenden Sammeleintrag aufteilen, ändere ihn mit update_item auf den ersten Schritt und lege die übrigen mit add_constraint an.
 Das Feld „Hinweise“ eines Projekts ist für Abhängigkeiten, Fristen und Besonderheiten gedacht, die man beim Planen beachten muss. Abhängigkeiten können auf ein Projekt (nach dessen Ende) oder auf einen Meilenstein („Projekt-ID#Meilenstein-ID“) zeigen – für Projekte und für Meilensteine.
 
 WISSENSBASIS

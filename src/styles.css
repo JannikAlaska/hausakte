@@ -360,7 +360,8 @@ textarea.input { resize: vertical; line-height: 1.45; }
 .drawer-sub { font-size: 12.5px; color: var(--ink-2); margin-top: 2px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .drawer-body { flex: 1; overflow: auto; padding: 6px 16px 20px; min-height: 0; }
 .drawer-foot { border-top: 1px solid var(--line); padding: 12px 16px; display: flex; gap: 8px; }
-.drawer-foot .btn { flex: 1; }
+.drawer-foot .btn { flex: 1 1 auto; min-width: 0; white-space: normal; height: auto; min-height: 36px; padding-block: 5px; line-height: 1.2; }
+.drawer-foot .btn-ghost { flex: 0 0 auto; }
 .dsec { padding: 14px 0 6px; border-bottom: 1px solid var(--line); }
 .dsec:last-child { border-bottom: 0; }
 .dsec-head { display: flex; align-items: center; gap: 9px; margin-bottom: 10px; }
@@ -852,9 +853,29 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .ms-dep-btn.has { color: var(--accent-ink); }
 .ms-dep-btn.warn { color: var(--warn); }
 .ms-dep-n { position: absolute; top: -2px; right: -3px; min-width: 15px; height: 15px; border-radius: 99px; background: var(--accent); color: #fff; font-size: 9.5px; font-weight: 700; display: grid; place-items: center; padding: 0 3px; }
-.ms-row { grid-template-columns: 22px 1fr 140px 30px 30px; }
+/* tasks and milestones: the text gets the full width and wraps, the details sit in a line below */
+.todo-row { display: grid; grid-template-columns: 22px minmax(0, 1fr); column-gap: 8px; row-gap: 5px; align-items: start; }
+.rows > .todo-row + .todo-row, .rows > .ms-block + .ms-block { border-top: 1px solid var(--line); padding-top: 9px; }
+.todo-row > input[type='checkbox'] { width: 18px; height: 18px; margin: 9px 0 0 2px; accent-color: var(--accent); }
+.todo-row.is-done .auto-text { text-decoration: line-through; color: var(--ink-3); }
+.todo-tools { grid-column: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; min-width: 0; }
+.todo-tools .todo-del { margin-left: auto; }
+.todo-who { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; color: var(--ink-2); min-width: 0; }
+textarea.auto-text { display: block; resize: none; overflow: hidden; line-height: 1.4; }
+.todo-row .auto-text { border-color: transparent; background: transparent; padding-left: 6px; }
+.todo-row .auto-text:hover { border-color: var(--line); }
+.todo-row .auto-text:focus { border-color: var(--accent); background: var(--surface); }
+.select-chip { position: relative; display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 9px 0 11px; border: 1px solid var(--line); border-radius: 99px; background: var(--surface-2); color: var(--ink-2); font-size: 12.5px; white-space: nowrap; max-width: 100%; cursor: pointer; }
+.select-chip > span { overflow: hidden; text-overflow: ellipsis; }
+.select-chip:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.select-chip select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; font-size: 16px; border: 0; -webkit-appearance: none; appearance: none; }
+.date-chip { position: relative; display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 10px; border: 1px dashed var(--line); border-radius: 99px; background: var(--surface); color: var(--ink-3); font-size: 12.5px; white-space: nowrap; cursor: pointer; }
+.date-chip.has { border-style: solid; color: var(--ink); }
+.date-chip.is-late { border-color: var(--warn); color: var(--warn-ink); }
+.date-chip:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.date-chip input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; border: 0; opacity: 0; cursor: pointer; font-size: 16px; -webkit-appearance: none; appearance: none; }
+.date-chip input::-webkit-calendar-picker-indicator { position: absolute; inset: 0; width: 100%; height: 100%; cursor: pointer; }
 @media (max-width: 760px) {
-  .ms-row { grid-template-columns: 20px 1fr 118px 30px 26px; gap: 6px; }
   .ms-deps, .ms-dep-sum { margin-left: 12px; }
 }
 

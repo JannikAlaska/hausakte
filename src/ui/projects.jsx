@@ -9,7 +9,7 @@ import { Meetings } from './meetings.jsx';
 import { ProjectContacts } from './contacts.jsx';
 import { projectContacts } from '../contacts.js';
 import { AiVerdict } from './econ.jsx';
-import { Btn, IconBtn, Field, TextInput, NumInput, Select, DateInput, Pill, Section, Drawer, Sheet, Empty, ConfirmBtn, Seg, ArchiveSection, useEmptyAtOpen, MoreFields } from './common.jsx';
+import { Btn, IconBtn, Field, TextInput, NumInput, Select, DateInput, Pill, Section, Drawer, Sheet, Empty, ConfirmBtn, Seg, ArchiveSection, useEmptyAtOpen, MoreFields, AutoText, DateChip, SelectChip } from './common.jsx';
 import { LinkedWith } from './links.jsx';
 import { AiRunner, useAiAvailable, AiUnavailable } from './ai-ui.jsx';
 import { useUI, setUI, openDrawer, closeDrawer, toast, go } from './state.js';
@@ -783,15 +783,17 @@ function Milestones({ p, set, data, noLabel }) {
           const conflict = projectIssues(p, all).some((i) => i.msId === m.id);
           return (
             <div key={m.id} className="ms-block">
-              <div className={`row row-check ms-row ${m.done ? 'is-done' : ''}`}>
+              <div className={`todo-row ms-row ${m.done ? 'is-done' : ''}`}>
                 <input type="checkbox" checked={!!m.done} onChange={(e) => upd(m.id, { done: e.target.checked })} aria-label="Erledigt" />
-                <input className="input" value={m.title} onChange={(e) => upd(m.id, { title: e.target.value })} aria-label="Meilenstein" />
-                <input className="input" type="date" value={m.date || ''} onChange={(e) => upd(m.id, { date: e.target.value || null })} aria-label="Datum" />
+                <AutoText value={m.title} onChange={(v) => upd(m.id, { title: v })} placeholder="Meilenstein" aria-label="Meilenstein" />
+                <div className="todo-tools">
+                <DateChip value={m.date} onChange={(v) => upd(m.id, { date: v })} empty="Datum" late={!m.done && m.date && m.date < todayISO()} label="Datum" />
                 <button type="button" className={`icon-btn ms-dep-btn ${deps.length ? 'has' : ''} ${conflict ? 'warn' : ''}`} aria-label="Abhängigkeiten des Meilensteins" aria-expanded={open === m.id} title={deps.length ? `Wartet auf ${deps.length}` : 'Abhängigkeit festlegen'} onClick={() => setOpen(open === m.id ? null : m.id)}>
                   <Icon name={conflict ? 'alert' : 'link'} size={15} />
                   {deps.length ? <span className="ms-dep-n">{deps.length}</span> : null}
                 </button>
-                <IconBtn icon="trash" label="Meilenstein löschen" size={15} onClick={() => deleteMilestone(p.id, m.id)} />
+                <IconBtn icon="trash" label="Meilenstein löschen" size={15} className="todo-del" onClick={() => deleteMilestone(p.id, m.id)} />
+                </div>
               </div>
               {open === m.id ? (
                 <div className="ms-deps">
@@ -939,39 +941,32 @@ function Constraints({ p, set, data }) {
     if (done) setFresh((f) => new Set(f).add(c.id));
     upd(c.id, { done });
   };
-  const row = (c) => (
-          <div key={c.id} className="ms-block">
-            <div className={`row row-check ${c.done ? 'is-done' : ''}`}>
-              <input type="checkbox" checked={!!c.done} onChange={(e) => tick(c, e.target.checked)} aria-label="Erledigt" />
-              <input className="input" value={c.text} onChange={(e) => upd(c.id, { text: e.target.value })} aria-label="Rahmenbedingung" />
-              <select className="input select" style={{ width: 130 }} value={c.kind} onChange={(e) => upd(c.id, { kind: e.target.value })} aria-label="Art">
-                {CONSTRAINT_KINDS.map((k) => (
-                  <option key={k.key} value={k.key}>
-                    {k.name}
-                  </option>
-                ))}
-              </select>
-              <IconBtn icon="trash" label="Löschen" size={15} onClick={() => set({ constraints: list.filter((x) => x.id !== c.id) })} />
-            </div>
-            {c.due || c.who || c.meetingId || c.contactId ? (
-              <div className={`todo-meta small ${!c.done && c.due && c.due < todayISO() ? 'is-late' : ''}`}>
-                {c.due ? (
-                  <span>
-                    <Icon name="calendar" size={12} /> bis {fmtDate(c.due)}
-                  </span>
-                ) : null}
-                {c.contactId && data.contacts?.[c.contactId] ? (
-                  <button type="button" className="link" onClick={() => openDrawer({ type: 'contact', id: c.contactId })}>
-                    <Icon name="tag" size={12} /> {data.contacts[c.contactId].company || data.contacts[c.contactId].name}
-                  </button>
-                ) : c.who ? (
-                  <span>{c.who}</span>
-                ) : null}
-                {c.meetingId ? <span className="muted">aus Besprechung{(() => { const d = (p.meetings || []).find((m) => m.id === c.meetingId)?.date; return isISO(d) ? ` ${fmtDayMonth(d)}` : ''; })()}</span> : null}
-              </div>
-            ) : null}
-          </div>
-  );
+  const today = todayISO();
+  const row = (c) => {
+    const contact = c.contactId ? data.contacts?.[c.contactId] : null;
+    const meetDate = c.meetingId ? (p.meetings || []).find((m) => m.id === c.meetingId)?.date : null;
+    return (
+      <div key={c.id} className={`todo-row ${c.done ? 'is-done' : ''}`}>
+        <input type="checkbox" checked={!!c.done} onChange={(e) => tick(c, e.target.checked)} aria-label="Erledigt" />
+        <AutoText value={c.text} onChange={(v) => upd(c.id, { text: v })} placeholder="Was ist zu tun?" aria-label="Aufgabe" />
+        <div className="todo-tools">
+          <SelectChip value={c.kind} onChange={(v) => upd(c.id, { kind: v })} options={CONSTRAINT_KINDS.map((k) => ({ value: k.key, label: k.name }))} label="Art der Aufgabe" />
+          <DateChip value={c.due} onChange={(v) => upd(c.id, { due: v })} prefix="bis" empty="Termin" late={!c.done && c.due && c.due < today} label="Erledigen bis" />
+          {contact ? (
+            <button type="button" className="link todo-who" onClick={() => openDrawer({ type: 'contact', id: c.contactId })}>
+              <Icon name="tag" size={12} /> {contact.company || contact.name}
+            </button>
+          ) : c.who ? (
+            <span className="todo-who">
+              <Icon name="people" size={12} /> {c.who}
+            </span>
+          ) : null}
+          {c.meetingId ? <span className="todo-who muted">aus Besprechung{isISO(meetDate) ? ` ${fmtDayMonth(meetDate)}` : ''}</span> : null}
+          <IconBtn icon="trash" label="Aufgabe löschen" size={15} className="todo-del" onClick={() => set({ constraints: list.filter((x) => x.id !== c.id) })} />
+        </div>
+      </div>
+    );
+  };
   const done = list.filter(isOld);
   return (
     <>

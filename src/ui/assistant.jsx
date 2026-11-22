@@ -87,7 +87,7 @@ export function makeTools(log) {
           id: p.id, title: p.title, kind: p.kind, status: p.status, archived: !!p.archived, priority: p.priority, start: p.start, end: p.end, notes: p.notes || '', hints: p.hints || '', dependsOn: p.dependsOn || [],
           milestones: (p.milestones || []).map((m) => ({ id: m.id, ref: msRef(p.id, m.id), title: m.title, date: m.date, done: !!m.done, dependsOn: m.dependsOn || [] })),
           costs: (p.costs || []).map((k) => ({ id: k.id, label: k.label, estimate: k.estimate, offer: k.offer, actual: k.actual, vendor: k.vendor || '' })),
-          constraints: (p.constraints || []).map((c) => ({ id: c.id, text: c.text, kind: c.kind, done: !!c.done })),
+          constraints: (p.constraints || []).map((c) => ({ id: c.id, text: c.text, kind: c.kind, done: !!c.done, due: c.due || null, who: c.who || '' })),
           funding: (p.funding || []).map((f) => ({ id: f.id, program: f.program, provider: f.provider, type: f.type, status: f.status, rate: f.rate, amount: f.amount, deadline: f.deadline })),
           meetings: (p.meetings || []).map((m) => ({ id: m.id, date: m.date, title: m.title, summary: m.summary, milestoneIds: m.milestoneIds || [], todoIds: m.todoIds || [] })),
         };
@@ -184,7 +184,7 @@ export function makeTools(log) {
           decisions: { type: 'array', items: { type: 'string' } },
           openQuestions: { type: 'array', items: { type: 'string' } },
           appointments: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' }, date: { type: 'string' }, time: { type: 'string' }, note: { type: 'string' } }, required: ['title'] } },
-          todos: { type: 'array', items: { type: 'object', properties: { text: { type: 'string' }, who: { type: 'string' }, due: { type: 'string' }, kind: { type: 'string', enum: CONSTRAINT_KINDS.map((k) => k.key) } }, required: ['text'] } },
+          todos: { type: 'array', description: 'Je Eintrag genau ein Arbeitsschritt; Fälligkeit in due, nicht im Text', items: { type: 'object', properties: { text: { type: 'string' }, who: { type: 'string' }, due: { type: 'string' }, kind: { type: 'string', enum: CONSTRAINT_KINDS.map((k) => k.key) } }, required: ['text'] } },
           transcript: { type: 'string', description: 'Wortlaut der Nachricht des Nutzers' },
         },
         required: ['projectId', 'summary'],
@@ -563,11 +563,21 @@ export function makeTools(log) {
     },
     {
       name: 'add_constraint',
-      description: 'Fügt einem Projekt eine Rahmenbedingung oder Aufgabe hinzu (z. B. Genehmigung, Pflicht, Witterung).',
-      inputSchema: { type: 'object', properties: { projectId: { type: 'string' }, text: { type: 'string' }, kind: { type: 'string', enum: CONSTRAINT_KINDS.map((k) => k.key) } }, required: ['projectId', 'text'] },
+      description: 'Fügt einem Projekt genau EINE Aufgabe oder Rahmenbedingung hinzu (z. B. Genehmigung, Pflicht, Witterung, Arbeitsschritt). Mehrere Arbeitsschritte immer als einzelne Aufrufe anlegen, je Schritt ein kurzer Satz. Fälligkeit gehört in due, nicht in den Text.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          projectId: { type: 'string' },
+          text: { type: 'string', description: 'Ein einzelner Schritt, kurz formuliert, ohne Datum' },
+          kind: { type: 'string', enum: CONSTRAINT_KINDS.map((k) => k.key) },
+          due: { type: 'string', description: 'Erledigen bis YYYY-MM-DD' },
+          who: { type: 'string', description: 'Zuständig (Person oder Firma)' },
+        },
+        required: ['projectId', 'text'],
+      },
       execute(input) {
         const p = getProject(input.projectId);
-        addConstraint(p.id, String(input.text), String(input.kind || 'organisatorisch'));
+        addConstraint(p.id, str(input.text, 300), String(input.kind || 'organisatorisch'), { due: input.due, who: input.who ? str(input.who, 120) : '' });
         log({ kind: 'project', id: p.id, text: `Rahmenbedingung: ${input.text}` });
         return 'ok';
       },

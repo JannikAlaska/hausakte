@@ -1,6 +1,6 @@
 // Mutations shared by several views (and by the AI assistant's tools).
 import { putDoc, updateDoc, getState, deleteDoc } from './store.js';
-import { uid, todayISO, addDays, parseISO, toISO, diffDays } from './util.js';
+import { uid, todayISO, addDays, parseISO, toISO, diffDays, isISO } from './util.js';
 import { projectKind, PROJECT_KINDS, CONSTRAINT_KINDS, FUNDING_TYPES } from './catalog.js';
 import { resolveRef } from './metrics.js';
 import { matchContact } from './contacts.js';
@@ -88,9 +88,13 @@ export function addCost(projectId, c) {
   patchProject(projectId, (p) => ({ ...p, costs: [...(p.costs || []), entry] }));
 }
 
-export function addConstraint(projectId, text, kind = 'organisatorisch') {
+export function addConstraint(projectId, text, kind = 'organisatorisch', extra = {}) {
   const k = CONSTRAINT_KINDS.some((x) => x.key === kind) ? kind : 'organisatorisch';
-  patchProject(projectId, (p) => ({ ...p, constraints: [...(p.constraints || []), { id: uid('b'), text, kind: k, done: false }] }));
+  const entry = { id: uid('b'), text, kind: k, done: false };
+  if (isISO(extra.due)) entry.due = extra.due;
+  if (extra.who) entry.who = String(extra.who).slice(0, 120);
+  patchProject(projectId, (p) => ({ ...p, constraints: [...(p.constraints || []), entry] }));
+  return entry.id;
 }
 
 export function addMilestone(projectId, title, date, dependsOn = []) {

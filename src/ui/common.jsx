@@ -1,8 +1,8 @@
 import { Icon } from './icons.jsx';
-import { parseNum, fmtNum } from '../util.js';
+import { parseNum, fmtNum, fmtDate } from '../util.js';
 import { useUI, setInstallFilter } from './state.js';
 
-const { useState, useEffect, useRef } = React;
+const { useState, useEffect, useRef, useLayoutEffect } = React;
 
 export function Btn({ kind = 'soft', icon, children, small, className = '', ...rest }) {
   return (
@@ -35,6 +35,89 @@ export function TextInput({ value, onChange, placeholder, id, multiline, rows = 
   if (multiline)
     return <textarea id={id} className="input" rows={rows} value={value ?? ''} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} {...rest} />;
   return <input id={id} className="input" type="text" value={value ?? ''} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} {...rest} />;
+}
+
+// One-line text that wraps and grows with its content instead of cutting long entries off.
+// Enter ends editing (the entry stays a single line of text).
+export function AutoText({ value, onChange, className = '', ...rest }) {
+  const ref = useRef(null);
+  const fit = () => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = el.scrollHeight + (el.offsetHeight - el.clientHeight) + 'px';
+  };
+  useLayoutEffect(fit, [value]);
+  // re-wrap when the column gets wider or narrower (drawer resized, phone rotated)
+  useEffect(() => {
+    if (typeof ResizeObserver === 'undefined' || !ref.current) return;
+    let w = 0;
+    const ro = new ResizeObserver((es) => {
+      const nw = Math.round(es[0]?.contentRect.width || 0);
+      if (nw !== w) {
+        w = nw;
+        fit();
+      }
+    });
+    ro.observe(ref.current);
+    return () => ro.disconnect();
+  }, []);
+  return (
+    <textarea
+      ref={ref}
+      rows={1}
+      className={`input auto-text ${className}`}
+      value={value ?? ''}
+      onChange={(e) => onChange(e.target.value.replace(/\s*\n+\s*/g, ' '))}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+          e.preventDefault();
+          e.currentTarget.blur();
+        }
+      }}
+      {...rest}
+    />
+  );
+}
+
+// A choice as a small chip showing the current option; tapping it opens the system list.
+export function SelectChip({ value, onChange, options, label, className = '' }) {
+  const cur = options.find((o) => o.value === value) || options[0];
+  return (
+    <span className={`select-chip ${className}`}>
+      <span>{cur?.label}</span>
+      <Icon name="chevD" size={12} />
+      <select value={value ?? ''} onChange={(e) => onChange(e.target.value)} aria-label={label} title={label}>
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </span>
+  );
+}
+
+// A date as a small chip ("bis 27.11.2026"); tapping it opens the system date picker.
+export function DateChip({ value, onChange, prefix = '', empty = 'Datum', late, label = 'Datum' }) {
+  return (
+    <span className={`date-chip ${value ? 'has' : ''} ${late ? 'is-late' : ''}`}>
+      <Icon name="calendar" size={12} />
+      <span>{value ? `${prefix ? prefix + ' ' : ''}${fmtDate(value)}` : empty}</span>
+      <input
+        type="date"
+        value={value || ''}
+        aria-label={label}
+        title={label}
+        onChange={(e) => onChange(e.target.value || null)}
+        onClick={(e) => {
+          try {
+            e.currentTarget.showPicker?.();
+          } catch {}
+        }}
+      />
+    </span>
+  );
 }
 
 // Number input that accepts German decimals; commits parsed numbers (or null) while typing.
