@@ -443,11 +443,13 @@ export function setRoomSide(floor, roomId, i, newLength, end) {
     const Lw = dist(a, b);
     return { ...w, a, b, openings: (w.openings || []).map((o) => ({ ...o, pos: r3(Math.max(o.w / 2, Math.min(Lw - o.w / 2, o.pos - shiftA))) })) };
   });
-  // close a step that is not covered by another wall
+  // close a step that is not covered by another wall; in an exterior wall line only another exterior wall
+  // covers it (an inner wall meeting there would leave the building outline open)
   for (const { pt } of kept) {
-    if (ws.some((w) => !onK(w) && distToSeg(pt, w.a, w.b).d < 0.006)) continue;
+    if (ws.some((w) => !onK(w) && (!k0.ext || w.ext) && distToSeg(pt, w.a, w.b).d < 0.006)) continue;
     const near = dist(pt, J1) < dist(pt, J2) ? sideWall : beyondWall;
-    ws.push({ id: uid('w'), a: P3(pt), b: P3(add(pt, delta)), t: near?.t || k0.t, ext: !!near?.ext, ...(near?.color ? { color: near.color } : {}), openings: [] });
+    const like = k0.ext ? k0 : near;
+    ws.push({ id: uid('w'), a: P3(pt), b: P3(add(pt, delta)), t: like?.t || k0.t, ext: !!(k0.ext || near?.ext), ...(like?.color ? { color: like.color } : {}), openings: [] });
   }
   // connection points and furniture at the moved piece move with it
   const nearM = (pt, extra) => oldM.some((m) => {

@@ -278,16 +278,44 @@ export function planarFaces(segments, eps = 0.003, minArea = 0.08) {
 
 export const wallSegs = (walls) => walls.map((w) => ({ a: w.a, b: w.b }));
 
+// Wall ends that miss each other by a few millimetres (e.g. after part of a wall line was moved) are joined:
+// an end close to another end snaps onto it, an end close to another wall's middle onto that wall.
+export function healWallEnds(walls, tol = 0.02) {
+  const ends = [];
+  const snapped = walls.map((w) => {
+    const fix = (p) => {
+      for (const q of ends) if (dist(p, q) < tol) return q;
+      ends.push(p);
+      return p;
+    };
+    return { ...w, a: fix(w.a), b: fix(w.b) };
+  });
+  return snapped.map((w) => {
+    const onto = (p) => {
+      for (const o of snapped) {
+        if (o === w || same(p, o.a, 1e-6) || same(p, o.b, 1e-6)) continue;
+        const r = distToSeg(p, o.a, o.b);
+        if (r.d > 1e-6 && r.d < tol && r.t > 0.001 && r.t < 0.999) return add(o.a, mul(sub(o.b, o.a), r.t));
+      }
+      return p;
+    };
+    return { ...w, a: onto(w.a), b: onto(w.b) };
+  });
+}
+
 // Building outline (wall center line) from exterior walls; falls back to the bounding box.
 export function outlineFromWalls(walls) {
   if (!walls || !walls.length) return null;
   const ext = walls.filter((w) => w.ext);
-  const faces = planarFaces(wallSegs(ext.length ? ext : walls));
+  const base = ext.length ? ext : walls;
+  let faces = planarFaces(wallSegs(base));
+  // a small gap in the exterior walls must not turn the outline into a box around everything (railings included)
+  if (!faces.length) faces = planarFaces(wallSegs(healWallEnds(base)));
   if (faces.length) {
     faces.sort((a, b) => b.area - a.area);
     return faces[0].poly;
   }
-  const bb = bbox(walls.flatMap((w) => [w.a, w.b]));
+  const bb = bbox(base.flatMap((w) => [w.a, w.b]));
   if (bb.w < 0.1 || bb.h < 0.1) return null;
   return [
     [bb.minX, bb.minY],
