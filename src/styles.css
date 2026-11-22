@@ -766,8 +766,9 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 
 /* ---------- installation lines ---------- */
 .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; vertical-align: -1px; }
-.kind-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-.kind-btn { display: flex; align-items: center; gap: 7px; text-align: left; border: 1px solid var(--line); background: var(--surface); border-radius: 9px; padding: 7px 8px; font-size: 12.5px; color: var(--ink-2); }
+.kind-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.kind-btn { display: flex; align-items: center; gap: 7px; text-align: left; border: 1px solid var(--line); background: var(--surface); border-radius: 9px; padding: 7px 8px; font-size: 12.5px; color: var(--ink-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kind-btn > span { flex: none; }
 .kind-btn:hover { border-color: var(--line-2); color: var(--ink); }
 .kind-btn.is-on { border-color: var(--accent); color: var(--ink); background: var(--accent-soft, var(--surface-2)); font-weight: 600; }
 .legend-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
@@ -856,6 +857,25 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .ms-dep-btn.has { color: var(--accent-ink); }
 .ms-dep-btn.warn { color: var(--warn); }
 .ms-dep-n { position: absolute; top: -2px; right: -3px; min-width: 15px; height: 15px; border-radius: 99px; background: var(--accent); color: #fff; font-size: 9.5px; font-weight: 700; display: grid; place-items: center; padding: 0 3px; }
+/* connection tool: "Neu setzen" (green) and "Bearbeiten" (blue) look clearly different */
+.plan-props.tone-new { border-top: 3px solid var(--accent); }
+.plan-props.tone-edit { border-top: 3px solid var(--info); }
+.plan-props.tone-new .props-handle span { color: var(--accent-ink); }
+.plan-props.tone-edit .props-handle span { color: var(--info); }
+.fx-mode { display: flex; gap: 10px; align-items: flex-start; padding: 10px 11px; border-radius: 11px; border: 1px solid; }
+.fx-mode b { display: block; font-size: 13.5px; }
+.fx-mode span:not(.fx-mode-ico) { display: block; font-size: 11.5px; line-height: 1.4; margin-top: 2px; }
+.fx-mode-ico { flex: none; width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; color: #fff; }
+.fx-new { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-ink); }
+.fx-new .fx-mode-ico { background: var(--accent); }
+.fx-edit { border-color: var(--info); background: var(--info-soft); color: var(--info); }
+.fx-edit .fx-mode-ico { background: var(--info); }
+.fx-edit b { color: var(--ink); }
+.fx-edit span:not(.fx-mode-ico) { color: var(--ink-2); }
+.fx-placed { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); font-size: 12.5px; }
+.fx-placed-txt { flex: 1; min-width: 0; color: var(--ink-3); font-size: 11.5px; line-height: 1.3; }
+.fx-placed-txt b { display: block; color: var(--ink); font-size: 12.5px; }
+.fx-next { display: flex; flex-direction: column; gap: 10px; padding: 9px; border: 1px dashed var(--accent); border-radius: 11px; min-width: 0; }
 /* room dimensions locked as measured */
 .room-lock { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 11px; border: 1px dashed var(--line); border-radius: 10px; background: var(--surface); color: var(--ink-2); text-align: left; cursor: pointer; }
 .room-lock:hover { border-color: var(--accent); color: var(--ink); }

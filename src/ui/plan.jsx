@@ -466,11 +466,12 @@ export function PlanEditor({ data }) {
 }
 
 // Properties column; on phones a bottom panel over the plan that opens when something is selected.
-function PropsPanel({ title, openKey, children }) {
-  const [open, setOpen] = useState(!!openKey);
-  useEffect(() => setOpen(!!openKey), [openKey]);
+// phone: a sheet over the plan that opens when what it shows changes (closed: startOpen false)
+function PropsPanel({ title, openKey, startOpen = true, tone, children }) {
+  const [open, setOpen] = useState(!!openKey && startOpen);
+  useEffect(() => setOpen(!!openKey && startOpen), [openKey]);
   return (
-    <div className={`plan-props ${open ? 'is-open' : ''}`}>
+    <div className={`plan-props ${open ? 'is-open' : ''} ${tone ? 'tone-' + tone : ''}`}>
       <button type="button" className="props-handle" aria-expanded={open} onClick={() => setOpen(!open)}>
         <span>{title}</span>
         <Icon name={open ? 'chevD' : 'chevU'} size={16} />
@@ -575,6 +576,10 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
   const [calib, setCalib] = useState(null); // {pts:[]}
   const [lineOpts, setLineOpts] = useState({ kind: 'strom', zone: 'unten', z: 0.3, status: 'bestand', rFrom: 0, rTo: null });
   const [fixOpts, setFixOpts] = useState({ kind: 'steckdose', z: null, status: 'bestand', count: 1 });
+  // connection tool: the point just set (still "new") vs. an existing one picked to edit
+  const [placedId, setPlacedId] = useState(null);
+  // editing ended: back to setting new ones with the plan free (the phone sheet stays closed)
+  const [fxBack, setFxBack] = useState(false);
   const [furnKey, setFurnKey] = useState('sofa3');
   const [hlSide, setHlSide] = useState(null); // {roomId, i, wallIds} while a room side length is edited
   const ui = useUI();
@@ -844,14 +849,23 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
     if (tool === 'fixture') {
       const hp = hitPoint(p, visPoints, 9 / view.s);
       if (hp) {
+        // an existing connection is picked for editing (the one just set stays "new" while it is dragged)
+        if (hp.id !== placedId) setPlacedId(null);
         setSel({ kind: 'point', id: hp.id });
         setDrag({ kind: 'ptMove', id: hp.id, from: deepClone(floor) });
+        return;
+      }
+      // while an existing connection is being edited, a click elsewhere only ends editing - nothing is added by accident
+      if (sel?.kind === 'point' && sel.id !== placedId) {
+        setSel(null);
+        setFxBack(true);
         return;
       }
       const sf = snapFixture(p, fixOpts.kind, walls, grid);
       const id = uid('pt');
       const k = fixtureKind(fixOpts.kind);
       mutate((f) => ({ ...f, points: [...(f.points || []), { id, kind: fixOpts.kind, x: sf.p[0], y: sf.p[1], z: r3(fixOpts.z ?? fixtureZ(fixOpts.kind, floor)), rot: sf.rot, status: fixOpts.status, count: k.multi ? fixOpts.count || 1 : 1, label: '', notes: '' }] }), { refresh: false });
+      setPlacedId(id);
       setSel({ kind: 'point', id });
       return;
     }
@@ -1065,6 +1079,16 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
       } else if (tool === 'window' || tool === 'door' || tool === 'opening') {
         const w = hitWall(p, walls, 0.35);
         setCursor(w ? { p, wall: w } : null);
+      } else if (tool === 'fixture' && e.pointerType !== 'touch') {
+        // hovering an existing connection: it would be edited; elsewhere a preview of the new one
+        const hp = hitPoint(p, visPoints, 9 / view.s);
+        const editing = sel?.kind === 'point' && sel.id !== placedId;
+        if (hp) setCursor({ p, hoverPt: hp.id });
+        else if (editing) setCursor(null);
+        else {
+          const sf = snapFixture(p, fixOpts.kind, walls, grid);
+          setCursor({ p, fix: { kind: fixOpts.kind, x: sf.p[0], y: sf.p[1] } });
+        }
       } else if (tool === 'furniture' && e.pointerType !== 'touch') {
         setCursor(hitFurniture(p, furniture, 6 / view.s) ? null : { p, furn: { id: 'ghost', ...placeFurniture(furnKey, p, walls, grid) } });
       } else if (cursor) setCursor(null);
@@ -1364,6 +1388,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
   const selItem = sel?.kind === 'item' ? (floor.items || []).find((r) => r.id === sel.id) : null;
   const selLine = sel?.kind === 'line' ? lines.find((l) => l.id === sel.id) : null;
   const selPoint = sel?.kind === 'point' ? points.find((q) => q.id === sel.id) : null;
+  const fixEditing = tool === 'fixture' && !!selPoint && selPoint.id !== placedId;
   const selDim = sel?.kind === 'dim' ? dims.find((d) => d.id === sel.id) : null;
   const selFurn = sel?.kind === 'furn' ? furniture.find((x) => x.id === sel.id) : null;
   const selSpot = sel?.kind === 'photo' ? photoSpots.find((x) => x.id === sel.id) : null;
@@ -1385,7 +1410,9 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
     stairs: 'Rechteck aufziehen. Richtung danach rechts einstellen.',
     measure: measure && !measure.b ? 'Jetzt den Endpunkt klicken. Punkte rasten an Wänden, Tür- und Fensterkanten ein.' : 'Anfang und Ende klicken – z. B. Türbreite oder Abstand zwischen zwei Fenstern. Den vor Ort gemessenen Wert trägst du danach rechts ein.',
     line: chain ? 'Weiter klicken für den nächsten Punkt · Länge eintippen + Enter setzt das nächste Stück in Cursorrichtung · Höhe rechts ändern = senkrechtes Stück · Doppelklick beendet' : 'Startpunkt der Leitung klicken. Punkte rasten an Wänden ein. Art und Höhe stellst du rechts ein.',
-    fixture: `${fixtureKind(fixOpts.kind).wall ? 'Klicke neben die Wand, an der der Anschluss sitzt – er rastet auf dieser Wandseite ein.' : 'Klicke die Stelle im Raum, an der die Lampe hängt.'} Weitere Klicks setzen weitere Anschlüsse, Ziehen verschiebt sie.`,
+    fixture: fixEditing
+      ? 'Du bearbeitest einen vorhandenen Anschluss. Ein Klick ins Leere beendet das Bearbeiten – danach setzt jeder Klick einen neuen Anschluss.'
+      : `Neu setzen: ${fixtureKind(fixOpts.kind).wall ? 'Klicke neben die Wand, an der der Anschluss sitzt – er rastet auf dieser Wandseite ein.' : 'Klicke die Stelle im Raum, an der die Lampe hängt.'} Einen vorhandenen Anschluss antippen, um ihn zu bearbeiten.`,
     riser: 'Klicke die Stelle, an der die Leitung senkrecht verläuft (z. B. Steigleitung, Fallrohr). Von- und Bis-Höhe stellst du rechts ein.',
     photo: 'Klicke die Stelle, die du fotografierst (z. B. eine Wand vor dem Verputzen). Rechts nimmst du dann Fotos auf – vorher, währenddessen und nachher. Ziehen verschiebt den Punkt.',
     underlay: calib ? (calib.pts.length ? 'Jetzt den zweiten Punkt klicken.' : 'Ersten Punkt einer bekannten Strecke auf dem Plan klicken (z. B. Außenmaß).') : 'Plan ziehen verschiebt ihn. Maßstab über „Kalibrieren“ festlegen.',
@@ -1399,6 +1426,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
           ctx={!!ctx}
           onTool={(t) => {
             setTool(t);
+            setFxBack(false);
             if (t !== 'select') setSel(null);
             setChain(null);
             setMeasure(null);
@@ -1555,11 +1583,13 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
               })}
               {showLines ? <PassingRisers floor={floor} floors={floors} px={px} filter={instF} /> : null}
               {showLines ? <PlanLines lines={visLines} sel={sel} px={px} faded={focus ? (l) => !focus.lines.has(l.id) : null} /> : null}
-              {showLines ? <PlanPoints points={visPoints} sel={sel} px={px} faded={focus ? (q) => !focus.points.has(q.id) : null} /> : null}
+              {showLines ? <PlanPoints points={visPoints} sel={sel} px={px} faded={focus ? (q) => !focus.points.has(q.id) : null} editId={fixEditing ? selPoint.id : null} newId={tool === 'fixture' && !fixEditing ? placedId : null} /> : null}
               {focus ? <RoomDims room={focus.room} px={px} /> : null}
               {showPhotos && photoSpots.length ? <PlanPhotoSpots spots={photoSpots} counts={photoCounts} sel={sel} px={px} faded={focus ? (q) => !inRoom(focus.room, q.x, q.y) : null} /> : null}
               {chain && tool === 'line' ? <LinePreview pts={chain.pts} cursor={cursor?.p} kind={lineOpts.kind} px={px} /> : null}
               {cursor?.furn && tool === 'furniture' ? <FurnitureSymbol f={cursor.furn} px={px} ghost /> : null}
+              {tool === 'fixture' && cursor?.fix ? <FixtureGhost {...cursor.fix} px={px} /> : null}
+              {tool === 'fixture' && cursor?.hoverPt ? <FixtureHover pt={points.find((q) => q.id === cursor.hoverPt)} px={px} /> : null}
               {selFurn && showFurn ? <FurnitureHandles f={selFurn} px={px} s={s} /> : null}
               {selWall ? <WallDims w={selWall} px={px} /> : null}
               {hlRoom && hlRoom.poly?.[hlSide.i] ? <SideHighlight room={hlRoom} i={hlSide.i} walls={walls.filter((w) => (hlSide.wallIds || []).includes(w.id))} px={px} /> : null}
@@ -1651,8 +1681,10 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
         </div>
       </div>
       <PropsPanel
-        title={selSpot ? `Fotopunkt${selSpot.label ? ': ' + selSpot.label : ''}` : tool === 'photo' ? 'Fotos mit Ort' : selFurn && tool !== 'furniture' ? selFurn.label || furnName(selFurn) : tool === 'furniture' ? 'Möbel' : selDim ? `Maß${selDim.label ? ': ' + selDim.label : ''}` : selWall ? 'Wand' : selOpening ? OPENING_NAMES[selOpening.type] : selRoom ? `Raum: ${selRoom.name}` : selItem ? 'Treppe' : selPoint ? fixtureKind(selPoint.kind).name : selLine ? 'Leitung' : tool === 'line' || tool === 'riser' ? 'Neue Leitung' : tool === 'fixture' ? 'Anschluss' : ctx ? 'Nebengebäude' : 'Etage & Einstellungen'}
-        openKey={sel ? sel.kind + sel.id : ['line', 'riser', 'fixture', 'wall', 'furniture', 'photo'].includes(tool) ? tool : null}
+        title={selSpot ? `Fotopunkt${selSpot.label ? ': ' + selSpot.label : ''}` : tool === 'photo' ? 'Fotos mit Ort' : selFurn && tool !== 'furniture' ? selFurn.label || furnName(selFurn) : tool === 'furniture' ? 'Möbel' : selDim ? `Maß${selDim.label ? ': ' + selDim.label : ''}` : selWall ? 'Wand' : selOpening ? OPENING_NAMES[selOpening.type] : selRoom ? `Raum: ${selRoom.name}` : selItem ? 'Treppe' : tool === 'fixture' ? (fixEditing ? `Bearbeiten: ${selPoint.label || fixtureKind(selPoint.kind).name}` : selPoint ? `Neu setzen · ✓ ${fixtureKind(selPoint.kind).name} gesetzt` : 'Neue Anschlüsse setzen') : selPoint ? fixtureKind(selPoint.kind).name : selLine ? 'Leitung' : tool === 'line' || tool === 'riser' ? 'Neue Leitung' : ctx ? 'Nebengebäude' : 'Etage & Einstellungen'}
+        startOpen={!(tool === 'fixture' && !fixEditing && fxBack)}
+        tone={tool === 'fixture' ? (fixEditing ? 'edit' : 'new') : null}
+        openKey={tool === 'fixture' ? (fixEditing ? 'fxedit' + sel.id : fxBack ? 'fixture-back' : 'fixture') : sel ? sel.kind + sel.id : ['line', 'riser', 'wall', 'furniture', 'photo'].includes(tool) ? tool : null}
       >
         {selSpot ? (
           <PlanSpotProps data={data} floor={floor} spot={selSpot} onDelete={deleteSelection} />
@@ -1673,7 +1705,11 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
         ) : selDim ? (
           <DimProps d={selDim} floor={floor} mutate={mutate} onDelete={deleteSelection} focus={sel.focus} />
         ) : tool === 'fixture' ? (
-          <FixtureToolProps opts={fixOpts} setOpts={setFixOpts} floor={floor} selected={selPoint} mutate={mutate} onDelete={deleteSelection} onDetails={() => setTool('select')} />
+          fixEditing ? (
+            <FixtureEditProps pt={selPoint} floor={floor} data={data} mutate={mutate} onDelete={deleteSelection} onDone={() => { setSel(null); setFxBack(true); }} />
+          ) : (
+            <FixtureToolProps opts={fixOpts} setOpts={setFixOpts} floor={floor} placed={selPoint} onEdit={() => setPlacedId(null)} onDelete={deleteSelection} />
+          )
         ) : selPoint ? (
           <FixtureProps pt={selPoint} floor={floor} data={data} mutate={mutate} onDelete={deleteSelection} />
         ) : selLine ? (
@@ -1746,18 +1782,21 @@ function FixtureGlyph({ kind, size, color, strokeWidth = 2.1 }) {
   return <path d={ICON_PATHS[k.icon]} transform={`translate(${-size / 2},${-size / 2}) scale(${sc})`} fill="none" stroke={color || k.color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />;
 }
 
-function PlanPoints({ points, sel, px, faded }) {
+function PlanPoints({ points, sel, px, faded, editId, newId }) {
   return (
     <g>
       {points.map((q) => {
         const k = fixtureKind(q.kind);
         const isSel = sel?.kind === 'point' && sel.id === q.id;
+        // green: just set (new) · blue: an existing one being edited
+        const hl = q.id === editId ? 'var(--info)' : 'var(--accent)';
         const r = px(9.5);
         return (
           <g key={q.id} transform={`translate(${q.x},${q.y})`} opacity={q.status === 'stillgelegt' ? 0.5 : 1} className={faded?.(q) ? 'is-faded' : undefined}>
             <title>{`${q.label || k.name}${q.count > 1 ? ` (${q.count}-fach)` : ''} · ${fmtFixed(q.z ?? 0, 2)} m`}</title>
-            {isSel ? <circle r={r + px(4)} fill="var(--accent)" fillOpacity="0.25" /> : null}
-            <circle r={r} fill="var(--surface)" stroke={isSel ? 'var(--accent)' : k.color} strokeWidth={px(isSel ? 2.4 : 1.8)} strokeDasharray={q.status === 'geplant' ? `${px(3)} ${px(2)}` : undefined} />
+            {isSel ? <circle r={r + px(4)} fill={hl} fillOpacity="0.25" /> : null}
+            {q.id === editId ? <circle r={r + px(7)} fill="none" stroke={hl} strokeWidth={px(1.6)} strokeDasharray={`${px(4)} ${px(3)}`} /> : null}
+            <circle r={r} fill="var(--surface)" stroke={isSel ? hl : k.color} strokeWidth={px(isSel ? 2.4 : 1.8)} strokeDasharray={q.status === 'geplant' ? `${px(3)} ${px(2)}` : undefined} />
             <FixtureGlyph kind={q.kind} size={px(13)} />
             {q.count > 1 ? (
               <g transform={`translate(${r * 0.85},${-r * 0.85})`}>
@@ -1815,41 +1854,103 @@ function FixtureHeight({ kind, z, floor, onChange }) {
   );
 }
 
-function FixtureToolProps({ opts, setOpts, floor, selected, mutate, onDelete, onDetails }) {
+// Connection tool, mode "Neu setzen": the settings for the next clicks; the connection just set is confirmed
+// above them with its own buttons, so it is clear which fields belong to what.
+function FixtureToolProps({ opts, setOpts, floor, placed, onEdit, onDelete }) {
   const k = fixtureKind(opts.kind);
-  const sk = selected ? fixtureKind(selected.kind) : null;
+  const pk = placed ? fixtureKind(placed.kind) : null;
+  const room = placed ? roomOfPoint(floor, placed) : null;
   return (
     <div className="stack">
-      {selected ? (
-        <div className="panel fixture-last">
-          <div className="spread">
-            <span className="hstack" style={{ gap: 6 }}>
-              <span style={{ color: sk.color, display: 'inline-flex' }}>
-                <Icon name={sk.icon} size={16} />
-              </span>
-              <b className="small">{sk.name} gesetzt</b>
-            </span>
-            <ConfirmBtn onConfirm={onDelete}>{''}</ConfirmBtn>
-          </div>
-          <TextInput id={'ptq-label-' + selected.id} value={selected.label} onChange={(v) => mutate((f) => ({ ...f, points: (f.points || []).map((x) => (x.id === selected.id ? { ...x, label: v } : x)) }), { refresh: false })} placeholder="Bezeichnung (optional)" />
-          <button className="link small" onClick={onDetails}>
-            Alle Details bearbeiten →
-          </button>
+      <div className="fx-mode fx-new">
+        <span className="fx-mode-ico">
+          <Icon name="plus" size={16} stroke={2.2} />
+        </span>
+        <div>
+          <b>Neu setzen</b>
+          <span>Jeder Klick in den Grundriss setzt einen neuen Anschluss mit den Einstellungen unten. Einen vorhandenen Anschluss antippen, um ihn zu bearbeiten.</span>
+        </div>
+      </div>
+      {placed ? (
+        <div className="fx-placed" role="status">
+          <span style={{ color: pk.color, display: 'inline-flex' }}>
+            <Icon name={pk.icon} size={16} />
+          </span>
+          <span className="fx-placed-txt">
+            <b>✓ {pk.name} gesetzt</b>
+            {room ? room.name : 'außerhalb der Räume'}
+          </span>
+          <Btn small kind="ghost" icon="edit" onClick={onEdit}>
+            Bearbeiten
+          </Btn>
+          <IconBtn icon="undo" size={15} label="Wieder entfernen" onClick={onDelete} />
         </div>
       ) : null}
-      <h4>Nächster Anschluss</h4>
-      <FixtureKindSelect value={opts.kind} onChange={(kind) => setOpts({ ...opts, kind, z: null })} />
-      <FixtureHeight kind={opts.kind} z={opts.z ?? fixtureZ(opts.kind, floor)} floor={floor} onChange={(z) => setOpts({ ...opts, z })} />
-      {k.multi ? (
-        <Field label="Anzahl" hint="z. B. 3 für eine Dreifach-Steckdose">
-          <NumInput value={opts.count} onChange={(v) => v >= 1 && setOpts({ ...opts, count: Math.round(v) })} digits={0} min={1} max={12} />
+      <div className="fx-next">
+        <span className="field-label">Einstellungen für neue Anschlüsse</span>
+        <FixtureKindSelect value={opts.kind} onChange={(kind) => setOpts({ ...opts, kind, z: null })} />
+        <FixtureHeight kind={opts.kind} z={opts.z ?? fixtureZ(opts.kind, floor)} floor={floor} onChange={(z) => setOpts({ ...opts, z })} />
+        {k.multi ? (
+          <Field label="Anzahl" hint="z. B. 3 für eine Dreifach-Steckdose">
+            <NumInput value={opts.count} onChange={(v) => v >= 1 && setOpts({ ...opts, count: Math.round(v) })} digits={0} min={1} max={12} />
+          </Field>
+        ) : null}
+        <Field label="Zustand">
+          <Seg small value={opts.status} onChange={(v) => setOpts({ ...opts, status: v })} options={LINE_STATUS} />
         </Field>
-      ) : null}
-      <Field label="Zustand">
-        <Seg small value={opts.status} onChange={(v) => setOpts({ ...opts, status: v })} options={LINE_STATUS} />
-      </Field>
+      </div>
       <p className="small muted">{k.wall ? 'Wandanschlüsse rasten auf der Wandseite ein, auf der du klickst – innen oder außen.' : 'Deckenlampen setzt du frei in den Raum.'} Liegt eine passende Leitung in der Nähe (z. B. Strom bei Steckdosen), wird automatisch ein kurzes Anschlussstück bis zum Anschluss ergänzt. Im 3D-Modell erscheinen Anschlüsse zusammen mit den Leitungen im Röntgenblick.</p>
     </div>
+  );
+}
+
+// Connection tool, mode "Bearbeiten": an existing connection was picked; its own fields, nothing for new ones
+function FixtureEditProps({ pt, floor, data, mutate, onDelete, onDone }) {
+  return (
+    <div className="stack">
+      <div className="fx-mode fx-edit">
+        <span className="fx-mode-ico">
+          <Icon name="edit" size={16} />
+        </span>
+        <div>
+          <b>Vorhandenen Anschluss bearbeiten</b>
+          <span>Änderungen gelten nur für diesen Anschluss. Neue setzt du wieder nach „Fertig“ oder mit einem Klick ins Leere.</span>
+        </div>
+      </div>
+      <FixtureProps pt={pt} floor={floor} data={data} mutate={mutate} onDelete={onDelete} />
+      <Btn kind="primary" icon="check" onClick={onDone}>
+        Fertig – neue Anschlüsse setzen
+      </Btn>
+    </div>
+  );
+}
+
+// preview of the connection the next click would set
+function FixtureGhost({ kind, x, y, px }) {
+  const r = px(9.5);
+  return (
+    <g className="fx-ghost" transform={`translate(${x},${y})`} opacity="0.7" style={{ pointerEvents: 'none' }}>
+      <circle r={r} fill="var(--surface)" stroke="var(--accent)" strokeWidth={px(1.8)} strokeDasharray={`${px(3)} ${px(2)}`} />
+      <FixtureGlyph kind={kind} size={px(13)} />
+      <g transform={`translate(${r * 0.95},${-r * 0.95})`}>
+        <circle r={px(6)} fill="var(--accent)" />
+        <path d={`M${-px(3)} 0H${px(3)}M0 ${-px(3)}V${px(3)}`} stroke="#fff" strokeWidth={px(1.6)} strokeLinecap="round" />
+      </g>
+    </g>
+  );
+}
+
+// an existing connection under the cursor: clicking it edits it
+function FixtureHover({ pt, px }) {
+  if (!pt) return null;
+  const r = px(9.5);
+  return (
+    <g className="fx-hover" transform={`translate(${pt.x},${pt.y})`} style={{ pointerEvents: 'none' }}>
+      <circle r={r + px(5)} fill="none" stroke="var(--info)" strokeWidth={px(2)} strokeDasharray={`${px(4)} ${px(3)}`} />
+      <text y={-(r + px(9))} textAnchor="middle" fontSize={px(11)} fontWeight="600" fill="var(--info)" stroke="var(--surface)" strokeWidth={px(3)} paintOrder="stroke">
+        bearbeiten
+      </text>
+    </g>
   );
 }
 
