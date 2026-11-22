@@ -4,7 +4,7 @@ import { polyArea, polyPerimeter, outerOutline, openingArea } from './geometry.j
 import { roomType, medium, energyClass, status as statusOf } from './catalog.js';
 import { pvPotential, roofModel } from './roof.js';
 import { pvSelection, pvConfig, layoutOpts } from './pv.js';
-import { todayISO, parseISO } from './util.js';
+import { todayISO, parseISO, isISO, diffDays } from './util.js';
 
 export const sortFloors = (floors) => [...floors].sort((a, b) => a.elevation - b.elevation);
 
@@ -94,6 +94,38 @@ export function projectCost(p) {
 }
 
 export const isDone = (p) => p.status === 'abgeschlossen';
+
+// How far a project is: tasks and milestones done out of those planned, against how much of the planned
+// time (start to end, both days included) has passed. "delta" > 0 means ahead of time, < 0 behind.
+export function projectProgress(p, today = todayISO()) {
+  const tasks = (p.constraints || []).filter((c) => String(c.text || '').trim());
+  const ms = (p.milestones || []).filter((m) => String(m.title || '').trim() || m.date);
+  const t = { done: tasks.filter((c) => c.done).length, total: tasks.length };
+  const m = { done: ms.filter((x) => x.done).length, total: ms.length };
+  const done = t.done + m.done;
+  const total = t.total + m.total;
+  const finished = isDone(p);
+  const work = total ? (done / total) * 100 : finished ? 100 : null;
+  let time = null;
+  if (isISO(p.start) && isISO(p.end) && p.end >= p.start) {
+    const days = diffDays(p.start, p.end) + 1;
+    if (today < p.start) time = { state: 'before', pct: 0, days, startsIn: diffDays(today, p.start) };
+    else if (today > p.end) time = { state: 'after', pct: 100, days, over: diffDays(p.end, today) };
+    else {
+      const day = diffDays(p.start, today) + 1;
+      time = { state: 'running', pct: (day / days) * 100, days, day, left: diffDays(today, p.end) };
+    }
+  }
+  let verdict = null;
+  let delta = null;
+  if (finished) verdict = 'done';
+  else if (time?.state === 'before') verdict = 'before';
+  else if (time && work != null) {
+    delta = work - time.pct;
+    verdict = time.state === 'after' && work < 100 ? 'late' : delta > 8 ? 'ahead' : delta < -8 ? 'behind' : 'ontrack';
+  }
+  return { tasks: t, milestones: m, done, total, work, time, delta, verdict };
+}
 // deactivated projects stay stored but leave plans, budget and deadlines until they are reactivated or deleted
 export const isArchived = (p) => !!p?.archived;
 export const liveProjects = (projects) => Object.values(projects || {}).filter((p) => !p.archived);

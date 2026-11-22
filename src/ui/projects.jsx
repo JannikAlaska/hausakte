@@ -15,7 +15,7 @@ import { AiRunner, useAiAvailable, AiUnavailable } from './ai-ui.jsx';
 import { useUI, setUI, openDrawer, closeDrawer, toast, go } from './state.js';
 import { DocList, UploadButton } from './documents.jsx';
 import { PROJECT_KINDS, projectKind, STATUS, status as statusOf, CONSTRAINT_KINDS, FUNDING_TYPES, FUNDING_STATUS, gewerk } from '../catalog.js';
-import { projectCost, projectIssues, createsCycle, isDone, costValue, resolveRef, dependentsOf, msRef, liveProjects } from '../metrics.js';
+import { projectCost, projectIssues, projectProgress, createsCycle, isDone, costValue, resolveRef, dependentsOf, msRef, liveProjects } from '../metrics.js';
 import { createProject, patchProject, deleteProject, archiveProject, addFunding, addCost, addConstraint, addMilestone, deleteMilestone, alignMilestone, alignToDependencies } from '../actions.js';
 import { aiFunding, aiTiming, aiCosts, aiRisks, aiRoadmap } from '../ai.js';
 import { updateHouse } from '../store.js';
@@ -499,6 +499,8 @@ export function ProjectDrawer({ data, drawer }) {
             </button>
           </div>
 
+          <ProjectProgress p={p} onOpen={setTab} />
+
           {warns.length ? (
             <div className="callout callout-warn">
               <Icon name="alert" size={16} />
@@ -754,7 +756,7 @@ function ComponentLinks({ p, data, set }) {
           </span>
         ))}
         {options.length ? (
-          <select className="input select" style={{ width: 'auto', minHeight: 30, padding: '3px 28px 3px 9px', fontSize: 12.5 }} value="" onChange={(e) => e.target.value && set({ components: [...(p.components || []), e.target.value] })} aria-label="Bauteil verknüpfen">
+          <select className="input select" style={{ width: 'auto', maxWidth: '100%', minHeight: 30, padding: '3px 28px 3px 9px', fontSize: 12.5 }} value="" onChange={(e) => e.target.value && set({ components: [...(p.components || []), e.target.value] })} aria-label="Bauteil verknüpfen">
             <option value="">+ Bauteil verknüpfen</option>
             {options.map((o) => (
               <option key={o.value} value={o.value}>
@@ -927,6 +929,70 @@ function Dependencies({ p, data, set }) {
       ) : null}
       <p className="small muted">Abhängigkeiten gehen auf das Ende eines Projekts oder auf einen Meilenstein. Meilensteine können selbst auf andere Projekte oder Meilensteine warten (Link-Symbol neben dem Meilenstein).</p>
     </>
+  );
+}
+
+// Two bars on top of each other: what is done (tasks + milestones) and how much of the planned time has passed.
+// The line on the first bar marks where the work would be if it kept pace with the time.
+function ProjectProgress({ p, onOpen }) {
+  const g = projectProgress(p);
+  const pc = (v) => `${Math.round(v)} %`;
+  const t = g.time;
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  const verdict = {
+    done: ['accent', 'abgeschlossen'],
+    before: ['neutral', t?.state === 'before' ? `startet in ${plural(t.startsIn, 'Tag', 'Tagen')}` : ''],
+    ontrack: ['accent', 'im Plan'],
+    ahead: ['accent', `${Math.round(g.delta)} % vor der Zeit`],
+    behind: ['warn', `${Math.round(-g.delta)} % hinter der Zeit`],
+    late: ['warn', 'Ende überschritten'],
+  }[g.verdict];
+  const mark = t?.state === 'running' && g.work != null && !isDone(p) ? t.pct : null;
+  const timeText = !t
+    ? 'Start und Ende festlegen, dann siehst du hier den zeitlichen Fortschritt'
+    : t.state === 'before'
+      ? `beginnt am ${fmtDate(p.start)} · ${plural(t.days, 'Tag', 'Tage')} geplant`
+      : t.state === 'after'
+        ? `Ende war am ${fmtDate(p.end)}${isDone(p) ? '' : ` · seit ${plural(t.over, 'Tag', 'Tagen')} überschritten`}`
+        : `Tag ${t.day} von ${t.days} · noch ${plural(t.left, 'Tag', 'Tage')} bis ${fmtDate(p.end)}`;
+  const workText = g.total
+    ? [`${g.done} von ${g.total} erledigt`, g.tasks.total ? `Aufgaben ${g.tasks.done}/${g.tasks.total}` : '', g.milestones.total ? `Meilensteine ${g.milestones.done}/${g.milestones.total}` : ''].filter(Boolean).join(' · ')
+    : 'Noch keine Aufgaben oder Meilensteine geplant';
+  return (
+    <div className="p-progress">
+      <div className="pg-head">
+        <span>Fortschritt</span>
+        {verdict?.[1] ? <Pill tone={verdict[0]}>{verdict[1]}</Pill> : null}
+      </div>
+      <button type="button" className="pg-row" onClick={() => onOpen('aufgaben')} aria-label={`Erledigt: ${g.work != null ? pc(g.work) : 'nichts geplant'}. ${workText}`}>
+        <span className="pg-label">Erledigt</span>
+        <span className="pg-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={g.work != null ? Math.round(g.work) : undefined}>
+          <span className="pg-fill pg-work" style={{ width: `${g.work || 0}%` }} />
+          {mark != null ? <span className="pg-mark" style={{ left: `${mark}%` }} title="So weit wäre es, wenn die Arbeit mit der Zeit Schritt hält" /> : null}
+        </span>
+        <b className="pg-pct">{g.work != null ? pc(g.work) : '–'}</b>
+      </button>
+      <button type="button" className="pg-row" onClick={() => onOpen('zeitplan')} aria-label={`Zeit: ${t ? pc(t.pct) : 'kein Zeitraum'}. ${timeText}`}>
+        <span className="pg-label">Zeit</span>
+        <span className="pg-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={t ? Math.round(t.pct) : undefined}>
+          <span className={`pg-fill pg-time ${t?.state === 'after' && !isDone(p) ? 'is-over' : ''}`} style={{ width: `${t ? t.pct : 0}%` }} />
+        </span>
+        <b className="pg-pct">{t ? pc(t.pct) : '–'}</b>
+      </button>
+      <div className="pg-notes">
+        <span>
+          <i className="pg-dot pg-work" /> {workText}
+        </span>
+        <span>
+          <i className="pg-dot pg-time" /> {timeText}
+        </span>
+        {mark != null ? (
+          <span>
+            <i className="pg-tick" /> Strich: so weit wärst du heute, wenn die Arbeit mit der Zeit Schritt hält
+          </span>
+        ) : null}
+      </div>
+    </div>
   );
 }
 

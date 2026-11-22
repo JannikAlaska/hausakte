@@ -927,6 +927,24 @@ textarea.auto-text { display: block; resize: none; overflow: hidden; line-height
 .p-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .p-sum { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; border: 1px solid var(--line); background: var(--surface-2); border-radius: 12px; padding: 10px 11px; min-width: 0; color: var(--ink); }
 .p-sum:hover { border-color: var(--line-2); }
+/* project progress: done vs. time passed */
+.p-progress { border: 1px solid var(--line); background: var(--surface-2); border-radius: 12px; padding: 10px 12px 11px; display: flex; flex-direction: column; gap: 6px; }
+.pg-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 22px; }
+.pg-head > span { font-size: 11.5px; color: var(--ink-3); font-weight: 600; }
+.pg-row { display: grid; grid-template-columns: 58px minmax(0, 1fr) 42px; align-items: center; gap: 10px; padding: 0; background: none; border: 0; color: var(--ink); text-align: left; cursor: pointer; }
+.pg-label { font-size: 12.5px; color: var(--ink-2); font-weight: 600; }
+.pg-bar { position: relative; height: 12px; border-radius: 99px; background: var(--surface-3); overflow: visible; }
+.pg-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 99px; max-width: 100%; transition: width 0.3s ease; }
+.pg-work { background: var(--accent); }
+.pg-time { background: var(--info); }
+.pg-time.is-over { background: var(--warn); }
+.pg-mark { position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; border-radius: 2px; background: var(--ink); opacity: 0.55; }
+.pg-pct { font-family: var(--font-display); font-size: 14px; text-align: right; font-variant-numeric: tabular-nums; }
+.pg-notes { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; font-size: 11.5px; color: var(--ink-2); line-height: 1.35; }
+.pg-notes span { display: flex; align-items: baseline; gap: 6px; }
+.pg-dot { flex: none; width: 8px; height: 8px; border-radius: 99px; display: inline-block; }
+.pg-tick { flex: none; width: 2px; height: 11px; margin: 0 3px; border-radius: 2px; background: var(--ink); opacity: 0.55; display: inline-block; align-self: center; }
+.pg-notes span .pg-dot { align-self: center; }
 .p-sum span { font-size: 11.5px; color: var(--ink-3); font-weight: 600; }
 .p-sum b { font-size: 15.5px; font-family: var(--font-display); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .p-sum small { font-size: 11.5px; color: var(--ink-2); line-height: 1.3; }
