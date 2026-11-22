@@ -17,6 +17,7 @@ import {
 } from '../geometry.js';
 import { putDoc, deleteDoc, updateHouse, getAssets, blobUrl, getState } from '../store.js';
 import { isSupabaseMode, supa } from '../supa.js';
+import { RoomLock } from './building.jsx';
 import { lineLength, linePlanPts, fixtureAnchor, dedup3, relink, roomOfPoint, resizeLine, dimLength, roomSides, setRoomSide, splitAtJunctions } from '../planops.js';
 import { uid, deepClone, fmtFixed, fmtNum, parseNum } from '../util.js';
 import { furnType, furnSize, furnToPlan, hitFurniture, placeFurniture, snapToWalls, furnName } from '../furniture.js';
@@ -629,8 +630,9 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
       if (hist.current.undo.length > 60) hist.current.undo.shift();
       hist.current.redo = [];
     }
-    write({ ...n, example: false }, 350);
+    return write({ ...n, example: false }, 350) !== false;
   };
+  // false when the change was refused (it would alter a room marked as measured)
   const mutate = (fn, opts) => save(fn(deepClone(floorRef.current)), opts);
   const undo = () => {
     const h = hist.current;
@@ -1546,7 +1548,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
                       {r.name}
                     </text>
                     <text x={lp[0]} y={lp[1] + fs * 1.05} textAnchor="middle" className="svg-room-area" fontSize={fs * 0.82}>
-                      {fmtFixed(roomArea(r), 2)} m²
+                      {fmtFixed(roomArea(r), 2)} m²{r.locked ? ' · gemessen' : ''}
                     </text>
                   </g>
                 );
@@ -2533,8 +2535,9 @@ function RoomProps({ r, floor, mutate, onDelete, focus, noDetails, onHighlight }
     <div className="stack">
       <div className="spread">
         <h4>Raum</h4>
-        <ConfirmBtn onConfirm={onDelete}>{''}</ConfirmBtn>
+        {r.locked ? null : <ConfirmBtn onConfirm={onDelete}>{''}</ConfirmBtn>}
       </div>
+      <RoomLock r={r} onChange={set} />
       <Field label="Name">
         <input ref={ref} id={'pr-name-' + r.id} className="input" value={r.name} onChange={(e) => set({ name: e.target.value })} />
       </Field>
@@ -2569,7 +2572,7 @@ function RoomSides({ r, floor, mutate, onHighlight }) {
       {sides.map((sd) => (
         <SideRow key={r.id + sd.i} r={r} s={sd} label={sd.dir} mutate={mutate} onHighlight={onHighlight} />
       ))}
-      <p className="small muted">Neue Länge eintippen und Enter: Die gewählte Wand an der Seitenkante wird verschoben – nur das Stück an diesem Raum. Räume dahinter werden entsprechend kleiner, Anschlüsse und Möbel an dieser Wand wandern mit. Rückgängig mit Strg+Z oder über „Frühere Versionen“.</p>
+      {r.locked ? <p className="small muted">Die Maße sind gemessen und gesperrt. Zum Ändern oben „Entsperren“ antippen.</p> : <p className="small muted">Neue Länge eintippen und Enter: Die gewählte Wand an der Seitenkante wird verschoben – nur das Stück an diesem Raum. Räume dahinter werden entsprechend kleiner, Anschlüsse und Möbel an dieser Wand wandern mit. Rückgängig mit Strg+Z oder über „Frühere Versionen“.</p>}
     </div>
   );
 }
@@ -2582,9 +2585,10 @@ function SideRow({ r, s, label, title, mutate, onHighlight }) {
   const end = (s.ends.find((e) => e.end === chosen && e.ok) || s.ends.find((e) => e.ok && !e.ext) || s.ends.find((e) => e.ok))?.end || null;
   const light = (en = end) => onHighlight?.({ roomId: r.id, i: s.i, wallIds: s.ends.find((e) => e.end === en)?.wallIds || [] });
   const apply = (v) => {
+    if (r.locked) return;
     if (!end) return toast(s.ends[0].reason || 'Diese Seite lässt sich nicht anpassen.', 'warn', 5000);
     let err = null;
-    mutate((f) => {
+    const stored = mutate((f) => {
       try {
         return setRoomSide(f, r.id, s.i, v, end);
       } catch (e) {
@@ -2593,6 +2597,7 @@ function SideRow({ r, s, label, title, mutate, onHighlight }) {
       }
     });
     if (err) toast(err.message, 'warn', 5000);
+    else if (stored === false) return; // refused: a room marked as measured would change (the notice comes from the store)
     else toast(`${r.name || 'Raum'}, Seite ${s.dir}: ${fmtFixed(v, 2)} m innen – ${s.ends.find((e) => e.end === end).label} verschoben.`, 'ok', 4000);
   };
   return (
@@ -2601,8 +2606,12 @@ function SideRow({ r, s, label, title, mutate, onHighlight }) {
       <span className="side-dir" title="Lage der Seite (Himmelsrichtung)">
         {label}
       </span>
-      <SideLength value={s.length} disabled={!okEnds.length} onFocus={() => light()} onCommit={apply} />
-      {okEnds.length > 1 ? (
+      <SideLength value={s.length} disabled={!okEnds.length || !!r.locked} onFocus={() => light()} onCommit={apply} />
+      {r.locked ? (
+        <span className="side-end-txt">
+          <Icon name="lock" size={12} /> gemessen – gesperrt
+        </span>
+      ) : okEnds.length > 1 ? (
         <select
           className="input select side-end"
           value={end || ''}

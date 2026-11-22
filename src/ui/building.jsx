@@ -10,7 +10,7 @@ import { updateHouse, updateDoc, deleteDoc, fileUrl } from '../store.js';
 import { createComponent, createProject } from '../actions.js';
 import { aiComponents, aiReadImage, getLimits } from '../ai.js';
 import { bearingName } from '../roof.js';
-import { fmtNum, fmtFixed, fmtEuro, fmtArea, fmtDate } from '../util.js';
+import { fmtNum, fmtFixed, fmtEuro, fmtArea, fmtDate, todayISO } from '../util.js';
 
 const { useState, useRef, useEffect } = React;
 
@@ -713,6 +713,32 @@ export function ComponentDrawer({ data, drawer }) {
 }
 
 // ---------- Räume ----------
+// "gemessen": the room's dimensions are locked (walls around it, outline, area and height)
+export function RoomLock({ r, onChange }) {
+  if (r.locked)
+    return (
+      <div className="room-lock is-on">
+        <Icon name="lock" size={17} />
+        <div className="room-lock-txt">
+          <b>Maße gemessen{r.lockedAt ? ` am ${fmtDate(r.lockedAt)}` : ''}</b>
+          <span>Wände, Umriss, Fläche und Höhe dieses Raums sind gesperrt.</span>
+        </div>
+        <ConfirmBtn icon="unlock" confirmText="Sperre aufheben?" onConfirm={() => onChange({ locked: false, lockedAt: null })}>
+          Entsperren
+        </ConfirmBtn>
+      </div>
+    );
+  return (
+    <button type="button" className="room-lock" onClick={() => onChange({ locked: true, lockedAt: todayISO() })}>
+      <Icon name="lock" size={17} />
+      <span className="room-lock-txt">
+        <b>Maße als gemessen sperren</b>
+        <span>Danach lassen sich Wände, Fläche und Höhe dieses Raums nicht mehr versehentlich ändern.</span>
+      </span>
+    </button>
+  );
+}
+
 export function updateRoom(floorId, roomId, patch) {
   updateDoc('floors', floorId, (f) => ({ ...f, rooms: (f.rooms || []).map((r) => (r.id === roomId ? { ...r, ...patch, example: false } : r)) }));
 }
@@ -803,7 +829,7 @@ export function RoomDrawer({ data, drawer }) {
       }
       footer={
         <>
-          <ConfirmBtn onConfirm={() => { updateDoc('floors', f.id, (x) => ({ ...x, rooms: x.rooms.filter((y) => y.id !== r.id) })); closeDrawer(); setUI({ selection: null }); toast('Raum gelöscht'); }} />
+          {r.locked ? null : <ConfirmBtn onConfirm={() => { if (updateDoc('floors', f.id, (x) => ({ ...x, rooms: x.rooms.filter((y) => y.id !== r.id) })) === false) return; closeDrawer(); setUI({ selection: null }); toast('Raum gelöscht'); }} />}
           <Btn kind="primary" icon="plan" onClick={() => { closeDrawer(); setUI({ floorId: f.id }); go('grundriss'); }}>
             Im Grundriss bearbeiten
           </Btn>
@@ -820,7 +846,7 @@ export function RoomDrawer({ data, drawer }) {
               core: true,
               el: (
                 <Field label="Fläche" hint={`Aus dem Grundriss (Innenmaß): ${fmtArea(computed)}`}>
-                  <NumInput id={'r-area-' + r.id} value={r.area} placeholder={fmtFixed(computed, 2)} onChange={(v) => set({ area: v })} unit="m²" digits={2} />
+                  <NumInput id={'r-area-' + r.id} value={r.area} placeholder={fmtFixed(computed, 2)} onChange={(v) => set({ area: v })} unit="m²" digits={2} disabled={!!r.locked} />
                 </Field>
               ),
             },
@@ -829,7 +855,7 @@ export function RoomDrawer({ data, drawer }) {
               label: 'Raumhöhe',
               el: (
                 <Field label="Raumhöhe">
-                  <NumInput id={'r-h-' + r.id} value={r.height} placeholder={fmtFixed(f.height - (f.slab ?? 0.2), 2)} onChange={(v) => set({ height: v })} unit="m" digits={2} />
+                  <NumInput id={'r-h-' + r.id} value={r.height} placeholder={fmtFixed(f.height - (f.slab ?? 0.2), 2)} onChange={(v) => set({ height: v })} unit="m" digits={2} disabled={!!r.locked} />
                 </Field>
               ),
             },
@@ -848,6 +874,7 @@ export function RoomDrawer({ data, drawer }) {
         return (
           <>
             <Section n={1} title="Raum">
+              <RoomLock r={r} onChange={set} />
               <div className="grid2">{shown}</div>
               <MoreFields items={more} />
             </Section>

@@ -853,6 +853,19 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .ms-dep-btn.has { color: var(--accent-ink); }
 .ms-dep-btn.warn { color: var(--warn); }
 .ms-dep-n { position: absolute; top: -2px; right: -3px; min-width: 15px; height: 15px; border-radius: 99px; background: var(--accent); color: #fff; font-size: 9.5px; font-weight: 700; display: grid; place-items: center; padding: 0 3px; }
+/* room dimensions locked as measured */
+.room-lock { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 11px; border: 1px dashed var(--line); border-radius: 10px; background: var(--surface); color: var(--ink-2); text-align: left; cursor: pointer; }
+.room-lock:hover { border-color: var(--accent); color: var(--ink); }
+.room-lock.is-on { border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent-ink); cursor: default; }
+.room-lock > .ico, .room-lock > svg { flex: none; }
+.room-lock.is-on { flex-wrap: wrap; }
+.room-lock-txt { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1 1 170px; }
+.room-lock.is-on .btn { margin-left: auto; }
+.side-row .side-end-txt { display: inline-flex; align-items: center; gap: 4px; }
+.room-lock-txt b { font-size: 13px; color: var(--ink); }
+.room-lock.is-on .room-lock-txt b { color: var(--accent-ink); }
+.room-lock-txt span { font-size: 11.5px; line-height: 1.35; }
+.room-lock .btn { flex: none; }
 /* tasks and milestones: the text gets the full width and wraps, the details sit in a line below */
 .todo-row { display: grid; grid-template-columns: 22px minmax(0, 1fr); column-gap: 8px; row-gap: 5px; align-items: start; }
 .rows > .todo-row + .todo-row, .rows > .ms-block + .ms-block { border-top: 1px solid var(--line); padding-top: 9px; }

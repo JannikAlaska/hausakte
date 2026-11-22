@@ -106,7 +106,7 @@ export function houseContext(d, { withProjects = true, withComponents = true, wi
   L.push('');
   L.push('GESCHOSSE');
   for (const f of floors) {
-    const rooms = (f.rooms || []).map((r) => `${r.name} ${fmtNum(roomArea(r), 1)} m²`).join(', ');
+    const rooms = (f.rooms || []).map((r) => `${r.name} ${fmtNum(roomArea(r), 1)} m²${r.locked ? ' (gemessen, Maße gesperrt)' : ''}`).join(', ');
     L.push(`${f.short || ''} ${f.name} (OKFF ${fmtNum(f.elevation, 2)} m, Geschosshöhe ${fmtNum(f.height, 2)} m${f.underRoof ? ', Dachgeschoss' : ''}): ${rooms || 'keine Räume'}`);
   }
   const lineInfo = [];
@@ -143,7 +143,7 @@ export function houseContext(d, { withProjects = true, withComponents = true, wi
     L.push('');
     L.push('NEBENGEBÄUDE');
     for (const b of outb) {
-      const rooms = (b.rooms || []).map((r) => `${r.name} ${fmtNum(roomArea(r), 1)} m²`).join(', ');
+      const rooms = (b.rooms || []).map((r) => `${r.name} ${fmtNum(roomArea(r), 1)} m²${r.locked ? ' (gemessen, Maße gesperrt)' : ''}`).join(', ');
       const fx = (b.points || []).map((q) => `${q.count > 1 ? q.count + '× ' : ''}${fixtureKind(q.kind).name}`).join(', ');
       L.push(`- ${b.name || 'Nebengebäude'}: ${fmtNum(b.w, 1)} × ${fmtNum(b.d, 1)} m, Wandhöhe ${fmtNum(b.h ?? 2.4, 1)} m${b.open ? ', offen' : ''}${rooms ? `; Räume: ${rooms}` : ''}${(b.lines || []).length ? `; ${b.lines.length} Leitungen (${[...new Set(b.lines.map((l) => lineKind(l.kind).name))].join(', ')})` : ''}${fx ? `; Anschlüsse: ${fx}` : ''}${b.notes ? `; Notiz: ${String(b.notes).slice(0, 160)}` : ''}`);
     }
@@ -777,6 +777,7 @@ Wenn der Nutzer etwas anlegen oder ändern möchte (Projekt, Termine, Status, Hi
 Besprechungen: Erzählt der Nutzer von einem Termin oder Gespräch zu einem Projekt (z. B. „Notiz zur PV: Elektriker war da …“), lege mit add_meeting_note eine Besprechungsnotiz mit Terminen und To-dos an. Ändern und löschen kannst du Besprechungen mit update_item bzw. delete_item (type meeting, IDs aus get_project); frage beim Löschen nach, ob die daraus angelegten Termine und To-dos mit weg sollen, wenn der Nutzer das nicht gesagt hat.
 Kontakte (Handwerker, Berater, Behörden) verwaltest und verknüpfst du mit manage_contact; Fotos von Visitenkarten lädt der Nutzer unter Dokumente › Kontakte oder im Projekt-Reiter „Ansprechpartner“ hoch.
 Allgemeine Notizen ohne Projektbezug (z. B. „Notiere: …“, „Schreib dir auf …“) verwaltest du mit manage_note (anlegen, ändern, ergänzen, löschen). Passt eine Notiz eindeutig zu einem Projekt, frage kurz nach, ob sie als Besprechung ans Projekt soll.
+Räume mit „gemessen, Maße gesperrt“ sind vor Ort vermessen: Ihre Wände, Fläche und Höhe änderst du nicht und schlägst auch keine Änderung daran vor; die App würde sie ohnehin ablehnen. Will der Nutzer dort etwas ändern, sag ihm, dass er den Raum zuerst in den Raumdetails entsperren muss.
 Grundriss: Für Maße (Türbreiten, Abstände zwischen Fenstern, Wandlängen, Raummaße) hole mit get_floor_plan die Räume, Wände und Öffnungen der Etage und trage das Maß mit add_measurement ein; Leitungslängen änderst du mit update_line. Möbel stellst, änderst oder entfernst du mit manage_furniture (vorher get_floor_plan für Raum- und Wand-IDs; „an die Nordwand“ = Wand mit side Norden im Raum). Heizkörper sind ebenfalls Möbel (Kategorie Heizung, Bauart über radiatorType); ihre geschätzte Wärmeleistung steht im Hauskontext und in get_floor_plan – nutze sie z. B. für die Frage, ob die Heizkörper für eine Wärmepumpe mit niedriger Vorlauftemperatur reichen. Wähle bei mehreren passenden Fenstern die naheliegendsten (gleiche Wand, nebeneinander) und sage kurz, welche du genommen hast. Nachrichten können per Spracheingabe kommen – rechne mit Erkennungsfehlern (z. B. „eins komma fünf“ = 1,5) und frage nach, wenn etwas unklar ist.
 Aufgaben (Rahmenbedingungen/To-dos): Lege jeden Arbeitsschritt als eigene Aufgabe an – nie mehrere Schritte in einem Text („Decke abnehmen; danach Trockenbau …“ sind zwei Aufgaben). Formuliere kurz (ein Satz), Fälligkeit in due (YYYY-MM-DD) statt im Text, Zuständige in who. Reihenfolgen oder Hinweise wie „nach der Elektrik“ dürfen kurz im Text stehen. Willst du einen bestehenden Sammeleintrag aufteilen, ändere ihn mit update_item auf den ersten Schritt und lege die übrigen mit add_constraint an.
 Das Feld „Hinweise“ eines Projekts ist für Abhängigkeiten, Fristen und Besonderheiten gedacht, die man beim Planen beachten muss. Abhängigkeiten können auf ein Projekt (nach dessen Ende) oder auf einen Meilenstein („Projekt-ID#Meilenstein-ID“) zeigen – für Projekte und für Meilensteine.

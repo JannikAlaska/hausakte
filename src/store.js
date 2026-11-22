@@ -2,6 +2,7 @@
 // localStorage. Local state is authoritative while a write for a document is queued or in flight.
 
 import { deepClone } from './util.js';
+import { lockViolation, houseLockViolation } from './locks.js';
 import { isSupabaseMode, supaDb, supaAssets, cachedFileUrl, onFileUrls, reconnectRealtime, getSession, storedUser } from './supa.js';
 
 export const COLLECTIONS = ['house', 'floors', 'components', 'projects', 'readings', 'documents', 'underlays', 'notes', 'contacts'];
@@ -326,19 +327,31 @@ function applyCache(snap) {
 }
 
 // ---------- public mutations ----------
-export function putDoc(col, id, data, delay = 450) {
+// writes that would change a room marked as measured are refused; the UI shows why
+const blockedFns = new Set();
+export const onBlocked = (fn) => (blockedFns.add(fn), () => blockedFns.delete(fn));
+
+export function putDoc(col, id, data, delay = 450, { force = false } = {}) {
+  if (data != null && !force) {
+    const why = col === 'floors' ? lockViolation(state.floors[id], data) : col === 'house' ? houseLockViolation(state.house, data) : null;
+    if (why) {
+      blockedFns.forEach((fn) => fn(why));
+      return false;
+    }
+  }
   const body = data == null ? null : { ...data, id: col === 'house' ? 'main' : id };
   applyLocal(col, id, body);
   emit();
   if (state.mode === 'db') schedule(col, id, body, delay);
   else saveLocalSoon();
+  return true;
 }
 
 export function updateDoc(col, id, fn, delay) {
   const cur = col === 'house' ? state.house : state[col][id];
   if (!cur && col !== 'house') return;
   const next = fn(deepClone(cur || {}));
-  putDoc(col, id, next, delay);
+  return putDoc(col, id, next, delay);
 }
 
 export const deleteDoc = (col, id) => putDoc(col, id, null, 0);
@@ -352,7 +365,7 @@ export function loadDataset(ds) {
     const arr = Array.isArray(ds[c]) ? ds[c] : Object.values(ds[c] || {});
     for (const d of arr) if (d && d.id) all.push([c, d.id, d]);
   }
-  all.forEach(([c, id, d], i) => putDoc(c, id, d, 60 + i * 40));
+  all.forEach(([c, id, d], i) => putDoc(c, id, d, 60 + i * 40, { force: true }));
 }
 
 export function clearAll() {

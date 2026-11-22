@@ -1,6 +1,6 @@
 import './native-speech.js';
 import { HouseScene } from './scene.js';
-import { initStore, loadDataset, clearAll, exportData, getState, resync, canResync, flushAll } from './store.js';
+import { initStore, loadDataset, clearAll, exportData, getState, resync, canResync, flushAll, onBlocked } from './store.js';
 import { createTemplate, createEmptyHouse } from './template.js';
 import { useUI, useData, setUI, go, openDrawer, closeDrawer, toast, getUI, sceneHandle, areaOf } from './ui/state.js';
 import { SunPanel, solarResult } from './ui/solar.jsx';
@@ -27,6 +27,14 @@ import { projectKind, gewerk, roomType } from './catalog.js';
 import { fmtTime, fmtArea } from './util.js';
 import { portfolio, buildingStats, roomArea, liveProjects } from './metrics.js';
 import { isSupabaseMode, getSession, onAuth, signIn, signUp, resetPassword, updatePassword, authErrorText, realtimeStatus, onRealtime, storedUser } from './supa.js';
+
+// a change refused because it would alter a room marked as measured (dragging a wall fires many in a row)
+let lastBlocked = 0;
+onBlocked((why) => {
+  if (Date.now() - lastBlocked < 2500) return;
+  lastBlocked = Date.now();
+  toast(why, 'warn', 6000);
+});
 
 const { useEffect, useRef, useMemo, useState, useLayoutEffect } = React;
 
