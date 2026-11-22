@@ -183,7 +183,8 @@ function flush(path) {
       setState({ lastSaved: Date.now(), error: null });
       if (entry.waiting || state.waiting) setState({ waiting: [...pending.values()].filter((x) => x.waiting).length });
     } catch (e) {
-      if (isConnectionError(e)) return requeue(path, entry);
+      // no connection, or signed out: keep the change and send it later
+      if (isConnectionError(e) || e?.code === 'unauthenticated') return requeue(path, entry);
       if (e?.code === 'unavailable') {
         await new Promise((r) => setTimeout(r, 800 + Math.random() * 800));
         try {
@@ -276,7 +277,7 @@ function saveCacheSoon() {
   cacheTimer = setTimeout(() => (typeof requestIdleCallback === 'function' ? requestIdleCallback(writeCache, { timeout: 2000 }) : writeCache()), 2000);
 }
 function writeCache() {
-  if (!cacheKey) return;
+  if (!cacheKey) return Promise.resolve();
   const data = {};
   for (const c of COLLECTIONS) data[c] = c === 'house' ? state.house : state[c];
   const dirty = {};
@@ -286,7 +287,12 @@ function writeCache() {
     dirty[path] = { col, id, data: col === 'house' ? state.house : state[col]?.[id] ?? null, base: bases.get(path) ?? null };
   }
   const snap = { v: 1, at: Date.now(), data, stamps: [...stamps], dirty };
-  idbDo('readwrite', (st) => st.put(snap, cacheKey)).catch(() => {});
+  return idbDo('readwrite', (st) => st.put(snap, cacheKey)).catch(() => {});
+}
+// before a reload: put this device's copy and waiting changes away now
+export function saveCacheNow() {
+  clearTimeout(cacheTimer);
+  return state.mode === 'db' ? writeCache() : Promise.resolve();
 }
 async function readCache() {
   try {
@@ -472,6 +478,12 @@ function startDb(d, cached) {
         if (loaded.size === COLLECTIONS.length) clearTimeout(failSafe);
       },
       (err) => {
+        // signed out: keep showing this device's copy right away (the UI offers to sign in)
+        if (err?.code === 'unauthenticated') {
+          clearTimeout(failSafe);
+          if (!state.loaded) setState({ loaded: true });
+          return;
+        }
         markLoaded(col);
         if (err?.code === 'revoked') setState({ error: 'Der Zugriff auf diese Hausakte wurde beendet.', readOnly: true });
       },

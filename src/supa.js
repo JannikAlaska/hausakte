@@ -38,12 +38,39 @@ export function storedUser() {
       if (/^sb-.*-auth-token$/.test(k)) {
         const v = JSON.parse(localStorage.getItem(k) || 'null');
         const u = v?.user || v?.currentSession?.user;
-        if (u?.id) return { id: u.id };
+        if (u?.id) return { id: u.id, email: u.email || '' };
       }
     }
   } catch {}
   return null;
 }
+// whether this device has a usable sign-in: true, false (signed out or expired), null (cannot tell, e.g. offline)
+export async function sessionOk() {
+  try {
+    const { data, error } = await supa().auth.getSession();
+    if (data?.session) return true;
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return null;
+    if (error && /fetch|network|timeout|load failed/i.test(error.message || error.name || '')) return null;
+    return false;
+  } catch {
+    return null;
+  }
+}
+// the app keeps showing this device's copy when the sign-in is gone; the UI then offers to sign in again
+const authLostFns = new Set();
+export const onAuthLost = (fn) => (authLostFns.add(fn), () => authLostFns.delete(fn));
+const authLost = () => {
+  authLostFns.forEach((fn) => fn());
+  return { code: 'unauthenticated', message: 'Nicht angemeldet' };
+};
+// without a sign-in the server answers with nothing (row level security) - that must not look like
+// "everything was deleted", so reads and writes stop here instead
+async function requireSession() {
+  if ((await sessionOk()) === false) throw authLost();
+}
+const isJwtError = (error) => /jwt|PGRST30[0-3]|not authenticated|invalid claim/i.test(`${error?.code || ''} ${error?.message || ''}`);
+const dbError = (error, code = 'unavailable') => (isJwtError(error) ? authLost() : { code, message: error.message });
+
 export function onAuth(fn) {
   const { data } = supa().auth.onAuthStateChange((ev, session) => fn(session, ev));
   return () => data.subscription.unsubscribe();
@@ -144,10 +171,11 @@ export function reconnectRealtime() {
 }
 
 async function pages(build) {
+  await requireSession();
   const rows = [];
   for (let from = 0; ; from += 1000) {
     const { data, error } = await build().range(from, from + 999);
-    if (error) throw { code: 'unavailable', message: error.message };
+    if (error) throw dbError(error);
     rows.push(...data);
     if (data.length < 1000) break;
   }
@@ -162,10 +190,11 @@ export function supaDb() {
     // collection, id and version of every document (a few KB) - to find out cheaply what changed
     fetchStamps: () => pages(() => sb.from('hausakte_docs').select('collection,id,updated_at').order('collection').order('id')),
     async fetchDocs(col, ids) {
+      await requireSession();
       const out = [];
       for (let i = 0; i < ids.length; i += 80) {
         const { data, error } = await sb.from('hausakte_docs').select('id,data,updated_at').eq('collection', col).in('id', ids.slice(i, i + 80));
-        if (error) throw { code: 'unavailable', message: error.message };
+        if (error) throw dbError(error);
         out.push(...data);
       }
       return out;
@@ -193,11 +222,12 @@ export function supaDb() {
           };
         },
         doc(id) {
-          const fail = (error) => ({ code: error.code === '42501' ? 'invalid_argument' : 'unavailable', message: error.message });
+          const fail = (error) => dbError(error, error.code === '42501' ? 'invalid_argument' : 'unavailable');
           return {
             // with opts.stamp the write only succeeds if nobody changed the row since; otherwise
             // it throws { code: 'conflict', current: { data, updated_at } | null }
             async set(data, opts = {}) {
+              await requireSession();
               if (opts.stamp) {
                 const { data: rows, error } = await sb.from('hausakte_docs').update({ data }).eq('collection', col).eq('id', id).eq('updated_at', opts.stamp).select('updated_at');
                 if (error) throw fail(error);
@@ -211,8 +241,9 @@ export function supaDb() {
               return { stamp: rows?.[0]?.updated_at || null };
             },
             async delete() {
+              await requireSession();
               const { error } = await sb.from('hausakte_docs').delete().eq('collection', col).eq('id', id);
-              if (error) throw { code: 'unavailable', message: error.message };
+              if (error) throw dbError(error);
             },
           };
         },

@@ -1,6 +1,6 @@
 import './native-speech.js';
 import { HouseScene } from './scene.js';
-import { initStore, loadDataset, clearAll, exportData, getState, resync, canResync, flushAll, onBlocked } from './store.js';
+import { initStore, loadDataset, clearAll, exportData, getState, resync, canResync, flushAll, onBlocked, saveCacheNow } from './store.js';
 import { createTemplate, createEmptyHouse } from './template.js';
 import { useUI, useData, setUI, go, openDrawer, closeDrawer, toast, getUI, sceneHandle, areaOf } from './ui/state.js';
 import { SunPanel, solarResult } from './ui/solar.jsx';
@@ -26,7 +26,7 @@ import { prepareOlderNotes } from './notesai.js';
 import { projectKind, gewerk, roomType } from './catalog.js';
 import { fmtTime, fmtArea } from './util.js';
 import { portfolio, buildingStats, roomArea, liveProjects } from './metrics.js';
-import { isSupabaseMode, getSession, onAuth, signIn, signUp, resetPassword, updatePassword, authErrorText, realtimeStatus, onRealtime, storedUser } from './supa.js';
+import { isSupabaseMode, getSession, onAuth, onAuthLost, signIn, signUp, resetPassword, updatePassword, authErrorText, realtimeStatus, onRealtime, storedUser } from './supa.js';
 
 // a change refused because it would alter a room marked as measured (dragging a wall fires many in a row)
 let lastBlocked = 0;
@@ -398,8 +398,9 @@ function SyncButton({ data }) {
     return () => clearTimeout(t);
   }, [data.fromCache]);
   const busy = data.saving > 0;
-  const st = !online || (data.waiting && !data.syncing) || (stale && data.fromCache) ? 'offline' : data.mode === 'local' ? 'local' : data.syncing ? 'syncing' : busy ? 'saving' : supaMode && rt === 'down' ? 'reconnect' : 'ok';
-  const label = { offline: data.waiting ? `Offline · ${data.waiting}` : 'Offline', local: 'Nur lokal', syncing: 'Abgleich …', saving: 'Speichert …', reconnect: 'Abgleichen', ok: 'Synchron' }[st];
+  const lost = useUI().authLost;
+  const st = lost && online ? 'login' : !online || (data.waiting && !data.syncing) || (stale && data.fromCache) ? 'offline' : data.mode === 'local' ? 'local' : data.syncing ? 'syncing' : busy ? 'saving' : supaMode && rt === 'down' ? 'reconnect' : 'ok';
+  const label = { login: 'Anmelden', offline: data.waiting ? `Offline · ${data.waiting}` : 'Offline', local: 'Nur lokal', syncing: 'Abgleich …', saving: 'Speichert …', reconnect: 'Abgleichen', ok: 'Synchron' }[st];
   const ago = (t) => {
     if (!t) return null;
     const m = Math.round((Date.now() - t) / 60000);
@@ -411,12 +412,14 @@ function SyncButton({ data }) {
     data.lastSync ? `Letzter Abgleich: ${ago(data.lastSync)}.` : null,
     data.lastSaved ? `Zuletzt gespeichert: ${ago(data.lastSaved)}.` : null,
     st === 'reconnect' ? 'Live-Verbindung unterbrochen.' : null,
+    st === 'login' ? 'Du bist nicht mehr angemeldet – Änderungen werden gespeichert, sobald du dich wieder anmeldest. Tippen zum Anmelden.' : null,
     !online ? 'Keine Internetverbindung – Änderungen werden gespeichert, sobald du wieder online bist.' : null,
     data.waiting ? `${data.waiting} ${data.waiting === 1 ? 'Änderung wartet' : 'Änderungen warten'} auf die Verbindung und ${data.waiting === 1 ? 'wird' : 'werden'} dann automatisch gespeichert.` : null,
     data.fromCache ? `Angezeigt wird der auf diesem Gerät gespeicherte Stand vom ${fmtTime(data.fromCache)}.` : null,
     data.mode !== 'local' ? 'Tippen zum Synchronisieren.' : null,
   ].filter(Boolean).join(' ');
   const run = async () => {
+    if (st === 'login') return setUI({ loginOpen: true });
     if (data.mode === 'local') return toast('Diese Version speichert nur in diesem Browser. Für den Abgleich zwischen Handy und Tablet nutze die Web-Version mit Anmeldung.', 'warn', 7000);
     if (!online) return toast('Keine Internetverbindung. Sobald du wieder online bist, wird automatisch abgeglichen.', 'warn', 5000);
     if (!canResync()) {
@@ -557,6 +560,20 @@ function Banners({ data }) {
   const ui = useUI();
   const [hideEx, setHideEx] = useState(false);
   const [reset, setReset] = useState(false);
+  const [hideLogin, setHideLogin] = useState(false);
+  if (ui.authLost && !hideLogin)
+    return (
+      <div className="banner banner-login" role="status">
+        <Icon name="alert" size={16} />
+        <span>
+          <b>Nicht angemeldet.</b> Du siehst den Stand auf diesem Gerät{data.waiting ? ` – ${data.waiting} ${data.waiting === 1 ? 'Änderung wartet' : 'Änderungen warten'} aufs Speichern` : ''}.
+        </span>
+        <Btn small kind="primary" onClick={() => setUI({ loginOpen: true })}>
+          Anmelden
+        </Btn>
+        <IconBtn icon="x" label="Hinweis ausblenden – Anmelden geht auch über den Sync-Knopf oben" onClick={() => setHideLogin(true)} />
+      </div>
+    );
   if (data.error)
     return (
       <div className="banner" role="status">
@@ -650,6 +667,8 @@ function useAuth() {
       if (ev === 'SIGNED_OUT') return setAuth({ status: 'out' });
       if (session) setAuth((a) => (a.status === 'recovery' ? a : { status: 'in' }));
     });
+    // showing this device's copy, but the server no longer accepts the sign-in
+    const offLost = onAuthLost(() => setAuth((a) => (a.status === 'in' && !a.lost ? { ...a, lost: true } : a)));
     // without a connection the session cannot be refreshed: whoever was signed in on this device
     // keeps working with the offline copy
     const offlineUser = () => (typeof navigator !== 'undefined' && navigator.onLine === false) || !!storedUser();
@@ -659,15 +678,17 @@ function useAuth() {
     return () => {
       alive = false;
       off();
+      offLost();
     };
   }, []);
   return [auth, setAuth];
 }
 
-function Login({ auth, setAuth }) {
+// onSignedIn: used when the app already shows this device's copy - it then reloads with the fresh sign-in
+function Login({ auth, setAuth, onSignedIn, onClose }) {
   const params = new URLSearchParams(location.search);
   const [mode, setMode] = useState(auth.status === 'recovery' ? 'recovery' : params.get('einladung') ? 'signup' : 'login');
-  const [email, setEmail] = useState(params.get('email') || '');
+  const [email, setEmail] = useState(params.get('email') || (onSignedIn ? storedUser()?.email : '') || '');
   const [pw, setPw] = useState('');
   const [code, setCode] = useState(params.get('einladung') || '');
   const [busy, setBusy] = useState(false);
@@ -681,8 +702,13 @@ function Login({ auth, setAuth }) {
     if (mode !== 'reset' && pw.length < (mode === 'login' ? 1 : 8)) return setMsg({ err: true, text: 'Das Passwort muss mindestens 8 Zeichen haben.' });
     setBusy(true);
     try {
-      if (mode === 'login') await signIn(email, pw);
-      else if (mode === 'signup') await signUp(email, pw, code);
+      if (mode === 'login') {
+        await signIn(email, pw);
+        if (onSignedIn) return onSignedIn();
+      } else if (mode === 'signup') {
+        await signUp(email, pw, code);
+        if (onSignedIn) return onSignedIn();
+      }
       else if (mode === 'reset') {
         await resetPassword(email);
         setMsg({ text: 'Wenn es ein Konto zu dieser Adresse gibt, kommt gleich eine E-Mail mit einem Link zum Zurücksetzen.' });
@@ -719,9 +745,10 @@ function Login({ auth, setAuth }) {
         <Icon name="home" size={24} stroke={2} />
       </span>
       <div>
-        <h1>{mode === 'login' ? 'Hausakte' : T[0]}</h1>
-        <p>{T[1]}</p>
+        <h1>{mode === 'login' ? (onSignedIn ? 'Wieder anmelden' : 'Hausakte') : T[0]}</h1>
+        <p>{mode === 'login' && onSignedIn ? 'Deine Anmeldung ist abgelaufen. Melde dich an, dann wird alles wieder abgeglichen – auch Änderungen, die du inzwischen gemacht hast.' : T[1]}</p>
       </div>
+      {onClose ? <IconBtn icon="x" label="Schließen" className="login-close" onClick={onClose} /> : null}
       {mode !== 'recovery' ? (
         <label className="field">
           <span className="field-label">E-Mail</span>
@@ -775,9 +802,18 @@ function App() {
   const sceneRef = useRef(null);
   const [auth, setAuth] = useAuth();
   const authed = auth.status === 'none' || auth.status === 'in';
+  const lost = auth.status === 'in' && !!auth.lost;
   useEffect(() => {
     if (authed) initStore();
   }, [authed]);
+  useEffect(() => {
+    if (!!getUI().authLost !== lost) setUI({ authLost: lost, ...(lost ? {} : { loginOpen: false }) });
+  }, [lost]);
+  // signed in again while this device's copy is shown: keep waiting changes, then start fresh
+  const reloadSignedIn = async () => {
+    await saveCacheNow();
+    location.reload();
+  };
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === 'Escape' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) {
@@ -805,11 +841,11 @@ function App() {
   const ready = data.loaded;
   const hasHouse = !!data.house;
   const sheetOpen = ui.view !== 'modell';
-  if (!authed)
+  if (!authed || (lost && ready && !hasHouse))
     return (
       <div className="app" style={{ position: 'absolute', inset: 0 }}>
         <SceneView data={data} sceneRef={sceneRef} />
-        <Login auth={auth} setAuth={setAuth} />
+        <Login auth={lost ? { status: 'out' } : auth} setAuth={setAuth} onSignedIn={lost ? reloadSignedIn : undefined} />
         <Toasts />
       </div>
     );
@@ -840,6 +876,11 @@ function App() {
           <QuickHost data={data} />
           <PhotoViewer data={data} />
           <Banners data={data} />
+          {lost && ui.loginOpen ? (
+            <div className="qn-overlay login-overlay" onPointerDown={(e) => e.target === e.currentTarget && setUI({ loginOpen: false })}>
+              <Login auth={{ status: 'out' }} setAuth={setAuth} onSignedIn={reloadSignedIn} onClose={() => setUI({ loginOpen: false })} />
+            </div>
+          ) : null}
         </>
       ) : null}
       {ready && !hasHouse ? data.mode === 'db' && !data.serverOk ? <OfflineStart /> : <Welcome /> : null}

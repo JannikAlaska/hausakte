@@ -160,7 +160,8 @@ p { margin: 0; }
 .sync-dot { position: absolute; right: -2px; bottom: -1px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--surface); }
 .sync.is-saving .sync-dot, .sync.is-syncing .sync-dot { background: var(--info); }
 .sync.is-local .sync-dot, .sync.is-reconnect .sync-dot { background: var(--warn); }
-.sync.is-offline .sync-dot { background: var(--danger); }
+.sync.is-offline .sync-dot, .sync.is-login .sync-dot { background: var(--danger); }
+.sync.is-login .sync-label { color: var(--danger); font-weight: 600; }
 .sync.is-reconnect .sync-label, .sync.is-offline .sync-label { color: var(--warn-ink); font-weight: 600; }
 .spin { animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -754,6 +755,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 /* ---------- login (self-hosted) ---------- */
 .login { gap: 14px; width: min(420px, calc(100% - 2 * var(--gut))); }
 .login h1 { margin-bottom: 4px; }
+.login-overlay .login { position: relative; left: auto; top: auto; transform: none; margin: auto; }
+.login-close { position: absolute; top: 12px; right: 12px; }
 .login p { margin: 0; }
 .login .field { display: flex; flex-direction: column; gap: 5px; }
 .login .btn { justify-content: center; }
