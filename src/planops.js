@@ -1,6 +1,6 @@
 // Plan geometry shared by the floor plan editor and the AI assistant: lines, connection points, dimensions, openings per room.
 import { dist, distToSeg, same, perp, norm, sub, add, mul, pointInPoly, polyArea, bbox } from './geometry.js';
-import { fixtureKind } from './catalog.js';
+import { fixtureKind, wallBuild } from './catalog.js';
 import { bearing, bearingName } from './roof.js';
 import { uid } from './util.js';
 
@@ -171,7 +171,7 @@ export function floorPlanInfo(floor, north = 0) {
     const { u, L } = frame(w);
     rooms.forEach((r, i) => {
       const sp = wallSpan(w, r);
-      if (sp) info[i].walls.push({ id: w.id, side: sideName(w, sp.side), length: r3(L), ...(sp.to - sp.from < L * 0.8 ? { lengthInRoom: r3(sp.to - sp.from + 0.06 * L) } : {}), exterior: !!w.ext });
+      if (sp) info[i].walls.push({ id: w.id, side: sideName(w, sp.side), length: r3(L), ...(sp.to - sp.from < L * 0.8 ? { lengthInRoom: r3(sp.to - sp.from + 0.06 * L) } : {}), exterior: !!w.ext, thickness_cm: Math.round(w.t * 1000) / 10, ...(w.build ? { build: wallBuild(w.build)?.name || w.build } : {}), ...(w.bearing ? { loadBearing: w.bearing === 'ja' } : {}), ...(w.buildNote ? { buildNote: w.buildNote } : {}) });
       for (const o of w.openings || []) {
         const so = roomSide(w, add(w.a, mul(u, o.pos)), r);
         if (so) info[i].openings.push({ id: o.id, type: OPENING_NAME[o.type] || o.type, width: r3(o.w), height: r3(o.h), wallId: w.id, side: sideName(w, so), exterior: !!w.ext, posOnWall: r3(o.pos) });

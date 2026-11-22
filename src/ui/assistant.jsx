@@ -8,7 +8,7 @@ import { resolveRef, createsCycle, msRef, sortFloors } from '../metrics.js';
 import { floorPlanInfo, measurePoints, dimLength, lineLength, resizeLine, relink, r3, roomOfPoint, wallFrontPoint } from '../planops.js';
 import { FURNITURE, RAD_TYPES, furnType, furnSize, placeFurniture, snapToWalls, radiatorOutput, furnName } from '../furniture.js';
 import { labelPoint } from '../geometry.js';
-import { lineKind } from '../catalog.js';
+import { lineKind, WALL_BUILDS, wallBuild } from '../catalog.js';
 import { updateDoc } from '../store.js';
 import { pointInPoly } from '../geometry.js';
 import { setUI, go } from './state.js';
@@ -318,6 +318,35 @@ export function makeTools(log) {
             return { id: x.id, type: x.type, name: furnName(x), label: x.label || '', size_cm: `${Math.round(w * 100)} × ${Math.round(d * 100)} × ${Math.round(h * 100)}`, rotation: x.rot || 0, status: x.status || 'bestand', room: roomOfPoint(f, { x: x.x, y: x.y })?.name || null, ...(out ? { heatOutput_W: out } : {}) };
           }),
         };
+      },
+    },
+    {
+      name: 'set_wall_build',
+      description: 'Trägt die Beschaffenheit von Wänden ein: Bauart (z. B. Trockenbau, Ziegel, Fachwerk), ob die Wand tragend ist, und Details zum Aufbau. Wand-IDs aus get_floor_plan (bei Räumen unter walls, mit Himmelsrichtung). Nur übergebene Angaben werden geändert.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          floor: { type: 'string', description: 'Etagen-ID oder Kürzel' },
+          wallIds: { type: 'array', items: { type: 'string' } },
+          build: { type: 'string', enum: WALL_BUILDS.map((b) => b.key) },
+          loadBearing: { type: 'boolean', description: 'true = tragend, false = nicht tragend' },
+          note: { type: 'string', description: 'Aufbau, z. B. "GK 12,5 mm doppelt, CW 75, Mineralwolle"' },
+        },
+        required: ['floor', 'wallIds'],
+      },
+      execute(input) {
+        const f = findFloor(input.floor);
+        const ids = new Set((input.wallIds || []).map(String));
+        const found = (f.walls || []).filter((w) => ids.has(w.id));
+        if (!found.length) throw new Error('Keine passende Wand gefunden – IDs aus get_floor_plan verwenden');
+        const patch = {};
+        if (input.build && wallBuild(input.build)) patch.build = input.build;
+        if (typeof input.loadBearing === 'boolean') patch.bearing = input.loadBearing ? 'ja' : 'nein';
+        if (input.note != null) patch.buildNote = str(input.note, 300) || undefined;
+        if (!Object.keys(patch).length) throw new Error('Keine Angabe zum Eintragen');
+        if (updateDoc('floors', f.id, (x) => ({ ...x, walls: (x.walls || []).map((w) => (ids.has(w.id) ? { ...w, ...patch } : w)) }), 50) === false) throw new Error('Die Änderung wurde abgelehnt');
+        log({ kind: 'plan', floorId: f.id, text: `Wände im Grundriss ${f.short || f.name}: ${[patch.build ? wallBuild(patch.build).name : null, patch.bearing === 'ja' ? 'tragend' : patch.bearing === 'nein' ? 'nicht tragend' : null].filter(Boolean).join(', ') || 'Aufbau'} (${found.length})` });
+        return { updated: found.length };
       },
     },
     {

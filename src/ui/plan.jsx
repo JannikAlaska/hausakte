@@ -6,7 +6,7 @@ import { roomFocus, roomDims, inwardNormal, statusShown, inRoom } from '../focus
 import { PlanPhotoSpots, PlanSpotProps, spotBusy } from './photos.jsx';
 import { photoDocs, deleteSpot } from '../photos.js';
 import { downscaleImage } from './documents.jsx';
-import { ROOM_TYPES, roomType, ROOM_COLORS, LINE_KINDS, LINE_ZONES, lineKind, FIXTURE_KINDS, fixtureKind, fixtureZ } from '../catalog.js';
+import { ROOM_TYPES, roomType, ROOM_COLORS, LINE_KINDS, LINE_ZONES, lineKind, FIXTURE_KINDS, fixtureKind, fixtureZ, WALL_BUILDS, wallBuild } from '../catalog.js';
 import { DocList, UploadButton } from './documents.jsx';
 import { ADJ } from '../heat.js';
 import { ROOF_TYPES, autoRoofBase, sectionGeometry } from '../roof.js';
@@ -885,7 +885,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
       const last = chain.pts[chain.pts.length - 1];
       if (dist(last, sp) < 0.05) return finishChain();
       const id = uid('w');
-      mutate((f) => ({ ...f, walls: [...f.walls, { id, a: P3(last), b: P3(sp), t: defaults.t, ext: defaults.ext, openings: [] }] }));
+      mutate((f) => ({ ...f, walls: [...f.walls, { id, a: P3(last), b: P3(sp), t: defaults.t, ext: defaults.ext, ...(defaults.build ? { build: defaults.build } : {}), openings: [] }] }));
       if (same(sp, chain.pts[0]) && chain.pts.length > 1) return finishChain();
       setChain({ pts: [...chain.pts, sp] });
       setTyped('');
@@ -1315,7 +1315,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
     if (!len(dir)) return;
     const sp = P3(add(last, mul(dir, L)));
     const id = uid('w');
-    mutate((f) => ({ ...f, walls: [...f.walls, { id, a: P3(last), b: sp, t: defaults.t, ext: defaults.ext, openings: [] }] }));
+    mutate((f) => ({ ...f, walls: [...f.walls, { id, a: P3(last), b: sp, t: defaults.t, ext: defaults.ext, ...(defaults.build ? { build: defaults.build } : {}), openings: [] }] }));
     setChain({ pts: [...chain.pts, sp] });
     setTyped('');
   };
@@ -1530,8 +1530,9 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
                 })}
               {walls.map((w) => (
                 <g key={w.id} className={fade(focus?.walls.has(w.id))}>
+                  <title>{wallTitle(w)}</title>
                   {wallSolidPolys(w).map((poly, i) => (
-                    <polygon key={i} points={ptsAttr(poly)} className={`svg-wall ${w.ext ? 'ext' : ''} ${sel?.kind === 'wall' && sel.id === w.id ? 'sel' : ''} ${!ctx && hiddenSet.has(w.id) ? 'is-hidden3d' : ''}`} />
+                    <polygon key={i} points={ptsAttr(poly)} className={`svg-wall ${w.ext ? 'ext' : ''} ${sel?.kind === 'wall' && sel.id === w.id ? 'sel' : ''} ${!ctx && hiddenSet.has(w.id) ? 'is-hidden3d' : ''}`} style={w.build && !(sel?.kind === 'wall' && sel.id === w.id) ? { fill: wallBuild(w.build)?.color } : undefined} />
                   ))}
                   {(w.openings || []).map((o) => {
                     const { u, n } = wallFrame(w);
@@ -2550,6 +2551,7 @@ function WallProps({ w, walls = [], floor, mutate, onDelete, onSelectOpening, ca
           <NumInput value={w.t * 100} onChange={(v) => v && set({ t: v / 100 })} unit="cm" digits={1} />
         </Field>
       ) : null}
+      <WallBuildFields w={w} set={set} />
       <Toggle checked={w.ext} onChange={(v) => set({ ext: v })} label="Außenwand" />
       {can3d ? <Toggle checked={hidden3d} onChange={(v) => (v ? hideWall(w.id) : showWall(w.id))} label="Im 3D-Modell ausblenden" /> : null}
       {w.ext ? (
@@ -2577,6 +2579,36 @@ function WallProps({ w, walls = [], floor, mutate, onDelete, onSelectOpening, ca
           Tür
         </Btn>
       </div>
+    </div>
+  );
+}
+
+const wallTitle = (w) => {
+  const b = wallBuild(w.build);
+  return [w.ext ? 'Außenwand' : 'Innenwand', b ? b.name : 'Bauart nicht erfasst', w.bearing === 'ja' ? 'tragend' : w.bearing === 'nein' ? 'nicht tragend' : null, `${fmtNum(w.t * 100, 1)} cm`, w.buildNote || null].filter(Boolean).join(' · ');
+};
+
+// what the wall is made of: construction, load-bearing, details
+function WallBuildFields({ w, set }) {
+  const b = wallBuild(w.build);
+  const save = (patch) => set(patch, { refresh: false });
+  return (
+    <div className="wall-build">
+      <span className="field-label">Beschaffenheit</span>
+      <div className="wall-build-sel">
+        <span className={`wb-swatch ${b ? '' : 'is-empty'}`} style={b ? { background: b.color } : undefined} aria-hidden="true" />
+        <Select
+          id={'w-build-' + w.id}
+          value={w.build || ''}
+          onChange={(v) => save({ build: v || undefined })}
+          options={[{ value: '', label: 'Nicht erfasst' }, ...WALL_BUILDS.map((x) => ({ value: x.key, label: x.sub ? `${x.name} – ${x.sub}` : x.name }))]}
+          aria-label="Bauart der Wand"
+        />
+      </div>
+      <Seg small value={w.bearing || ''} onChange={(v) => save({ bearing: v || undefined })} options={[{ value: 'ja', label: 'Tragend' }, { value: 'nein', label: 'Nicht tragend' }, { value: '', label: 'Unklar' }]} />
+      <TextInput id={'w-buildnote-' + w.id} value={w.buildNote || ''} onChange={(v) => save({ buildNote: v || undefined })} placeholder={b?.note ? `Aufbau, ${b.note}` : 'Aufbau: Material, Beplankung, Dämmung, Putz …'} aria-label="Aufbau der Wand" />
+      {w.build === 'trockenbau' && w.t > 0.2 ? <p className="small muted">Trockenbauwände sind meist 7,5–15 cm dick – passt die Dicke ({fmtNum(w.t * 100, 1)} cm)?</p> : null}
+      {w.bearing === 'ja' ? <p className="small muted">Tragende Wand: Durchbrüche und Schlitze nur nach Rücksprache mit einem Tragwerksplaner.</p> : null}
     </div>
   );
 }
@@ -2888,6 +2920,32 @@ function LineSummary({ lines, points = [] }) {
   );
 }
 
+// colours of the walls by construction (only once at least one wall has it)
+function WallBuildLegend({ walls }) {
+  const counts = new Map();
+  for (const w of walls) counts.set(w.build || '', (counts.get(w.build || '') || 0) + 1);
+  if (![...counts.keys()].some(Boolean)) return null;
+  return (
+    <div className="wb-legend">
+      <span className="field-label">Wände nach Bauart</span>
+      <div className="wb-legend-list">
+        {WALL_BUILDS.filter((b) => counts.has(b.key)).map((b) => (
+          <span key={b.key}>
+            <i style={{ background: b.color }} />
+            {b.name} {counts.get(b.key)}
+          </span>
+        ))}
+        {counts.has('') ? (
+          <span>
+            <i className="is-empty" />
+            nicht erfasst {counts.get('')}
+          </span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function FloorProps({ floor, tool, defaults, setDefaults, grid, setGrid, ortho, setOrtho, mutate, ulUrl, onUpload, onCalibrate, lines = [], points = [], dims = [], onSelectFurn }) {
   const set = (patch) => mutate((f) => ({ ...f, ...patch }), { refresh: false });
   const ul = floor.underlay;
@@ -2899,9 +2957,16 @@ function FloorProps({ floor, tool, defaults, setDefaults, grid, setGrid, ortho, 
           <div className="stack" style={{ gap: 8, marginTop: 6 }}>
             <Select value={String(defaults.t)} onChange={(v) => setDefaults({ ...defaults, t: Number(v) })} options={THICKNESS.map((t) => ({ value: String(t.value), label: t.label }))} />
             <Toggle checked={defaults.ext} onChange={(v) => setDefaults({ ...defaults, ext: v, t: v && defaults.t < 0.24 ? 0.365 : !v && defaults.t > 0.24 ? 0.115 : defaults.t })} label="Außenwand" />
+            <Select
+              value={defaults.build || ''}
+              onChange={(v) => setDefaults({ ...defaults, build: v || undefined, ...(v === 'trockenbau' && !defaults.ext ? { t: 0.1 } : {}) })}
+              options={[{ value: '', label: 'Bauart: nicht erfasst' }, ...WALL_BUILDS.map((x) => ({ value: x.key, label: `Bauart: ${x.name}` }))]}
+              aria-label="Bauart neuer Wände"
+            />
           </div>
         </div>
       ) : null}
+      <WallBuildLegend walls={floor.walls || []} />
       <h4>Etage</h4>
       <div className="grid2">
         <Field label="Name">

@@ -243,6 +243,26 @@ export const STATUS = [
 ];
 export const status = (key) => STATUS.find((s) => s.key === key) || STATUS[0];
 
+// what a wall is made of (matters for openings, fixings, cables and statics); colour in the floor plan
+export const WALL_BUILDS = [
+  { key: 'trockenbau', name: 'Trockenbau', sub: 'Gipskarton auf Ständerwerk', color: '#9aa6bd', note: 'z. B. GK 12,5 mm doppelt beplankt, CW 75, Mineralwolle' },
+  { key: 'ziegel', name: 'Ziegel', sub: 'Mauerwerk aus Ziegel', color: '#a8553d', note: 'z. B. Vollziegel, Hochlochziegel, verputzt' },
+  { key: 'kalksandstein', name: 'Kalksandstein', sub: 'Mauerwerk', color: '#8b8d93', note: 'z. B. KS 11,5 cm, verputzt' },
+  { key: 'porenbeton', name: 'Porenbeton', sub: 'z. B. Ytong', color: '#bdb6a6', note: 'z. B. Planblock 10 cm' },
+  { key: 'bruchstein', name: 'Bruchstein / Naturstein', sub: 'Mauerwerk', color: '#6e675d', note: 'z. B. Sandstein, Feldstein' },
+  { key: 'beton', name: 'Beton / Stahlbeton', sub: '', color: '#5d6573', note: 'z. B. Ortbeton, Fertigteil' },
+  { key: 'fachwerk', name: 'Fachwerk', sub: 'Holz mit Ausfachung', color: '#7b5132', note: 'z. B. Eichenständer, Ausfachung Lehm/Ziegel' },
+  { key: 'lehm', name: 'Lehm', sub: 'Lehmstein, Stampflehm, Strohlehm', color: '#a7815b', note: 'z. B. Lehmsteine, Lehmputz' },
+  { key: 'holz', name: 'Holz', sub: 'Holzständer, Bohlen, Brettschalung', color: '#b27b3e', note: 'z. B. Holzständer mit OSB' },
+  { key: 'glas', name: 'Glasbausteine', sub: '', color: '#7ab3d3', note: '' },
+  { key: 'sonstiges', name: 'Sonstiges', sub: '', color: '#8a8f9c', note: 'Aufbau beschreiben' },
+];
+export const wallBuild = (key) => WALL_BUILDS.find((b) => b.key === key) || null;
+export const BEARING = [
+  { key: 'ja', name: 'tragend' },
+  { key: 'nein', name: 'nicht tragend' },
+];
+
 export const CONSTRAINT_KINDS = [
   { key: 'genehmigung', name: 'Genehmigung / Bauakte' },
   { key: 'objekt', name: 'Exposé / Objektunterlagen' },

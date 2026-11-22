@@ -1,7 +1,7 @@
 // AI features via the viewer's Claude (the artifact `sample` capability).
 // Every call sends the instruction, the relevant house data and the expected JSON shape.
 
-import { FUNDING_KNOWLEDGE, gewerk, projectKind, status as statusOf, PROJECT_KINDS, medium, CONSTRAINT_KINDS, lineKind, fixtureKind } from './catalog.js';
+import { FUNDING_KNOWLEDGE, gewerk, projectKind, status as statusOf, PROJECT_KINDS, medium, CONSTRAINT_KINDS, lineKind, fixtureKind, wallBuild } from './catalog.js';
 import { pointInPoly } from './geometry.js';
 import { roomOfPoint } from './planops.js';
 import { furnLabel } from './furniture.js';
@@ -108,6 +108,11 @@ export function houseContext(d, { withProjects = true, withComponents = true, wi
   for (const f of floors) {
     const rooms = (f.rooms || []).map((r) => `${r.name} ${fmtNum(roomArea(r), 1)} m²${r.locked ? ' (gemessen, Maße gesperrt)' : ''}`).join(', ');
     L.push(`${f.short || ''} ${f.name} (OKFF ${fmtNum(f.elevation, 2)} m, Geschosshöhe ${fmtNum(f.height, 2)} m${f.underRoof ? ', Dachgeschoss' : ''}): ${rooms || 'keine Räume'}`);
+    // wall construction where it is known (details per wall in get_floor_plan)
+    const byBuild = new Map();
+    for (const w of f.walls || []) if (w.build) byBuild.set(w.build, (byBuild.get(w.build) || 0) + 1);
+    const bearing = (f.walls || []).filter((w) => w.bearing === 'ja').length;
+    if (byBuild.size || bearing) L.push(`  Wandaufbau: ${[...byBuild].map(([k, n]) => `${wallBuild(k)?.name || k} ${n}×`).join(', ') || 'nicht erfasst'}${bearing ? `; ${bearing} Wand${bearing > 1 ? 'e' : ''} als tragend markiert` : ''}`);
   }
   const lineInfo = [];
   for (const f of floors)
@@ -778,6 +783,7 @@ Besprechungen: Erzählt der Nutzer von einem Termin oder Gespräch zu einem Proj
 Kontakte (Handwerker, Berater, Behörden) verwaltest und verknüpfst du mit manage_contact; Fotos von Visitenkarten lädt der Nutzer unter Dokumente › Kontakte oder im Projekt-Reiter „Ansprechpartner“ hoch.
 Allgemeine Notizen ohne Projektbezug (z. B. „Notiere: …“, „Schreib dir auf …“) verwaltest du mit manage_note (anlegen, ändern, ergänzen, löschen). Passt eine Notiz eindeutig zu einem Projekt, frage kurz nach, ob sie als Besprechung ans Projekt soll.
 Räume mit „gemessen, Maße gesperrt“ sind vor Ort vermessen: Ihre Wände, Fläche und Höhe änderst du nicht und schlägst auch keine Änderung daran vor; die App würde sie ohnehin ablehnen. Will der Nutzer dort etwas ändern, sag ihm, dass er den Raum zuerst in den Raumdetails entsperren muss.
+Beschaffenheit von Wänden (z. B. „die Wand zwischen Bad und Flur ist Trockenbau“, „tragend“) trägst du mit set_wall_build ein; Wand-IDs vorher mit get_floor_plan holen.
 Grundriss: Für Maße (Türbreiten, Abstände zwischen Fenstern, Wandlängen, Raummaße) hole mit get_floor_plan die Räume, Wände und Öffnungen der Etage und trage das Maß mit add_measurement ein; Leitungslängen änderst du mit update_line. Möbel stellst, änderst oder entfernst du mit manage_furniture (vorher get_floor_plan für Raum- und Wand-IDs; „an die Nordwand“ = Wand mit side Norden im Raum). Heizkörper sind ebenfalls Möbel (Kategorie Heizung, Bauart über radiatorType); ihre geschätzte Wärmeleistung steht im Hauskontext und in get_floor_plan – nutze sie z. B. für die Frage, ob die Heizkörper für eine Wärmepumpe mit niedriger Vorlauftemperatur reichen. Wähle bei mehreren passenden Fenstern die naheliegendsten (gleiche Wand, nebeneinander) und sage kurz, welche du genommen hast. Nachrichten können per Spracheingabe kommen – rechne mit Erkennungsfehlern (z. B. „eins komma fünf“ = 1,5) und frage nach, wenn etwas unklar ist.
 Aufgaben (Rahmenbedingungen/To-dos): Lege jeden Arbeitsschritt als eigene Aufgabe an – nie mehrere Schritte in einem Text („Decke abnehmen; danach Trockenbau …“ sind zwei Aufgaben). Formuliere kurz (ein Satz), Fälligkeit in due (YYYY-MM-DD) statt im Text, Zuständige in who. Reihenfolgen oder Hinweise wie „nach der Elektrik“ dürfen kurz im Text stehen. Willst du einen bestehenden Sammeleintrag aufteilen, ändere ihn mit update_item auf den ersten Schritt und lege die übrigen mit add_constraint an.
 Das Feld „Hinweise“ eines Projekts ist für Abhängigkeiten, Fristen und Besonderheiten gedacht, die man beim Planen beachten muss. Abhängigkeiten können auf ein Projekt (nach dessen Ende) oder auf einen Meilenstein („Projekt-ID#Meilenstein-ID“) zeigen – für Projekte und für Meilensteine.
