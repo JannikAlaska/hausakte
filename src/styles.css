@@ -1814,3 +1814,21 @@ button, a { -webkit-tap-highlight-color: transparent; }
   .link-group { grid-template-columns: minmax(0, 1fr); gap: 4px; }
   .link-label { padding-top: 0; }
 }
+
+/* ---------- invoice: who pays ---------- */
+.pay-rows { display: flex; flex-direction: column; gap: 8px; }
+.pay-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 8px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.pay-line2 { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.pay-name { min-width: 0; }
+.pay-amount { display: flex; align-items: center; gap: 6px; }
+.pay-amount .input-wrap { width: 112px; }
+.pay-other { font-size: 12px; color: var(--ink-3); white-space: nowrap; min-width: 74px; font-variant-numeric: tabular-nums; }
+.pay-tools { display: flex; gap: 2px; }
+.pay-sum { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px; color: var(--ink-2); }
+.pay-sum b { font-variant-numeric: tabular-nums; }
+.pay-ok { display: inline-flex; align-items: center; gap: 4px; color: var(--accent-ink); font-size: 12px; font-weight: 600; }
+.pay-rest { color: var(--warn); font-size: 12px; font-weight: 600; }
+.pay-over { color: var(--danger); font-size: 12px; font-weight: 600; }
+.pay-add { margin-top: 8px; }
+.inv-payers { display: block; font-size: 11.5px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pay-totals .pay-total-row td { border-top: 1px solid var(--line-2); font-weight: 600; }

@@ -16,6 +16,7 @@ import {
 } from '../invoices.js';
 import { fmtDate, fmtDayMonth, todayISO, uid, diffDays, isISO } from '../util.js';
 import { TaxSection } from './tax.jsx';
+import { PayerSection, PayerTotals, payerLine } from './payers.jsx';
 
 // invoices are exact to the cent
 const fmtEuro = (n) => (n == null || !Number.isFinite(Number(n)) ? '–' : Number(n).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' }));
@@ -271,6 +272,7 @@ export function InvoiceRow({ d, data, showProject }) {
         <span>
           {[i.number ? `Nr. ${i.number}` : null, i.date ? fmtDate(i.date) : null, showProject ? (p ? p.title : 'Allgemein') : null].filter(Boolean).join(' · ') || d.name}
         </span>
+        {payerLine(d) ? <span className="inv-payers">{payerLine(d)}</span> : null}
         {i.status !== 'bezahlt' && days != null ? <span className={`inv-due ${days < 0 ? 'is-late' : days <= 7 ? 'is-soon' : ''}`}>{days < 0 ? `seit ${-days} Tagen fällig` : days === 0 ? 'heute fällig' : `fällig ${fmtDayMonth(i.due)} (in ${days} T.)`}</span> : null}
       </span>
       <span className="inv-side">
@@ -357,6 +359,7 @@ export function InvoicesPanel({ data }) {
       {all.length ? (
         <>
           <SumStrip list={all} />
+          <PayerTotals list={all.filter((d) => proj === 'alle' || (proj === 'none' ? !d.projectId : d.projectId === proj))} />
           <div className="inv-filters">
             <div className="chips">
               {FILTERS.map((x) => (
@@ -624,6 +627,8 @@ export function InvoiceDrawer({ data, drawer }) {
           </Field>
         ) : null}
       </Section>
+
+      <PayerSection d={d} data={data} />
 
       <TaxSection d={d} data={data} />
 

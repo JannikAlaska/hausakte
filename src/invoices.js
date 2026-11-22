@@ -74,7 +74,74 @@ export function invoiceDeadlines(data, today = todayISO()) {
     .map((d) => ({ date: invOf(d).due, label: `Rechnung fällig: ${invTitle(d, data)}`, project: data.projects?.[d.projectId] || null, kind: 'invoice', docId: d.id }));
 }
 
+// ---------- who pays: shares of an invoice ----------
+// doc.inv.payers: [{ id, name, mode: 'prozent' | 'betrag', value, source: 'eigen' | 'kredit' }]
+export const PAY_SOURCES = [
+  { key: 'eigen', name: 'Eigenmittel' },
+  { key: 'kredit', name: 'Kredit' },
+];
+export const payersOf = (d) => (Array.isArray(invOf(d).payers) ? invOf(d).payers : []);
+const r2 = (n) => Math.round(n * 100) / 100;
+
+// one row in euros and percent of the invoice total (null where it cannot be known yet)
+export function payerShare(row, total) {
+  const v = Number(row?.value) || 0;
+  if (row?.mode === 'betrag') return { eur: r2(v), pct: total > 0 ? (v / total) * 100 : null };
+  return { eur: total > 0 ? r2((total * v) / 100) : null, pct: v };
+}
+
+// all rows with their shares, what is distributed and what is left
+export function payerSplit(d) {
+  const total = invTotal(d);
+  const rows = payersOf(d).map((x) => ({ ...x, ...payerShare(x, total) }));
+  const pct = rows.reduce((s, x) => s + (x.pct ?? 0), 0);
+  const eur = rows.reduce((s, x) => s + (x.eur ?? 0), 0);
+  const known = total > 0 || rows.every((x) => x.mode !== 'betrag');
+  const restPct = known ? Math.round((100 - pct) * 100) / 100 : null;
+  const restEur = total > 0 ? r2(total - eur) : null;
+  return { total, rows, pct, eur, restPct, restEur, over: known && restPct < -0.01, done: known && Math.abs(restPct) <= 0.01 };
+}
+
+// names entered before, most used first, for suggestions in the next invoice
+export function payerNames(data = getState()) {
+  const count = new Map();
+  for (const d of Object.values(data.documents || {}))
+    if (isInvoice(d))
+      for (const x of payersOf(d)) {
+        const name = String(x.name || '').trim();
+        if (!name) continue;
+        const k = name.toLocaleLowerCase('de');
+        const e = count.get(k) || { name, n: 0 };
+        e.n++;
+        count.set(k, e);
+      }
+  return [...count.values()].sort((a, b) => b.n - a.n || a.name.localeCompare(b.name, 'de')).map((e) => e.name);
+}
+
+// per person: euros from own funds and from loans over a list of invoices; plus what nobody was assigned
+export function payerTotals(list) {
+  const map = new Map();
+  let unassigned = 0;
+  for (const d of list) {
+    const sp = payerSplit(d);
+    for (const x of sp.rows) {
+      const name = String(x.name || '').trim() || 'Ohne Namen';
+      const k = name.toLocaleLowerCase('de');
+      const e = map.get(k) || { name, eigen: 0, kredit: 0, total: 0, n: 0 };
+      const eur = x.eur ?? 0;
+      e[x.source === 'kredit' ? 'kredit' : 'eigen'] += eur;
+      e.total += eur;
+      e.n++;
+      map.set(k, e);
+    }
+    if (sp.total > 0) unassigned += Math.max(0, sp.restEur ?? 0);
+  }
+  const people = [...map.values()].map((e) => ({ ...e, eigen: r2(e.eigen), kredit: r2(e.kredit), total: r2(e.total) })).sort((a, b) => b.total - a.total);
+  return { people, unassigned: r2(unassigned), eigen: r2(people.reduce((s, e) => s + e.eigen, 0)), kredit: r2(people.reduce((s, e) => s + e.kredit, 0)) };
+}
+
 export const setInvoice = (id, patch, delay = 300) => updateDoc('documents', id, (d) => ({ ...d, inv: { ...(d.inv || {}), ...patch } }), delay);
+export const setPayers = (id, payers) => setInvoice(id, { payers });
 
 // status change: paid sets the payment date, part-paid keeps the amount entered
 export function setInvoiceStatus(id, status) {
