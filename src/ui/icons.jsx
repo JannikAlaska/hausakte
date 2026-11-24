@@ -40,6 +40,8 @@ export const ICON_PATHS = {
   trash: 'M4.5 7h15M10 11v6M14 11v6M6.5 7l1 13h9l1-13M9.5 7V4h5v3',
   edit: 'M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4',
   chevR: 'M9 5l7 7-7 7',
+  arrowR: 'M5 12h14M13 6l6 6-6 6',
+  star: 'M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z',
   chevL: 'M15 5l-7 7 7 7',
   chevD: 'M5 9l7 7 7-7',
   chevU: 'M5 15l7-7 7 7',

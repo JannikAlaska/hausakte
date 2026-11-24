@@ -11,6 +11,8 @@ import { projectContacts } from '../contacts.js';
 import { AiVerdict } from './econ.jsx';
 import { Btn, IconBtn, Field, TextInput, NumInput, Select, DateInput, Pill, Section, Drawer, Sheet, Empty, ConfirmBtn, Seg, ArchiveSection, useEmptyAtOpen, MoreFields, AutoText, DateChip, SelectChip } from './common.jsx';
 import { LinkedWith } from './links.jsx';
+import { DecisionList, NewDecisionButton } from './decisions.jsx';
+import { decisions, decOf } from '../decisions.js';
 import { AiRunner, useAiAvailable, AiUnavailable } from './ai-ui.jsx';
 import { useUI, setUI, openDrawer, closeDrawer, toast, go } from './state.js';
 import { DocList, UploadButton } from './documents.jsx';
@@ -52,6 +54,8 @@ export function ProjectsSheet({ data }) {
   const [tab, setTab] = useState('zeitplan');
   const projects = liveProjects(data.projects);
   const archived = Object.values(data.projects).filter((p) => p.archived);
+  const decs = decisions(data);
+  const openDecs = decs.filter((d) => decOf(d).status !== 'entschieden').length;
   return (
     <Sheet
       title="Modernisierungsprojekte"
@@ -60,11 +64,15 @@ export function ProjectsSheet({ data }) {
       tabs={[
         { key: 'zeitplan', label: 'Zeitplan', icon: 'gantt' },
         { key: 'liste', label: 'Liste', icon: 'list', count: projects.length + archived.length },
+        { key: 'entscheidungen', label: 'Entscheidungen', icon: 'scale', count: openDecs || null },
       ]}
       tab={tab}
       onTab={setTab}
       onClose={() => go('modell')}
       actions={
+        tab === 'entscheidungen' ? (
+          <NewDecisionButton kind="primary" />
+        ) : (
         <>
           <Btn small kind="ai" icon="sparkles" onClick={() => openDrawer({ type: 'roadmap' })}>
             Sanierungsfahrplan
@@ -73,9 +81,15 @@ export function ProjectsSheet({ data }) {
             Projekt
           </Btn>
         </>
+        )
       }
     >
-      {!projects.length && !archived.length ? (
+      {tab === 'entscheidungen' ? (
+        <div className="stack">
+          <p className="small muted">Größere Entscheidungen strukturiert treffen: Optionen gegen gewichtete Kriterien bewerten, im Pre-Mortem Risiken durchdenken und die Entscheidung mit Begründung festhalten.</p>
+          <DecisionList data={data} emptyText="Noch keine Entscheidungen. Leg oben rechts eine an – z. B. „Welche Heizung bauen wir ein?“" />
+        </div>
+      ) : !projects.length && !archived.length ? (
         <Empty
           icon="tasks"
           title="Noch keine Projekte"
@@ -372,7 +386,7 @@ function Gantt({ data }) {
 // five tabs; each holds the parts it groups (older links to a part open its tab and scroll to it)
 const P_TABS = [
   { key: 'uebersicht', label: 'Übersicht', icon: 'info' },
-  { key: 'plan', label: 'Plan', icon: 'calendar', parts: ['zeitplan', 'aufgaben'] },
+  { key: 'plan', label: 'Plan', icon: 'calendar', parts: ['zeitplan', 'aufgaben', 'entscheidungen'] },
   { key: 'geld', label: 'Geld', icon: 'euro', parts: ['kosten', 'foerderung'] },
   { key: 'austausch', label: 'Austausch', icon: 'mic', parts: ['besprechungen', 'ansprechpartner'] },
   { key: 'ablage', label: 'Ablage', icon: 'folder', parts: ['fotos', 'dokumente'] },
@@ -416,7 +430,7 @@ export function ProjectDrawer({ data, drawer }) {
   const issues = p.archived ? [] : projectIssues(p, all);
   const warns = issues.filter((i) => i.level === 'warn');
   const cost = projectCost(p);
-  const docs = Object.values(data.documents || {}).filter((d) => d.projectId === p.id);
+  const docs = Object.values(data.documents || {}).filter((d) => d.projectId === p.id && d.type !== 'entscheidung');
   const cons = p.constraints || [];
   const runFunding = () => {
     setTab('foerderung');
@@ -703,6 +717,12 @@ export function ProjectDrawer({ data, drawer }) {
             onSave={(rec) => set({ ai: { ...(p.ai || {}), risks: rec } })}
             render={(r) => <RisksResult r={r} p={p} />}
           />
+        </Part>
+      ) : null}
+
+      {tab === 'plan' ? (
+        <Part k="entscheidungen" title="Entscheidungen" icon="scale" aside={<NewDecisionButton projectId={p.id} />}>
+          <DecisionList data={data} projectId={p.id} showProject={false} emptyText="Steht eine größere Entscheidung an (z. B. welches System, welcher Handwerker)? Mit Matrix und Pre-Mortem entscheiden und begründet festhalten." />
         </Part>
       ) : null}
 

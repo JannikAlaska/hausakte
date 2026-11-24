@@ -9,6 +9,7 @@ import { invoiceDocs, invOf, invTotal, invOpen, isOverdue, invoiceSums } from '.
 import { taxYear } from './tax.js';
 import { pvSelection, pvCosts, inverterKind, autoInverterKw } from './pv.js';
 import { photoDocs, allSpots } from './photos.js';
+import { decOf, matrix } from './decisions.js';
 import { buildingStats, componentWear, projectCost, sortFloors, consumptionByYear, heatingIndex, roomArea, resolveRef } from './metrics.js';
 import { bearingName } from './roof.js';
 import { todayISO, fmtNum } from './util.js';
@@ -257,6 +258,20 @@ export function houseContext(d, { withProjects = true, withComponents = true, wi
       L.push(`- ${a.title || x.name}: ${a.status || 'entwurf'}${a.analysis?.program ? `, ${a.analysis.program}` : ''}${a.analysis?.deadline ? `, Frist ${a.analysis.deadline}` : ''}${(a.open || []).length ? `, ${a.open.length} offene Fragen` : ''}`);
     }
   }
+  // decisions made (or pending) with the decision tool
+  const decs = Object.values(d.documents || {}).filter((x) => x.type === 'entscheidung');
+  if (decs.length) {
+    L.push('ENTSCHEIDUNGEN (Projekte › Entscheidungen: Matrix und Pre-Mortem)');
+    for (const x of decs.slice(0, 15)) {
+      const dec = decOf(x);
+      const pr = x.projectId ? d.projects?.[x.projectId]?.title : null;
+      if (dec.status === 'entschieden') L.push(`- „${dec.question}“${pr ? ` (${pr})` : ''}: entschieden am ${dec.decision?.date || '?'} für „${dec.decision?.optionName || '?'}“ – Begründung: ${String(dec.decision?.rationale || '').slice(0, 200)}`);
+      else {
+        const m = matrix(dec);
+        L.push(`- „${dec.question}“${pr ? ` (${pr})` : ''}: offen${dec.deadline ? `, entscheiden bis ${dec.deadline}` : ''}; Optionen: ${(dec.options || []).map((o) => o.name).filter(Boolean).join(', ') || 'noch keine'}${m.leader ? `; Favorit laut Matrix: ${m.leader.option.name} (${Math.round(m.leader.pct)} %)` : ''}`);
+      }
+    }
+  }
   // photo documentation
   const photos = photoDocs(d);
   if (photos.length) {
@@ -320,6 +335,38 @@ async function askJSON(prompt, opts = {}) {
   const sample = await getSample();
   if (!sample) throw { code: 'not_granted', message: 'sample unavailable' };
   return sample.json(prompt, { modelTier: opts.tier || 'default', signal: opts.signal, onText: opts.onText, cache: opts.cache ?? false, ...(opts.web ? { web: true } : {}) });
+}
+
+// ---------- decision tool ----------
+// kind "setup": further options and weighted criteria for the question; kind "premortem": what could make
+// the chosen option fail, with likelihood, impact and a countermeasure
+export async function aiDecisionHelp(kind, doc, d, opts = {}) {
+  const dec = doc.dec || {};
+  const p = doc.projectId ? d.projects?.[doc.projectId] : null;
+  const opt = (dec.options || []).find((o) => o.id === opts.optionId);
+  const head = `Du hilfst einem Hauseigentümer, eine Entscheidung rund um sein Haus strukturiert zu treffen. Antworte auf Deutsch, konkret und auf dieses Haus bezogen (Baujahr, Bauweise, vorhandene Technik, Projekte).
+
+ENTSCHEIDUNG
+Frage: ${dec.question || '(noch keine)'}
+Hintergrund: ${dec.context || '–'}
+Optionen bisher: ${(dec.options || []).map((o) => `${o.name}${o.note ? ` (${o.note})` : ''}`).filter(Boolean).join('; ') || 'keine'}
+Kriterien bisher: ${(dec.criteria || []).map((c) => `${c.name} (Gewicht ${c.weight || 3})`).filter(Boolean).join('; ') || 'keine'}
+${p ? `\nPROJEKT\n${projectBlock(p, d)}\n` : ''}
+HAUSDATEN
+${houseContext(d, { withConsumption: false })}
+
+${JSON_RULES}`;
+  const prompt =
+    kind === 'premortem'
+      ? `${head}
+Aufgabe: Pre-Mortem für die Option „${opt?.name || '?'}“. Stell dir vor, es ist ein Jahr später und diese Entscheidung ist gescheitert. Nenne 5–8 konkrete, plausible Gründe dafür (Kosten, Zeit, Technik im Altbau, Handwerker, Förderung/Genehmigung, Alltag, Wiederverkauf) – keine allgemeinen Floskeln. Bewerte Wahrscheinlichkeit und Auswirkung mit 1 (gering), 2 (mittel) oder 3 (hoch) und nenne je eine Gegenmaßnahme, die man vor der Entscheidung oder bei der Umsetzung ergreifen kann. Lass weg, was oben schon als Risiko steht: ${(dec.risks || []).filter((r) => r.optionId === opts.optionId).map((r) => r.text).join('; ') || 'nichts'}
+Format:
+{"risks":[{"text":"Was ist schiefgegangen","likelihood":2,"impact":3,"measure":"Gegenmaßnahme"}]}`
+      : `${head}
+Aufgabe: Schlage Optionen vor, die noch fehlen (höchstens 4, realistisch für dieses Haus), und 5–8 Kriterien, nach denen man die Optionen vergleichen sollte, jeweils mit Gewicht 1 (unwichtig) bis 5 (entscheidend) und einer kurzen Begründung. Wiederhole nichts, was schon da ist. Kriterien so formulieren, dass „gut“ eindeutig ist (z. B. „Niedrige laufende Kosten“).
+Format:
+{"options":[{"name":"Option","note":"kurz, warum sie in Frage kommt"}],"criteria":[{"name":"Kriterium","weight":4,"why":"kurz"}]}`;
+  return askJSON(prompt, { signal: opts.signal });
 }
 
 // ---------- project analyses ----------

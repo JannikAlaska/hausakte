@@ -362,7 +362,7 @@ export function DocList({ data, filter = () => true, compact, projectId }) {
   const [box, setBox] = useState(null);
   // applications have their own tab (Anträge); their uploaded papers stay in the list
   const docs = Object.values(data.documents)
-    .filter((d) => d.type !== 'antrag')
+    .filter((d) => d.type !== 'antrag' && d.type !== 'entscheidung')
     .filter(filter)
     .sort((a, b) => (a.date < b.date ? 1 : -1));
   if (!docs.length)
@@ -585,7 +585,7 @@ export function DocumentsSheet({ data }) {
   const tab = ['notizen', 'kontakte', 'fotos'].includes(ui.docTab) ? ui.docTab : 'dateien';
   const [type, setType] = useState('alle');
   const [over, setOver] = useState(false);
-  const docs = Object.values(data.documents).filter((d) => d.type !== 'antrag');
+  const docs = Object.values(data.documents).filter((d) => d.type !== 'antrag' && d.type !== 'entscheidung');
   const notes = Object.values(data.notes || {});
   const contacts = Object.values(data.contacts || {});
   const photos = docs.filter((d) => d.type === 'foto');

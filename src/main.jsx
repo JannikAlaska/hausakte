@@ -19,6 +19,7 @@ import { ContactDrawer } from './ui/contacts.jsx';
 import { InvoiceDrawer } from './ui/invoices.jsx';
 import { PhotoSpotDrawer, PhotoViewer } from './ui/photos.jsx';
 import { ApplicationDrawer } from './ui/applications.jsx';
+import { DecisionDrawer } from './ui/decisions.jsx';
 import { allSpots } from './photos.js';
 import { CockpitPage } from './ui/cockpit.jsx';
 import { pushWidgets } from './native.js';
@@ -271,6 +272,12 @@ function SearchBox({ data }) {
       if (`${n.title} ${n.text}`.toLowerCase().includes(s)) out.push({ icon: 'edit', title: n.title || 'Notiz', sub: `Notiz · ${n.date || ''}`, go: () => { setUI({ docTab: 'notizen' }); go('dokumente'); } });
     for (const d of Object.values(data.documents)) {
       const inv = d.type === 'rechnung' ? d.inv || {} : null;
+      if (d.type === 'entscheidung') {
+        const dec = d.dec || {};
+        if (`${d.name || ''} ${(dec.options || []).map((o) => o.name).join(' ')}`.toLowerCase().includes(s))
+          out.push({ icon: 'scale', title: d.name, sub: dec.status === 'entschieden' ? `Entscheidung · ${dec.decision?.optionName || ''}` : 'Entscheidung · offen', go: () => openDrawer({ type: 'decision', id: d.id }) });
+        continue;
+      }
       if (`${d.name || ''} ${inv ? `${inv.number || ''} ${inv.vendor || ''}` : ''}`.toLowerCase().includes(s))
         out.push(inv ? { icon: 'euro', title: d.name, sub: `Rechnung${inv.number ? ' Nr. ' + inv.number : ''}`, go: () => openDrawer({ type: 'invoice', id: d.id }) } : { icon: 'file', title: d.name, sub: 'Dokument', go: () => go('dokumente') });
     }
@@ -650,6 +657,7 @@ function DrawerHost({ data, sceneRef }) {
   if (d.type === 'contact') return <ContactDrawer key={d.id} data={data} drawer={d} />;
   if (d.type === 'invoice') return <InvoiceDrawer key={d.id} data={data} drawer={d} />;
   if (d.type === 'application') return <ApplicationDrawer key={d.id} data={data} drawer={d} />;
+  if (d.type === 'decision') return <DecisionDrawer key={d.id} data={data} drawer={d} />;
   if (d.type === 'photos') return <PhotoSpotDrawer key={d.floorId + d.spotId} data={data} drawer={d} />;
   if (d.type === 'assistant') return <AssistantDrawer data={data} drawer={d} sceneRef={sceneRef} />;
   return null;

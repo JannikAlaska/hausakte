@@ -20,7 +20,7 @@ const uniq = (list, key = (x) => x.id) => {
 const docs = (data) => Object.values(data.documents || {});
 const roomOf = (data, floorId, roomId) => data.floors?.[floorId]?.rooms?.find((r) => r.id === roomId) || null;
 const roomOfComp = (data, c) => (c?.floorId && c?.roomId ? { f: data.floors?.[c.floorId], r: roomOf(data, c.floorId, c.roomId) } : null);
-const DOC_SKIP = new Set(['foto', 'rechnung', 'antrag', 'handschrift']);
+const DOC_SKIP = new Set(['foto', 'rechnung', 'antrag', 'handschrift', 'entscheidung']);
 
 // dates of a project still ahead (or recently passed)
 function projectDates(p, today) {
@@ -72,7 +72,7 @@ export function linksOf(data, ref) {
     const own = docs(data).filter((d) => d.projectId === p.id);
     L.invoices = own.filter((d) => d.type === 'rechnung');
     L.photos = own.filter((d) => d.type === 'foto');
-    L.documents = own.filter((d) => !DOC_SKIP.has(d.type) || d.type === 'antrag');
+    L.documents = own.filter((d) => !DOC_SKIP.has(d.type) || d.type === 'antrag' || d.type === 'entscheidung');
     L.projects = uniq([...(p.dependsOn || []).map((r) => data.projects?.[String(r).split('#')[0]]), ...projects.filter((x) => (x.dependsOn || []).some((r) => String(r).split('#')[0] === p.id))]).filter((x) => x.id !== p.id);
     L.dates = projectDates(p, today);
     for (const d of L.invoices) if (invOf(d).due && invOf(d).status !== 'bezahlt') L.dates.push({ date: invOf(d).due, label: `Zahlung: ${d.name}` });
@@ -110,6 +110,7 @@ export function linksOf(data, ref) {
 const openDoc = (d) => {
   if (d.type === 'rechnung') return openDrawer({ type: 'invoice', id: d.id });
   if (d.type === 'antrag') return openDrawer({ type: 'application', id: d.id });
+  if (d.type === 'entscheidung') return openDrawer({ type: 'decision', id: d.id });
   const u = fileUrl(d);
   if (u) window.open(u, '_blank', 'noopener');
   else toast('Die Datei wird geladen – gleich noch einmal tippen.');
@@ -164,7 +165,7 @@ export function LinkedWith({ data, refTo, n, skip = [], children }) {
     show('documents') && {
       k: 'documents',
       label: 'Dokumente',
-      body: L.documents.slice(0, 12).map((d) => <Chip key={d.id} icon={d.type === 'antrag' ? 'flag' : 'file'} title={d.name} sub={d.date ? fmtDate(d.date) : ''} onClick={() => openDoc(d)} />),
+      body: L.documents.slice(0, 12).map((d) => <Chip key={d.id} icon={d.type === 'antrag' ? 'flag' : d.type === 'entscheidung' ? 'scale' : 'file'} title={d.name} sub={d.date ? fmtDate(d.date) : ''} onClick={() => openDoc(d)} />),
     },
     show('photos') && {
       k: 'photos',

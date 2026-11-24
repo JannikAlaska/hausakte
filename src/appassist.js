@@ -89,7 +89,7 @@ export async function runApplication(id, { files = null, withFiles = null } = {}
     const data = getState();
     const cur = appOf(data.documents[id]);
     const docs = Object.values(data.documents || {})
-      .filter((x) => x.type !== 'antrag' && x.id !== id)
+      .filter((x) => x.type !== 'antrag' && x.type !== 'entscheidung' && x.id !== id)
       .sort((x, y) => String(y.date || '').localeCompare(String(x.date || '')))
       .slice(0, 160)
       .map((x) => `[${x.id}] ${x.name} (${x.type}${x.appId === id ? ', zu diesem Antrag hochgeladen' : ''}${x.date ? `, ${x.date}` : ''}${x.projectId && data.projects?.[x.projectId] ? `, Projekt ${data.projects[x.projectId].title}` : ''})${x.ai?.data?.summary ? ` – ${String(x.ai.data.summary).slice(0, 140)}` : x.inv?.summary ? ` – ${String(x.inv.summary).slice(0, 140)}` : ''}`)

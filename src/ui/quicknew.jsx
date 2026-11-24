@@ -7,6 +7,7 @@ import { NoteComposer } from './notes.jsx';
 import { InkEditor, createInkNote } from './ink.jsx';
 import { InvoiceCapture } from './invoices.jsx';
 import { NewApplication } from './applications.jsx';
+import { NewDecision } from './decisions.jsx';
 import { TodoComposer } from './cockpit.jsx';
 import { AddContactBar } from './contacts.jsx';
 import { PhotoPicker, addPhotoFiles } from './photos.jsx';
@@ -22,6 +23,7 @@ const ITEMS = [
   { key: 'rechnung', icon: 'euro', label: 'Rechnung', sub: 'fotografieren oder PDF' },
   { key: 'aufgabe', icon: 'tasks', label: 'Aufgabe', sub: 'To-do in einem Projekt' },
   { key: 'antrag', icon: 'flag', label: 'Antrag', sub: 'Unterlagen hochladen, KI füllt aus' },
+  { key: 'entscheidung', icon: 'scale', label: 'Entscheidung', sub: 'Matrix und Pre-Mortem, begründet festhalten' },
   { key: 'kontakt', icon: 'people', label: 'Kontakt', sub: 'Visitenkarte oder von Hand' },
   { key: 'projekt', icon: 'plus', label: 'Projekt', sub: 'Vorhaben am Haus' },
 ];
@@ -206,6 +208,8 @@ export function QuickHost({ data }) {
       <TodoComposer data={data} onClose={close} />
     ) : q === 'antrag' ? (
       <NewApplication data={data} onClose={close} />
+    ) : q === 'entscheidung' ? (
+      <NewDecision data={data} onClose={close} />
     ) : q === 'kontakt' ? (
       <QuickContact />
     ) : null;
