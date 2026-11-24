@@ -62,36 +62,54 @@ Deno.serve(async (req) => {
   const allTools = [...tools, ...webTools] as Anthropic.Beta.BetaToolUnion[];
 
   const client = new Anthropic({ apiKey, maxRetries: 1, timeout: 140_000 });
-  try {
+  // "plain" leaves out the optional extras (server-side fallback, automatic caching); used once when the full
+  // request is rejected as invalid, so a change on the API side does not take the whole assistant down
+  const create = (turn: Anthropic.Beta.BetaMessageParam[], plain: boolean) =>
+    client.beta.messages.create({
+      model: MODEL,
+      max_tokens: 16000,
+      ...(plain ? {} : { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default", cache_control: { type: "ephemeral" } }),
+      output_config: { effort: EFFORT[body.tier ?? "default"] ?? "medium" },
+      system: SYSTEM + (body.json ? JSON_SYSTEM : ""),
+      messages: turn,
+      ...(allTools.length ? { tools: allTools } : {}),
+    } as Parameters<typeof client.beta.messages.create>[0]) as Promise<Anthropic.Beta.BetaMessage>;
+  const run = async (plain: boolean) => {
     let turn = messages;
     const content: Anthropic.Beta.BetaContentBlock[] = [];
     let msg: Anthropic.Beta.BetaMessage | null = null;
     // a long server-side search loop pauses; resending the turn lets it continue where it stopped
     for (let i = 0; i < 4; i++) {
-      msg = await client.beta.messages.create({
-        model: MODEL,
-        max_tokens: 16000,
-        betas: ["server-side-fallback-2026-07-01"],
-        fallbacks: "default",
-        cache_control: { type: "ephemeral" },
-        output_config: { effort: EFFORT[body.tier ?? "default"] ?? "medium" },
-        system: SYSTEM + (body.json ? JSON_SYSTEM : ""),
-        messages: turn,
-        ...(allTools.length ? { tools: allTools } : {}),
-      });
+      msg = await create(turn, plain);
       content.push(...msg.content);
       if (msg.stop_reason !== "pause_turn") break;
       turn = [...turn, { role: "assistant", content: msg.content }];
     }
     // The whole content goes back (thinking blocks included) so the browser can replay it unchanged in the tool loop.
-    return reply({ content, stop_reason: msg!.stop_reason, model: msg!.model });
+    return reply({ content, stop_reason: msg!.stop_reason, model: msg!.model, ...(plain ? { plain: true } : {}) });
+  };
+  // only the API's own error text and request id are logged, never the prompt
+  const log = (where: string, e: unknown) => {
+    const err = e as { status?: number; message?: string; requestID?: string };
+    console.error(`ai ${where}: status=${err?.status ?? "-"} request=${err?.requestID ?? "-"} ${String(err?.message ?? e).slice(0, 600)}`);
+  };
+  const tooLargeMsg = (m: string) => /too long|too large|exceeds/i.test(m);
+  try {
+    try {
+      return await run(false);
+    } catch (e) {
+      if (!(e instanceof Anthropic.BadRequestError) || tooLargeMsg(e.message)) throw e;
+      log("rejected, retrying without extras", e);
+      return await run(true);
+    }
   } catch (e) {
+    log("failed", e);
     if (e instanceof Anthropic.RateLimitError) return reply({ code: "rate_limited", message: e.message }, 429);
     if (e instanceof Anthropic.AuthenticationError || e instanceof Anthropic.PermissionDeniedError) {
       return reply({ code: "not_configured", message: "the Anthropic API key was rejected" }, 503);
     }
     if (e instanceof Anthropic.BadRequestError) {
-      const tooLarge = /too long|too large|exceeds/i.test(e.message);
+      const tooLarge = tooLargeMsg(e.message);
       return reply({ code: tooLarge ? "prompt_too_large" : "bad_request", message: e.message }, tooLarge ? 413 : 400);
     }
     if (e instanceof Anthropic.InternalServerError) return reply({ code: "overloaded", message: e.message }, 503);

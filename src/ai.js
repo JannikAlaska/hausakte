@@ -53,7 +53,12 @@ const ERR = {
   pdf_unsupported: 'PDFs kann die KI in dieser Ansicht nicht lesen. Öffne die Hausakte über deine eigene Adresse oder lade das Dokument als Foto hoch.',
   too_many_files: 'Vergleiche höchstens 5 Angebote auf einmal.',
 };
-export const aiErrorText = (e) => ERR[e?.code] || 'Die KI-Anfrage ist fehlgeschlagen. Versuche es später noch einmal.';
+// unknown errors keep the service's own short message, so a problem can be traced
+export const aiErrorText = (e) => {
+  if (ERR[e?.code]) return ERR[e.code];
+  const detail = String(e?.message || '').replace(/\s+/g, ' ').trim().slice(0, 180);
+  return `Die KI-Anfrage ist fehlgeschlagen. Versuche es später noch einmal.${detail ? ` (Meldung: ${detail})` : ''}`;
+};
 export const isHardAiError = (e) => ['not_granted', 'sampling_disabled', 'not_declared', 'capability_disabled', 'capability_removed'].includes(e?.code);
 
 export const AI_DISCLAIMER =
