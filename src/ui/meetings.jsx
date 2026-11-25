@@ -23,18 +23,40 @@ export function useDictation(onError) {
   const rec = useRef(null);
   const done = useRef('');
   const lock = useRef(null);
+  const fails = useRef(0); // failed rounds in a row without any recognized text
   useEffect(() => {
     if (!on) return;
     const t0 = Date.now() - secs * 1000;
     const id = setInterval(() => setSecs((Date.now() - t0) / 1000), 500);
     return () => clearInterval(id);
   }, [on]);
+  const finish = () => {
+    setOn(false);
+    lock.current?.release?.().catch(() => {});
+    lock.current = null;
+  };
+  const giveUp = (code) => {
+    keep.current = false;
+    onError?.(code);
+  };
+  // next round after the recognizer ended (after every pause on phones); waits a little longer after failures
+  const restart = () =>
+    setTimeout(() => {
+      if (!keep.current) return finish();
+      try {
+        run();
+      } catch {
+        if (++fails.current < 8) restart();
+        else giveUp('audio-capture'), finish();
+      }
+    }, 150 + Math.min(fails.current, 6) * 350);
   const run = () => {
     const r = new SpeechRec();
     r.lang = 'de-DE';
     r.continuous = true;
     r.interimResults = true;
     r.onresult = (e) => {
+      fails.current = 0;
       let interim = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const t = e.results[i][0].transcript;
@@ -44,24 +66,18 @@ export function useDictation(onError) {
       setText((done.current + ' ' + interim).trim());
     };
     r.onerror = (e) => {
-      if (['not-allowed', 'service-not-allowed', 'audio-capture'].includes(e.error)) {
-        keep.current = false;
-        onError?.(e.error);
-      }
+      if (['not-allowed', 'service-not-allowed'].includes(e.error)) return giveUp(e.error);
+      if (e.error === 'no-speech' || e.error === 'aborted') return;
+      // a busy microphone ("audio-capture") or a network hiccup often clears on the next round
+      if (++fails.current >= 4 && e.error === 'audio-capture') giveUp(e.error);
     };
-    r.onend = () => {
-      if (keep.current) setTimeout(() => keep.current && run(), 150);
-      else {
-        setOn(false);
-        lock.current?.release?.().catch(() => {});
-        lock.current = null;
-      }
-    };
+    r.onend = () => (keep.current ? restart() : finish());
     rec.current = r;
     r.start();
   };
   const start = (base = '') => {
     if (!SpeechRec) return false;
+    fails.current = 0;
     done.current = base.trim();
     setText(done.current);
     keep.current = true;

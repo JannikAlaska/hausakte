@@ -55,10 +55,21 @@ public class Bridge {
         return SpeechRecognizer.isRecognitionAvailable(activity);
     }
 
+    /** One sentence: ends after the first pause (voice commands). */
     @JavascriptInterface
     public void speechStart(int id, String lang, boolean interim) {
+        startSpeech(id, lang, interim, false);
+    }
+
+    /** Dictation: keeps listening through pauses until speechStop/speechAbort. */
+    @JavascriptInterface
+    public void speechStartContinuous(int id, String lang, boolean interim) {
+        startSpeech(id, lang, interim, true);
+    }
+
+    private void startSpeech(int id, String lang, boolean interim, boolean continuous) {
         activity.runOnMain(() -> activity.withPermission(Manifest.permission.RECORD_AUDIO,
-                () -> speech.start(id, lang, interim),
+                () -> speech.start(id, lang, interim, continuous),
                 () -> speech.fail(id, "not-allowed")));
     }
 

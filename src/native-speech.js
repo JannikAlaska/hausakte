@@ -10,7 +10,9 @@ export const nativeBridge = AND
       setWidgetData: (json) => AND.setWidgetData(json),
       saveText: (name, mime, text) => AND.saveText(name, mime, text),
       speechAvailable: () => AND.speechAvailable(),
-      speechStart: (id, lang, interim) => AND.speechStart(id, lang, interim),
+      // dictation keeps the phone's recognizer running through pauses (apps from version 1.0.3 on)
+      speechStart: (id, lang, interim, continuous) =>
+        continuous && typeof AND.speechStartContinuous === 'function' ? AND.speechStartContinuous(id, lang, interim) : AND.speechStart(id, lang, interim),
       speechStop: (id) => AND.speechStop(id),
       speechAbort: (id) => AND.speechAbort(id),
     }
