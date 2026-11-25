@@ -12,7 +12,7 @@ import { fmtDate, fmtDateShort, fmtEuro, todayISO, isISO } from '../util.js';
 const { useState, useEffect, useRef } = React;
 
 export const SpeechRec = typeof window !== 'undefined' ? window.SpeechRecognition || window.webkitSpeechRecognition : null;
-const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+export const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 
 // Continuous German dictation. Browsers end recognition after pauses, so it restarts until stopped.
 export function useDictation(onError) {
@@ -80,12 +80,17 @@ export function useDictation(onError) {
     keep.current = false;
     rec.current?.stop();
   };
+  // ends at once and drops what was not final yet (for "discard")
+  const cancel = () => {
+    keep.current = false;
+    rec.current?.abort();
+  };
   useEffect(() => () => {
     keep.current = false;
     rec.current?.abort();
     lock.current?.release?.().catch(() => {});
   }, []);
-  return { text, setText, on, secs, start, stop, reset: () => (setText(''), setSecs(0), (done.current = '')) };
+  return { text, setText, on, secs, start, stop, cancel, reset: () => (setText(''), setSecs(0), (done.current = '')) };
 }
 
 export function Meetings({ p, data }) {

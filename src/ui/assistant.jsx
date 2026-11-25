@@ -1,6 +1,7 @@
 import { Icon } from './icons.jsx';
 import { Btn, IconBtn, Drawer } from './common.jsx';
 import { Md, useAiAvailable, AiUnavailable } from './ai-ui.jsx';
+import { useDictation, mmss } from './meetings.jsx';
 import { closeDrawer, openDrawer, toast } from './state.js';
 import { aiChat, aiErrorText, isHardAiError, AI_DISCLAIMER } from '../ai.js';
 import { createProject, patchProject, addFunding, addCost, addConstraint, addMilestone, deleteMilestone, addMeeting, addNote, updateNote, deleteNote } from '../actions.js';
@@ -641,8 +642,13 @@ export function AssistantDrawer({ data, drawer }) {
   const [hard, setHard] = useState(false);
   const ctl = useRef(null);
   const end = useRef(null);
-  const rec = useRef(null);
-  const [listening, setListening] = useState(false);
+  // dictation keeps listening through pauses (the phone's recognizer stops after each sentence and is
+  // restarted) until "Fertig & senden" - long enough to dictate the results of a meeting
+  const dict = useDictation((code) =>
+    toast(code === 'audio-capture' ? 'Kein Mikrofon gefunden.' : 'Das Mikrofon ist für diese Seite nicht freigegeben. Erlaube den Zugriff in den Browser-Einstellungen – in der Vorschau in claude.ai geht es nicht, nutze dort deine Hausakte-Adresse.', 'warn', 7000),
+  );
+  const listening = dict.on;
+  const sendAfter = useRef(false);
   useEffect(() => {
     memory = msgs;
     end.current?.scrollIntoView({ block: 'end' });
@@ -650,52 +656,44 @@ export function AssistantDrawer({ data, drawer }) {
   useEffect(
     () => () => {
       ctl.current?.abort();
-      rec.current?.abort();
       declineAll();
       memory = (memory || []).map((m) => (m.role === 'confirm' && m.state === 'open' ? { ...m, state: 'no' } : m));
     },
     [],
   );
 
-  // speech: the transcript appears in the input and is sent when you stop talking
+  // speech: the transcript appears in the input while you talk; "Fertig & senden" sends it, stopping
+  // with the mic button leaves it in the field to correct first
   const listen = () => {
-    if (listening) return rec.current?.stop();
+    if (dict.on) return dict.stop();
     if (!SpeechRec) return toast('Spracheingabe kann dieser Browser nicht – nutze das Mikrofon deiner Tastatur (Diktieren) oder Chrome/Safari.', 'warn', 6000);
-    const r = new SpeechRec();
-    r.lang = 'de-DE';
-    r.interimResults = true;
-    r.continuous = false;
-    r.maxAlternatives = 1;
-    let final = '';
-    r.onresult = (e) => {
-      let interim = '';
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        if (e.results[i].isFinal) final += e.results[i][0].transcript;
-        else interim += e.results[i][0].transcript;
-      }
-      setInput((final + interim).trim());
-    };
-    r.onerror = (e) => {
-      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') toast('Das Mikrofon ist für diese Seite nicht freigegeben. Erlaube den Zugriff in den Browser-Einstellungen – in der Vorschau in claude.ai geht es nicht, nutze dort deine Hausakte-Adresse.', 'warn', 7000);
-      else if (e.error === 'no-speech') toast('Nichts verstanden – versuche es noch einmal.', 'warn');
-      else if (e.error !== 'aborted') toast('Spracheingabe fehlgeschlagen.', 'err');
-    };
-    r.onend = () => {
-      setListening(false);
-      rec.current = null;
-      const t = final.trim();
-      if (t) send(t);
-    };
-    rec.current = r;
-    try {
-      r.start();
-      setListening(true);
-    } catch {
-      toast('Spracheingabe konnte nicht starten.', 'err');
-    }
+    sendAfter.current = false;
+    if (!dict.start(input)) toast('Spracheingabe konnte nicht starten.', 'err');
+  };
+  const finishDictation = () => {
+    sendAfter.current = true;
+    dict.stop();
+  };
+  const discardDictation = () => {
+    sendAfter.current = false;
+    dict.cancel();
+    dict.reset();
+    setInput('');
   };
   useEffect(() => {
-    if (drawer?.voice && avail !== false && !rec.current) listen();
+    if (dict.on) return setInput(dict.text);
+    if (sendAfter.current) {
+      // the recognizer has delivered its last words; now send
+      sendAfter.current = false;
+      const t = dict.text.trim();
+      dict.reset();
+      if (busy) return setInput(t);
+      setInput('');
+      if (t) send(t);
+    } else if (dict.text) setInput(dict.text);
+  }, [dict.on, dict.text]);
+  useEffect(() => {
+    if (drawer?.voice && avail !== false && !dict.on) listen();
   }, [drawer?.voice]);
 
   const answerAsk = (id, ok) => {
@@ -771,11 +769,30 @@ export function AssistantDrawer({ data, drawer }) {
         avail === false || hard ? (
           <AiUnavailable />
         ) : (
-          <div className="chat-input" style={{ flex: 1 }}>
+          <div className="chat-foot">
+            {listening ? (
+              <div className="dict-bar" role="status">
+                <span className="dict-dot" aria-hidden="true" />
+                <div className="dict-info">
+                  <b>Ich höre zu · {mmss(dict.secs)}</b>
+                  <span className="small muted">Sprich ruhig mit Pausen – erst „Fertig“ beendet die Aufnahme.</span>
+                </div>
+                <div className="dict-actions">
+                  <Btn small kind="ghost" onClick={discardDictation}>
+                    Verwerfen
+                  </Btn>
+                  <Btn small kind="primary" icon="send" onClick={finishDictation}>
+                    Fertig &amp; senden
+                  </Btn>
+                </div>
+              </div>
+            ) : null}
+          <div className="chat-input">
             <textarea
               id="chat-input"
               className="input"
-              rows={2}
+              rows={listening ? 4 : 2}
+              readOnly={listening}
               placeholder={listening ? 'Ich höre zu …' : 'z. B. Welche Förderung gibt es für neue Fenster?'}
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -786,8 +803,9 @@ export function AssistantDrawer({ data, drawer }) {
                 }
               }}
             />
-            {!busy ? <IconBtn icon={listening ? 'stop' : 'mic'} label={listening ? 'Zuhören beenden' : 'Sprechen'} className={`mic-btn ${listening ? 'is-listening' : ''}`} onClick={listen} /> : null}
-            {busy ? <IconBtn icon="stop" label="Stoppen" onClick={() => ctl.current?.abort()} /> : <IconBtn icon="send" label="Senden" onClick={() => send()} />}
+            {!busy ? <IconBtn icon={listening ? 'stop' : 'mic'} label={listening ? 'Zuhören beenden (Text bleibt zum Korrigieren stehen)' : 'Sprechen'} className={`mic-btn ${listening ? 'is-listening' : ''}`} onClick={listen} /> : null}
+            {busy ? <IconBtn icon="stop" label="Stoppen" onClick={() => ctl.current?.abort()} /> : listening ? null : <IconBtn icon="send" label="Senden" onClick={() => send()} />}
+          </div>
           </div>
         )
       }

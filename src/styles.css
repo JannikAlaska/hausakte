@@ -607,7 +607,12 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .msg-confirm-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .msg-confirm.is-yes, .msg-confirm.is-no { border-color: var(--line); background: var(--surface-2); color: var(--ink-2); padding: 6px 10px; }
 .msg-confirm.is-yes .msg-confirm-text, .msg-confirm.is-no .msg-confirm-text { color: var(--ink-2); font-size: 12px; }
+.chat-foot { flex: 1; display: grid; gap: 8px; min-width: 0; }
 .chat-input { display: flex; gap: 8px; align-items: flex-end; }
+.dict-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 10px; border-radius: 12px; background: var(--danger-soft); border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent); }
+.dict-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--danger); flex: none; animation: micPulse 1.2s ease-in-out infinite; }
+.dict-info { display: grid; gap: 1px; flex: 1 1 180px; min-width: 0; font-size: 13px; }
+.dict-actions { display: flex; gap: 6px; margin-left: auto; }
 .chat-input textarea { flex: 1; min-height: 42px; max-height: 140px; }
 .suggest { display: flex; flex-wrap: wrap; gap: 6px; }
 
