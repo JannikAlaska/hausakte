@@ -5,7 +5,7 @@ import { useUI, setUI, getUI, openDrawer, toast, go, hideWall, showWall } from '
 import { roomFocus, roomDims, inwardNormal, statusShown, inRoom } from '../focus.js';
 import { PlanPhotoSpots, PlanSpotProps, spotBusy } from './photos.jsx';
 import { photoDocs, deleteSpot } from '../photos.js';
-import { downscaleImage } from './documents.jsx';
+import { downscaleImage, fileAllowed } from './documents.jsx';
 import { ROOM_TYPES, roomType, ROOM_COLORS, LINE_KINDS, LINE_ZONES, lineKind, FIXTURE_KINDS, fixtureKind, fixtureZ, WALL_BUILDS, wallBuild } from '../catalog.js';
 import { DocList, UploadButton } from './documents.jsx';
 import { ADJ } from '../heat.js';
@@ -1343,6 +1343,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
     const assets = await getAssets();
     try {
       if (assets) {
+        if (!(await fileAllowed(file, ['image/png', 'image/jpeg', 'image/webp', 'image/gif']))) return toast('Als Grundriss-Vorlage gehen Bilder (JPG, PNG, WebP).', 'warn', 5000);
         const res = await assets.upload(file, { type: file.type });
         mutate((f) => ({ ...f, underlay: { ...base, assetId: res.id } }), { refresh: false });
       } else {

@@ -16,11 +16,14 @@ export function supa() {
 }
 
 // ---------- auth ----------
+// minimum length for new passwords (sign-up, reset, change); the signup function enforces the same
+export const MIN_PW = 10;
 const AUTH_ERRORS = [
   [/HAUSAKTE_SIGNUP_NOT_ALLOWED|Database error saving new user/i, 'Registrierung nicht möglich: E-Mail-Adresse oder Einladungscode stimmt nicht.'],
   [/Invalid login credentials/i, 'E-Mail oder Passwort ist falsch.'],
   [/Email not confirmed/i, 'Die E-Mail-Adresse ist noch nicht bestätigt.'],
-  [/Password should be at least|weak_password|too short/i, 'Das Passwort muss mindestens 8 Zeichen haben.'],
+  [/HAUSAKTE_PWNED|pwned|leaked|compromised/i, 'Dieses Passwort taucht in bekannten Datenlecks auf. Wähle bitte ein anderes.'],
+  [/Password should be at least|weak_password|too short/i, 'Das Passwort muss mindestens 10 Zeichen haben.'],
   [/User already registered|already been registered|already exists/i, 'Für diese E-Mail gibt es schon ein Konto – bitte anmelden.'],
   [/rate limit/i, 'Zu viele Versuche. Warte ein paar Minuten.'],
 ];
@@ -90,7 +93,7 @@ export async function signUp(email, password, invite) {
     try {
       detail = await error.context?.json?.();
     } catch {}
-    throw { message: detail?.code === 'not_allowed' ? 'HAUSAKTE_SIGNUP_NOT_ALLOWED' : detail?.message || error.message };
+    throw { message: detail?.code === 'not_allowed' ? 'HAUSAKTE_SIGNUP_NOT_ALLOWED' : detail?.code === 'pwned' ? 'HAUSAKTE_PWNED' : detail?.code === 'rate_limited' ? 'rate limit' : detail?.message || error.message };
   }
   if (!data?.ok) throw { message: 'HAUSAKTE_SIGNUP_NOT_ALLOWED' };
   await signIn(email, password);

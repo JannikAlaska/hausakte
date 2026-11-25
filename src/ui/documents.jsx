@@ -10,13 +10,36 @@ import { DOC_TYPES } from '../catalog.js';
 import { saveTextFile } from '../native.js';
 import { putDoc, updateDoc, deleteDoc, getAssets, fileUrl, getState, exportData, clearAll, loadDataset, clearOfflineCopy } from '../store.js';
 import { aiReadImage } from '../ai.js';
-import { isSupabaseMode, supa, signOut, updatePassword, listMembers, listInvites, createInvite, deleteInvite, authErrorText } from '../supa.js';
+import { isSupabaseMode, supa, signOut, updatePassword, listMembers, listInvites, createInvite, deleteInvite, authErrorText, MIN_PW } from '../supa.js';
 import { addCost, addMilestone } from '../actions.js';
 import { uid, todayISO, fmtDate, fmtEuro, isISO } from '../util.js';
 
 const { useState, useRef, useEffect } = React;
 
-const ASSET_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml', 'application/pdf', 'video/mp4', 'video/webm', 'text/plain', 'text/csv', 'text/markdown', 'application/json'];
+// no SVG: it can carry scripts. The storage bucket allows the same list.
+export const ASSET_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/pdf', 'video/mp4', 'video/webm', 'text/plain', 'text/csv', 'text/markdown', 'application/json'];
+
+// The browser guesses a file's type from its name; this checks the first bytes, so a renamed file
+// ("rechnung.pdf" that is really a web page or a program) is not stored.
+const SIGNATURES = {
+  'image/jpeg': (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
+  'image/png': (b) => [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a].every((x, i) => b[i] === x),
+  'image/gif': (b) => ascii(b, 0, 6) === 'GIF87a' || ascii(b, 0, 6) === 'GIF89a',
+  'image/webp': (b) => ascii(b, 0, 4) === 'RIFF' && ascii(b, 8, 12) === 'WEBP',
+  'application/pdf': (b) => ascii(b, 0, b.length).includes('%PDF-'),
+  'video/mp4': (b) => ascii(b, 4, 8) === 'ftyp',
+  'video/webm': (b) => b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3,
+};
+const ascii = (b, from, to) => String.fromCharCode(...b.slice(from, to));
+const TEXT_TYPES = ['text/plain', 'text/csv', 'text/markdown', 'application/json'];
+export async function fileAllowed(file, types = ASSET_TYPES) {
+  if (!file || !types.includes(file.type)) return false;
+  const head = new Uint8Array(await file.slice(0, 1024).arrayBuffer());
+  if (TEXT_TYPES.includes(file.type)) return !/^\s*<(!doctype|html|script|svg|\?xml)/i.test(ascii(head, 0, head.length));
+  const check = SIGNATURES[file.type];
+  return !!check && head.length >= 4 && check(head);
+}
+const NOT_ALLOWED = 'Dieser Dateityp wird nicht unterstützt oder der Inhalt passt nicht zur Dateiendung. Lade PDF oder Bilder (JPG, PNG, WebP, GIF) hoch.';
 
 function guessType(file) {
   const n = file.name.toLowerCase();
@@ -65,11 +88,11 @@ export async function storeFile(file, { quiet } = {}) {
   const assets = await getAssets();
   const mode = getState().mode;
   try {
+    if (!(await fileAllowed(file))) {
+      if (!quiet) toast(`„${file.name}“: ${NOT_ALLOWED}`, 'warn', 6000);
+      return null;
+    }
     if (assets) {
-      if (!ASSET_TYPES.includes(file.type)) {
-        if (!quiet) toast(`„${file.name}“: Dieser Dateityp wird nicht unterstützt. Lade PDF oder Bilder hoch.`, 'warn', 5000);
-        return null;
-      }
       const res = await assets.upload(file, { type: file.type });
       return { assetId: res.id, contentType: res.contentType, size: res.sizeBytes };
     }
@@ -107,7 +130,7 @@ export async function uploadFiles(files, meta = {}) {
 export async function attachFile(doc, file) {
   const assets = await getAssets();
   if (!assets) return toast('Dateien kannst du hier nicht ablegen.', 'warn');
-  if (!ASSET_TYPES.includes(file.type)) return toast('Dieser Dateityp wird nicht unterstützt. Lade PDF oder Bilder hoch.', 'warn', 5000);
+  if (!(await fileAllowed(file))) return toast(NOT_ALLOWED, 'warn', 6000);
   try {
     const res = await assets.upload(file, { type: file.type });
     updateDoc('documents', doc.id, (d) => ({ ...d, assetId: res.id, contentType: res.contentType, size: res.sizeBytes, dataUrl: undefined, fileMissing: undefined }), 50);
@@ -514,7 +537,7 @@ function Account() {
     setBusy(false);
   };
   const changePw = async () => {
-    if (pw.length < 8) return toast('Das Passwort muss mindestens 8 Zeichen haben.', 'warn');
+    if (pw.length < MIN_PW) return toast(`Das Passwort muss mindestens ${MIN_PW} Zeichen haben.`, 'warn');
     try {
       await updatePassword(pw);
       setPw('');
@@ -568,7 +591,7 @@ function Account() {
         ) : null}
         <Field label="Neues Passwort">
           <div className="inline-form">
-            <TextInput value={pw} onChange={setPw} placeholder="mind. 8 Zeichen" type="password" />
+            <TextInput value={pw} onChange={setPw} placeholder={`mind. ${MIN_PW} Zeichen`} type="password" />
             <Btn small onClick={changePw}>
               Ändern
             </Btn>

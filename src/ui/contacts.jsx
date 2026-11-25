@@ -11,7 +11,7 @@ import { getState, updateDoc, fileUrl } from '../store.js';
 import { GEWERKE, gewerk } from '../catalog.js';
 import { createContact, updateContact, deleteContact, contactLinks, projectContacts, setContactLinks, linksByName, mergeWebInfo, logoCandidates, hostOf, contactTitle } from '../contacts.js';
 import { patchProject } from '../actions.js';
-import { fmtDate, fmtDayMonth } from '../util.js';
+import { fmtDate, fmtDayMonth, safeUrl } from '../util.js';
 
 const { useState, useEffect, useRef } = React;
 
@@ -83,7 +83,7 @@ export function ContactCard({ c, why, onClick, actions, busy }) {
           </a>
         ) : null}
         {c.website ? (
-          <a href={/^https?:\/\//.test(c.website) ? c.website : `https://${c.website}`} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}>
+          <a href={safeUrl(/^https?:\/\//i.test(c.website) ? c.website : `https://${c.website}`) || undefined} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}>
             <Icon name="link" size={12} /> {hostOf(c.website) || c.website}
           </a>
         ) : null}
@@ -519,7 +519,7 @@ export function ContactDrawer({ data, drawer }) {
               {c.web.sources.map((s, i) => (
                 <span key={i}>
                   {i ? ' · ' : ''}
-                  <a className="link" href={s.url} target="_blank" rel="noopener noreferrer">
+                  <a className="link" href={safeUrl(s.url) || undefined} target="_blank" rel="noopener noreferrer">
                     {s.title}
                   </a>
                 </span>

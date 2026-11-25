@@ -27,7 +27,7 @@ import { prepareOlderNotes } from './notesai.js';
 import { projectKind, gewerk, roomType } from './catalog.js';
 import { fmtTime, fmtArea } from './util.js';
 import { portfolio, buildingStats, roomArea, liveProjects } from './metrics.js';
-import { isSupabaseMode, getSession, onAuth, onAuthLost, signIn, signUp, resetPassword, updatePassword, authErrorText, realtimeStatus, onRealtime, storedUser } from './supa.js';
+import { isSupabaseMode, getSession, onAuth, onAuthLost, signIn, signUp, resetPassword, updatePassword, authErrorText, realtimeStatus, onRealtime, storedUser, MIN_PW } from './supa.js';
 
 // a change refused because it would alter a room marked as measured (dragging a wall fires many in a row)
 let lastBlocked = 0;
@@ -707,7 +707,7 @@ function Login({ auth, setAuth, onSignedIn, onClose }) {
   const submit = async (e) => {
     e.preventDefault();
     setMsg(null);
-    if (mode !== 'reset' && pw.length < (mode === 'login' ? 1 : 8)) return setMsg({ err: true, text: 'Das Passwort muss mindestens 8 Zeichen haben.' });
+    if (mode !== 'reset' && pw.length < (mode === 'login' ? 1 : MIN_PW)) return setMsg({ err: true, text: `Das Passwort muss mindestens ${MIN_PW} Zeichen haben.` });
     setBusy(true);
     try {
       if (mode === 'login') {
@@ -765,7 +765,7 @@ function Login({ auth, setAuth, onSignedIn, onClose }) {
       ) : null}
       {mode !== 'reset' ? (
         <label className="field">
-          <span className="field-label">{mode === 'login' ? 'Passwort' : 'Neues Passwort (mind. 8 Zeichen)'}</span>
+          <span className="field-label">{mode === 'login' ? 'Passwort' : `Neues Passwort (mind. ${MIN_PW} Zeichen)`}</span>
           <input className="input" type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} required value={pw} onChange={(e) => setPw(e.target.value)} />
         </label>
       ) : null}

@@ -31,10 +31,17 @@ const css = fs.readFileSync(path.join(root, 'src/styles.css'), 'utf8');
 const FONTS =
   'https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap';
 
+// fonts: true = Google Fonts (artifact), a path = self-hosted stylesheet, false = none
 function page({ react, reactDom, three, addons, fonts = true, head = '' }) {
+  const fontLinks =
+    fonts === true
+      ? `<link rel="preconnect" href="https://fonts.googleapis.com">\n<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n<link rel="stylesheet" href="${FONTS}">`
+      : fonts
+        ? `<link rel="stylesheet" href="${fonts}">`
+        : '';
   return `<title>Hausakte</title>${head}
 <meta name="claude:viewport-fit-sides" content="cover">
-${fonts ? `<link rel="preconnect" href="https://fonts.googleapis.com">\n<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n<link rel="stylesheet" href="${FONTS}">` : ''}
+${fontLinks}
 <style>
 ${css}
 </style>
@@ -109,15 +116,18 @@ ${html.slice(at)}</body>
 }
 const web = path.join(root, 'web');
 fs.mkdirSync(web, { recursive: true });
-const WEB_LIBS = {
-  supabase: 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js',
-  react: 'https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js',
-  reactDom: 'https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js',
-  three: 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js',
-  addons: 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/',
+// Libraries and fonts are served from this site (web/vendor), not from public CDNs: no third party can
+// change the code that runs next to the house data, and no font request reveals visitors to Google.
+fs.rmSync(path.join(web, 'vendor'), { recursive: true, force: true });
+const nm = (p) => path.join(root, 'node_modules', p);
+const ver = (pkg) => JSON.parse(fs.readFileSync(nm(pkg + '/package.json'), 'utf8')).version;
+const vendorCopy = (from, to) => {
+  const dest = path.join(web, to);
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.copyFileSync(nm(from), dest);
+  return '/' + to;
 };
-fs.writeFileSync(path.join(web, 'index.html'), webDoc(WEB_LIBS));
-// every three.js addon the code imports, for the service worker's offline copy
+// every three.js addon the code imports, with the addon files they import themselves
 const addonFiles = new Set();
 const scan = (dir) => {
   for (const f of fs.readdirSync(dir)) {
@@ -127,7 +137,81 @@ const scan = (dir) => {
   }
 };
 scan(path.join(root, 'src'));
-const LIB_URLS = [WEB_LIBS.supabase, WEB_LIBS.react, WEB_LIBS.reactDom, WEB_LIBS.three, ...[...addonFiles].map((f) => WEB_LIBS.addons + f), FONTS];
+for (const f of [...addonFiles]) {
+  const walk = (rel) => {
+    const src = fs.readFileSync(nm('three/examples/jsm/' + rel), 'utf8');
+    for (const m of src.matchAll(/from\s+['"](\.{1,2}\/[^'"]+)['"]/g)) {
+      const dep = path.posix.normalize(path.posix.join(path.posix.dirname(rel), m[1]));
+      if (!addonFiles.has(dep)) {
+        addonFiles.add(dep);
+        walk(dep);
+      }
+    }
+  };
+  walk(f);
+}
+const THREE_V = ver('three');
+const WEB_LIBS = {
+  supabase: vendorCopy('@supabase/supabase-js/dist/umd/supabase.js', `vendor/supabase-js@${ver('@supabase/supabase-js')}/supabase.js`),
+  react: vendorCopy('react/umd/react.production.min.js', `vendor/react@${ver('react')}/react.production.min.js`),
+  reactDom: vendorCopy('react-dom/umd/react-dom.production.min.js', `vendor/react-dom@${ver('react-dom')}/react-dom.production.min.js`),
+  three: vendorCopy('three/build/three.module.js', `vendor/three@${THREE_V}/build/three.module.js`),
+  addons: `/vendor/three@${THREE_V}/examples/jsm/`,
+};
+for (const f of addonFiles) vendorCopy('three/examples/jsm/' + f, `vendor/three@${THREE_V}/examples/jsm/${f}`);
+// fonts: latin and latin-ext faces from the fontsource packages, under the family names the CSS uses
+const FONT_DIR = `vendor/fonts@${ver('@fontsource-variable/figtree')}`;
+const fontFiles = [];
+function fontFaces(cssFile, family) {
+  const css = fs.readFileSync(nm(cssFile), 'utf8');
+  return [...css.matchAll(/\/\*\s*([^*]+?)\s*\*\/\s*@font-face\s*{([^}]*)}/g)]
+    .filter((m) => /-latin(-ext)?-/.test(m[1]))
+    .map((m) => {
+      const body = m[2].replace(/font-family:[^;]+;/, `font-family: '${family}';`).replace(/url\(\.\/files\/([^)]+)\)/, (_, f) => {
+        vendorCopy(path.join(path.dirname(cssFile), 'files', f), `${FONT_DIR}/${f}`);
+        fontFiles.push(`/${FONT_DIR}/${f}`);
+        return `url(./${f})`;
+      });
+      return `@font-face {${body}}`;
+    })
+    .join('\n');
+}
+fs.writeFileSync(
+  path.join(web, FONT_DIR, 'fonts.css'),
+  [
+    fontFaces('@fontsource-variable/bricolage-grotesque/opsz.css', 'Bricolage Grotesque'),
+    fontFaces('@fontsource-variable/figtree/index.css', 'Figtree'),
+    fontFaces('@fontsource/jetbrains-mono/400.css', 'JetBrains Mono'),
+    fontFaces('@fontsource/jetbrains-mono/500.css', 'JetBrains Mono'),
+  ].join('\n'),
+);
+WEB_LIBS.fonts = `/${FONT_DIR}/fonts.css`;
+
+// Content Security Policy: scripts only from this site plus the page's own inline scripts (by hash),
+// data only to Supabase. A script smuggled into a name or note could not run, and could not send anything away.
+function withCsp(html, { upgrade = true } = {}) {
+  const hashes = new Set([...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)].map((m) => `'sha256-${crypto.createHash('sha256').update(m[1], 'utf8').digest('base64')}'`));
+  const sb = new URL(SUPABASE_URL).host;
+  const csp = [
+    "default-src 'self'",
+    `script-src 'self' ${[...hashes].join(' ')}`,
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob: https:",
+    "font-src 'self'",
+    `connect-src 'self' data: blob: https://${sb} wss://${sb}`,
+    `media-src 'self' data: blob: https://${sb}`,
+    "worker-src 'self'",
+    "manifest-src 'self'",
+    "frame-src 'none'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'self'",
+    ...(upgrade ? ['upgrade-insecure-requests'] : []),
+  ].join('; ');
+  return html.replace('<meta charset="utf-8">', `<meta charset="utf-8">\n<meta http-equiv="Content-Security-Policy" content="${csp}">`);
+}
+fs.writeFileSync(path.join(web, 'index.html'), withCsp(webDoc(WEB_LIBS)));
+const LIB_URLS = [WEB_LIBS.supabase, WEB_LIBS.react, WEB_LIBS.reactDom, WEB_LIBS.three, ...[...addonFiles].map((f) => WEB_LIBS.addons + f), WEB_LIBS.fonts, ...fontFiles];
 // static files of the installed app; the service worker gets the build hash so a new build replaces its cache
 const pub = path.join(root, 'public');
 const copyDir = (from, to) => {
@@ -146,14 +230,14 @@ fs.writeFileSync(path.join(web, 'sw.js'), fs.readFileSync(path.join(pub, 'sw.js'
 // local test of the self-hosted site against a mock client (see scripts in the scratchpad)
 fs.writeFileSync(
   path.join(dist, 'test-web.html'),
-  webDoc({
+  withCsp(webDoc({
     supabase: '/dist/mock-supabase.js',
     react: '/node_modules/react/umd/react.production.min.js',
     reactDom: '/node_modules/react-dom/umd/react-dom.production.min.js',
     three: '/node_modules/three/build/three.module.js',
     addons: '/node_modules/three/examples/jsm/',
     fonts: false,
-  }),
+  }), { upgrade: false }),
 );
 
 // seed data (example house, and the private house data set when present - it is not in git)

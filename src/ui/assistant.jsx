@@ -44,7 +44,11 @@ function findFloor(q) {
 }
 const midRoom = (floor, a, b) => (floor.rooms || []).find((r) => r.poly?.length && pointInPoly([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], r.poly));
 
-export function makeTools(log) {
+// ask(text) shows a confirmation in the chat and resolves to true only when the user taps "Löschen".
+// Deleting never happens on the model's word alone: text from documents, web results or notes could
+// otherwise talk the assistant into removing data.
+const DECLINED = 'Der Nutzer hat das Löschen abgelehnt. Es wurde nichts gelöscht.';
+export function makeTools(log, ask = async () => false) {
   const getProject = (id) => {
     const p = getState().projects[String(id)];
     if (!p) throw new Error('Unbekannte projectId');
@@ -211,7 +215,7 @@ export function makeTools(log) {
         },
         required: ['action'],
       },
-      execute(input) {
+      async execute(input) {
         const notes = getState().notes || {};
         if (input.action === 'add') {
           if (!str(input.text).trim() && !str(input.title).trim()) throw new Error('Leere Notiz');
@@ -222,6 +226,7 @@ export function makeTools(log) {
         const n = notes[String(input.noteId)];
         if (!n) throw new Error(`Unbekannte noteId. Vorhanden: ${Object.values(notes).map((x) => `${x.id} „${x.title}“`).join(', ') || 'keine'}`);
         if (input.action === 'delete') {
+          if (!(await ask(`Notiz „${n.title || 'ohne Titel'}“`))) return DECLINED;
           deleteNote(n.id);
           log({ kind: 'note', text: `Notiz gelöscht: ${n.title}` });
           return 'ok';
@@ -262,7 +267,7 @@ export function makeTools(log) {
         },
         required: ['action'],
       },
-      execute(input) {
+      async execute(input) {
         const contacts = getState().contacts || {};
         const fields = Object.fromEntries(['name', 'company', 'role', 'phone', 'mobile', 'email', 'website', 'address', 'notes'].filter((f) => typeof input[f] === 'string').map((f) => [f, str(input[f], f === 'notes' ? 2000 : 200)]));
         if (input.action === 'add') {
@@ -276,6 +281,7 @@ export function makeTools(log) {
         if (!c) throw new Error(`Unbekannte contactId. Vorhanden: ${Object.values(contacts).map((x) => `${x.id} ${x.company || x.name}`).join(', ') || 'keine'}`);
         const title = c.company || c.name;
         if (input.action === 'delete') {
+          if (!(await ask(`Kontakt „${title || 'ohne Namen'}“`))) return DECLINED;
           deleteContact(c.id);
           log({ kind: 'note', text: `Kontakt gelöscht: ${title}` });
           return 'ok';
@@ -539,11 +545,13 @@ export function makeTools(log) {
       name: 'delete_item',
       description: 'Löscht einen Meilenstein, eine Kostenposition, Rahmenbedingung/To-do, Förderung oder Besprechung eines Projekts (IDs aus get_project). Bei Besprechungen löscht withDerived auch die daraus angelegten Termine und To-dos.',
       inputSchema: { type: 'object', properties: { projectId: { type: 'string' }, type: { type: 'string', enum: Object.keys(ITEM_LISTS) }, itemId: { type: 'string' }, withDerived: { type: 'boolean' } }, required: ['projectId', 'type', 'itemId'] },
-      execute(input) {
+      async execute(input) {
         const p = getProject(input.projectId);
         const key = ITEM_LISTS[input.type];
         const item = key && (p[key] || []).find((x) => x.id === String(input.itemId));
         if (!item) throw new Error(`Unbekannte itemId für ${input.type}`);
+        const what = `${ITEM_NAMES[input.type]} „${item.title || item.label || item.text || item.program || '–'}“ im Projekt „${p.title}“${input.type === 'meeting' && input.withDerived ? ' samt daraus angelegten Terminen und To-dos' : ''}`;
+        if (!(await ask(what))) return DECLINED;
         if (input.type === 'milestone') deleteMilestone(p.id, item.id);
         else if (input.type === 'meeting' && input.withDerived) {
           const ms = new Set(item.milestoneIds || []),
@@ -617,6 +625,14 @@ export function makeTools(log) {
 // Browser speech recognition (Chrome, Edge, Safari); null where it is missing (Firefox).
 const SpeechRec = typeof window !== 'undefined' ? window.SpeechRecognition || window.webkitSpeechRecognition : null;
 
+// open delete confirmations: message id -> resolve(boolean); kept outside the component so closing the
+// drawer can answer them with "no"
+const pendingAsks = new Map();
+const declineAll = () => {
+  for (const r of pendingAsks.values()) r(false);
+  pendingAsks.clear();
+};
+
 export function AssistantDrawer({ data, drawer }) {
   const avail = useAiAvailable();
   const [msgs, setMsgs] = useState(memory);
@@ -635,6 +651,8 @@ export function AssistantDrawer({ data, drawer }) {
     () => () => {
       ctl.current?.abort();
       rec.current?.abort();
+      declineAll();
+      memory = (memory || []).map((m) => (m.role === 'confirm' && m.state === 'open' ? { ...m, state: 'no' } : m));
     },
     [],
   );
@@ -680,11 +698,18 @@ export function AssistantDrawer({ data, drawer }) {
     if (drawer?.voice && avail !== false && !rec.current) listen();
   }, [drawer?.voice]);
 
+  const answerAsk = (id, ok) => {
+    const r = pendingAsks.get(id);
+    pendingAsks.delete(id);
+    setMsgs((m) => m.map((x) => (x.id === id && x.role === 'confirm' ? { ...x, state: ok ? 'yes' : 'no' } : x)));
+    r?.(ok);
+  };
+
   const send = async (text) => {
     const q = (text ?? input).trim();
     if (!q || busy) return;
     setInput('');
-    const history = [...msgs.filter((m) => m.role !== 'tool'), { role: 'user', content: q }];
+    const history = [...msgs.filter((m) => m.role !== 'tool' && m.role !== 'confirm'), { role: 'user', content: q }];
     const aiIdx = msgs.length + 1;
     setMsgs((m) => [...m, { role: 'user', content: q }, { role: 'assistant', content: '', pending: true }]);
     setBusy(true);
@@ -699,11 +724,26 @@ export function AssistantDrawer({ data, drawer }) {
         return copy;
       });
     };
+    const ask = (text) =>
+      new Promise((resolve) => {
+        if (c.signal.aborted) return resolve(false);
+        const id = 'ask' + Date.now() + Math.random().toString(36).slice(2, 6);
+        pendingAsks.set(id, resolve);
+        setMsgs((m) => {
+          const copy = [...m];
+          copy.splice(copy.length - 1, 0, { role: 'confirm', id, text, state: 'open' });
+          return copy;
+        });
+      });
+    c.signal.addEventListener('abort', () => {
+      declineAll();
+      setMsgs((m) => m.map((x) => (x.role === 'confirm' && x.state === 'open' ? { ...x, state: 'no' } : x)));
+    });
     try {
       const turns = history.map((m) => ({ role: m.role, content: m.content })).filter((m) => m.content);
       const { text: answer } = await aiChat(turns, getState(), {
         signal: c.signal,
-        tools: makeTools(log),
+        tools: makeTools(log, ask),
         onText: ({ text: t }) => setMsgs((m) => m.map((x, i) => (i === m.length - 1 && x.pending ? { ...x, content: t } : x))),
       });
       setMsgs((m) => m.map((x, i) => (i === m.length - 1 && x.pending ? { role: 'assistant', content: answer } : x)));
@@ -774,6 +814,26 @@ export function AssistantDrawer({ data, drawer }) {
           m.role === 'user' ? (
             <div key={i} className="msg msg-user">
               {m.content}
+            </div>
+          ) : m.role === 'confirm' ? (
+            <div key={i} className={`msg-confirm is-${m.state}`} role="group" aria-label="Löschen bestätigen">
+              <div className="msg-confirm-text">
+                <Icon name="trash" size={15} />
+                <span>
+                  {m.state === 'open' ? 'Der Assistent möchte löschen: ' : m.state === 'yes' ? 'Gelöscht: ' : 'Nicht gelöscht: '}
+                  <b>{m.text}</b>
+                </span>
+              </div>
+              {m.state === 'open' ? (
+                <div className="msg-confirm-actions">
+                  <Btn small kind="danger" icon="trash" onClick={() => answerAsk(m.id, true)}>
+                    Löschen
+                  </Btn>
+                  <Btn small kind="ghost" onClick={() => answerAsk(m.id, false)}>
+                    Behalten
+                  </Btn>
+                </div>
+              ) : null}
             </div>
           ) : m.role === 'tool' ? (
             <button

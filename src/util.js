@@ -80,6 +80,18 @@ export function debounce(fn, ms) {
   };
 }
 
+// Only plain web links leave the app: no javascript:, data: or other schemes from AI answers or web results.
+export function safeUrl(u) {
+  const s = String(u ?? '').trim();
+  if (!/^https?:\/\//i.test(s)) return null;
+  try {
+    const url = new URL(s);
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
 export function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 }

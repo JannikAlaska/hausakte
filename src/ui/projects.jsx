@@ -21,7 +21,7 @@ import { projectCost, projectIssues, projectProgress, createsCycle, isDone, cost
 import { createProject, patchProject, deleteProject, archiveProject, addFunding, addCost, addConstraint, addMilestone, deleteMilestone, alignMilestone, alignToDependencies } from '../actions.js';
 import { aiFunding, aiTiming, aiCosts, aiRisks, aiRoadmap } from '../ai.js';
 import { updateHouse } from '../store.js';
-import { uid, fmtEuro, fmtDate, fmtDayMonth, fmtMonth, todayISO, addDays, diffDays, parseISO, toISO, isISO, MONTHS, fmtNum } from '../util.js';
+import { uid, fmtEuro, fmtDate, fmtDayMonth, fmtMonth, todayISO, addDays, diffDays, parseISO, toISO, isISO, MONTHS, fmtNum, safeUrl } from '../util.js';
 
 const { useState, useEffect, useRef, useMemo } = React;
 
@@ -1149,10 +1149,10 @@ function FundingList({ p, set }) {
           {f.notes || f.url ? (
             <p className="small muted">
               {f.notes}
-              {f.url ? (
+              {safeUrl(f.url) ? (
                 <>
                   {' '}
-                  <a href={f.url} target="_blank" rel="noopener noreferrer" className="link">
+                  <a href={safeUrl(f.url)} target="_blank" rel="noopener noreferrer" className="link">
                     Zur Förderstelle
                   </a>
                 </>
@@ -1243,8 +1243,8 @@ function FundingResult({ r, p }) {
                     Übernehmen
                   </Btn>
                 )}
-                {g.url && /^https?:\/\//.test(g.url) ? (
-                  <a className="link" href={g.url} target="_blank" rel="noopener noreferrer">
+                {safeUrl(g.url) ? (
+                  <a className="link" href={safeUrl(g.url)} target="_blank" rel="noopener noreferrer">
                     Programmseite <Icon name="chevR" size={13} />
                   </a>
                 ) : null}
