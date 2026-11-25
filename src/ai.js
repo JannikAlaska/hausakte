@@ -49,6 +49,7 @@ const ERR = {
   not_configured: 'Die KI ist noch nicht eingerichtet: Hinterlege deinen Anthropic-API-Schlüssel in Supabase unter Edge Functions → Secrets als ANTHROPIC_API_KEY.',
   overloaded: 'Die KI ist gerade überlastet. Versuche es in ein paar Minuten noch einmal.',
   not_member: 'Dein Konto gehört nicht zu dieser Hausakte.',
+  no_credit: 'Das Guthaben des Anthropic-Kontos ist aufgebraucht. Lade es in der Anthropic Console unter „Plans & Billing“ auf – danach funktioniert die KI sofort wieder.',
   file_missing: 'Die Datei ist noch nicht hochgeladen.',
   pdf_unsupported: 'PDFs kann die KI in dieser Ansicht nicht lesen. Öffne die Hausakte über deine eigene Adresse oder lade das Dokument als Foto hoch.',
   too_many_files: 'Vergleiche höchstens 5 Angebote auf einmal.',

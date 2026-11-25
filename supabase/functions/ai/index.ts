@@ -94,11 +94,13 @@ Deno.serve(async (req) => {
     console.error(`ai ${where}: status=${err?.status ?? "-"} request=${err?.requestID ?? "-"} ${String(err?.message ?? e).slice(0, 600)}`);
   };
   const tooLargeMsg = (m: string) => /too long|too large|exceeds/i.test(m);
+  // the API reports an empty prepaid balance as an invalid request; there is no error class for it
+  const noCreditMsg = (m: string) => /credit balance/i.test(m);
   try {
     try {
       return await run(false);
     } catch (e) {
-      if (!(e instanceof Anthropic.BadRequestError) || tooLargeMsg(e.message)) throw e;
+      if (!(e instanceof Anthropic.BadRequestError) || tooLargeMsg(e.message) || noCreditMsg(e.message)) throw e;
       log("rejected, retrying without extras", e);
       return await run(true);
     }
@@ -108,6 +110,7 @@ Deno.serve(async (req) => {
     if (e instanceof Anthropic.AuthenticationError || e instanceof Anthropic.PermissionDeniedError) {
       return reply({ code: "not_configured", message: "the Anthropic API key was rejected" }, 503);
     }
+    if (e instanceof Anthropic.BadRequestError && noCreditMsg(e.message)) return reply({ code: "no_credit", message: e.message }, 402);
     if (e instanceof Anthropic.BadRequestError) {
       const tooLarge = tooLargeMsg(e.message);
       return reply({ code: tooLarge ? "prompt_too_large" : "bad_request", message: e.message }, tooLarge ? 413 : 400);
