@@ -37,6 +37,7 @@ const ERR = {
   sampling_disabled: 'Für dein Konto ist die KI hier nicht verfügbar.',
   not_declared: 'Diese Version der Seite darf keine KI verwenden.',
   rate_limited: 'Gerade zu viele KI-Anfragen. Versuche es in ein paar Minuten noch einmal.',
+  quota: 'Das Limit für KI-Anfragen ist erreicht (höchstens 150 pro Stunde und 800 pro Tag je Person – Schutz für dein Guthaben, falls eine Anmeldung in falsche Hände gerät). Versuche es später noch einmal.',
   refused: 'Die KI hat die Anfrage abgelehnt. Formuliere sie anders.',
   invalid_json: 'Die Antwort kam unvollständig zurück. Versuche es noch einmal.',
   prompt_too_large: 'Zu viele Daten für eine Anfrage. Kürze Notizen oder frage gezielter.',

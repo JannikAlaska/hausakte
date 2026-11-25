@@ -10,19 +10,26 @@ const SYSTEM =
   "Du bist der KI-Assistent der Web-App „Hausakte“, mit der eine Eigentümerin oder ein Eigentümer die Renovierung und Modernisierung eines Wohnhauses in Deutschland plant. Antworte auf Deutsch, sachlich und konkret.";
 const JSON_SYSTEM = " Antworte ausschließlich mit einem gültigen JSON-Wert ohne Markdown-Codeblock und ohne Text davor oder danach.";
 
-const cors = {
-  "Access-Control-Allow-Origin": "*",
+// Browsers may call this only from the Hausakte site (production, its aliases and preview builds).
+const ORIGINS = [/^https:\/\/hausakte-eight\.vercel\.app$/, /^https:\/\/hausakte(-[a-z0-9-]+)?-jannik7\.vercel\.app$/];
+const corsFor = (origin: string | null) => ({
+  "Access-Control-Allow-Origin": origin && ORIGINS.some((r) => r.test(origin)) ? origin : "https://hausakte-eight.vercel.app",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
-const reply = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
+  Vary: "Origin",
+});
+// per member: at most 150 model calls an hour and 800 a day (a tool loop counts every round)
+const LIMIT_SECONDS = [3600, 86400];
+const LIMIT_MAX = [150, 800];
 
 const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
 Deno.serve(async (req) => {
+  const cors = corsFor(req.headers.get("Origin"));
+  const reply = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return reply({ code: "bad_request", message: "POST only" }, 405);
 
@@ -31,6 +38,11 @@ Deno.serve(async (req) => {
   if (authError || !auth?.user) return reply({ code: "session_expired", message: "not signed in" }, 401);
   const { data: member } = await admin.from("hausakte_members").select("user_id").eq("user_id", auth.user.id).maybeSingle();
   if (!member) return reply({ code: "not_member", message: "no access to this Hausakte" }, 403);
+
+  // limit per member, so a stolen login cannot run up the bill; if the check itself fails, the call goes ahead
+  const { data: allowed, error: limitError } = await admin.rpc("hausakte_rate_take", { p_key: "ai:" + auth.user.id, p_seconds: LIMIT_SECONDS, p_max: LIMIT_MAX });
+  if (limitError) console.error(`ai rate check failed: ${limitError.message}`);
+  else if (allowed === false) return reply({ code: "quota", message: "AI request limit reached" }, 429);
 
   const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
   if (!apiKey) return reply({ code: "not_configured", message: "ANTHROPIC_API_KEY is not set" }, 503);
