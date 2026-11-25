@@ -26,10 +26,13 @@ import androidx.core.content.FileProvider;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * The app: a full-screen WebView showing the Hausakte web version. The web code talks to the
@@ -172,7 +175,15 @@ public class MainActivity extends Activity {
         return u != null && "https".equals(u.getScheme()) && BuildConfig.APP_HOST.equals(u.getHost());
     }
 
+    /** Links that may leave the app (to the browser, mail or phone app); intent:, file:, content: etc. never do. */
+    private static final Set<String> EXTERNAL_SCHEMES = new HashSet<>(Arrays.asList("https", "http", "mailto", "tel"));
+
     void openExternal(Uri u) {
+        String scheme = u == null || u.getScheme() == null ? "" : u.getScheme().toLowerCase(Locale.ROOT);
+        if (!EXTERNAL_SCHEMES.contains(scheme)) {
+            Toast.makeText(this, "Dieser Link wird aus Sicherheitsgründen nicht geöffnet.", Toast.LENGTH_SHORT).show();
+            return;
+        }
         try {
             Intent i = new Intent(Intent.ACTION_VIEW, u);
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -187,7 +198,10 @@ public class MainActivity extends Activity {
         public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest req) {
             Uri u = req.getUrl();
             if (isOwn(u)) return false;
-            if ("blob".equals(u.getScheme()) || "data".equals(u.getScheme())) return false;
+            String scheme = u.getScheme() == null ? "" : u.getScheme().toLowerCase(Locale.ROOT);
+            // files the page made itself stay in the app; of data: addresses only pictures
+            if ("blob".equals(scheme)) return false;
+            if ("data".equals(scheme)) return !u.toString().regionMatches(true, 0, "data:image/", 0, 11);
             openExternal(u);
             return true;
         }
@@ -226,6 +240,11 @@ public class MainActivity extends Activity {
         @Override
         public void onPermissionRequest(PermissionRequest request) {
             main.post(() -> {
+                // camera and microphone only for the Hausakte site itself
+                if (!isOwn(request.getOrigin())) {
+                    request.deny();
+                    return;
+                }
                 List<String> needed = new ArrayList<>();
                 for (String r : request.getResources()) {
                     if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(r)) needed.add(Manifest.permission.RECORD_AUDIO);

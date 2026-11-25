@@ -77,12 +77,17 @@ public class Bridge {
     /** Saves a text file (e.g. the JSON backup) to "Downloads". */
     @JavascriptInterface
     public void saveText(String name, String mime, String text) {
+        // a plain file name only: no folders, no "..", no control characters
+        String clean = (name == null ? "" : name).replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]", "_").replaceAll("^\\.+", "");
+        if (clean.isEmpty()) clean = "hausakte.txt";
+        if (clean.length() > 120) clean = clean.substring(clean.length() - 120);
+        final String fileName = clean;
         activity.runOnMain(() -> {
             try {
                 byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
                 if (Build.VERSION.SDK_INT >= 29) {
                     ContentValues v = new ContentValues();
-                    v.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
+                    v.put(MediaStore.MediaColumns.DISPLAY_NAME, fileName);
                     v.put(MediaStore.MediaColumns.MIME_TYPE, mime);
                     v.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
                     Uri uri = activity.getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, v);
@@ -90,12 +95,12 @@ public class Bridge {
                     try (OutputStream o = activity.getContentResolver().openOutputStream(uri)) {
                         o.write(bytes);
                     }
-                    Toast.makeText(activity, "Gespeichert unter Downloads: " + name, Toast.LENGTH_LONG).show();
+                    Toast.makeText(activity, "Gespeichert unter Downloads: " + fileName, Toast.LENGTH_LONG).show();
                 } else {
                     // older Android: hand the file to another app (Drive, Files, mail ...)
                     File dir = new File(activity.getCacheDir(), "export");
                     dir.mkdirs();
-                    File f = new File(dir, name);
+                    File f = new File(dir, fileName);
                     try (FileOutputStream o = new FileOutputStream(f)) {
                         o.write(bytes);
                     }
