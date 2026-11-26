@@ -329,7 +329,7 @@ function projectBlock(p, d) {
     `Meilensteine: ${(p.milestones || []).map((m) => `${m.title} ${m.date || 'ohne Datum'}${m.done ? ' (erledigt)' : ''}${(m.dependsOn || []).length ? ` – erst nach ${m.dependsOn.map((r) => depName(d, r)).join(', ')}` : ''}`).join('; ') || 'keine'}`,
     `Hinweise: ${p.hints?.trim() || '–'}`,
     `Offene Aufgaben: ${(p.constraints || []).filter((c) => !c.done).map((c) => `${c.text}${c.due ? ` (bis ${c.due})` : ''}${c.who ? ` [${c.who}]` : ''}`).join('; ') || 'keine'}`,
-    `Besprechungen: ${(p.meetings || []).slice(0, 5).map((m) => `${m.date} ${m.title}: ${String(m.summary || '').slice(0, 300)}`).join(' | ') || 'keine'}`,
+    `Besprechungen: ${(p.meetings || []).slice(0, 5).map((m) => { const files = Object.values(d?.documents || {}).filter((x) => x.meetingId === m.id && x.id !== m.inkDoc && !x.ink).map((x) => x.name); return `${m.date} ${m.title}: ${String(m.summary || '').slice(0, 300)}${files.length ? ` (Anhänge: ${files.slice(0, 6).join(', ')})` : ''}`; }).join(' | ') || 'keine'}`,
     `Verknüpfte Bauteile: ${(p.components || []).map((id) => d.components?.[id]?.name).filter(Boolean).join('; ') || 'keine'}`,
     `Notizen: ${p.notes || '–'}`,
   ];

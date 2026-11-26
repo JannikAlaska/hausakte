@@ -39,7 +39,9 @@ export async function fileAllowed(file, types = ASSET_TYPES) {
   const check = SIGNATURES[file.type];
   return !!check && head.length >= 4 && check(head);
 }
-const NOT_ALLOWED = 'Dieser Dateityp wird nicht unterstützt oder der Inhalt passt nicht zur Dateiendung. Lade PDF oder Bilder (JPG, PNG, WebP, GIF) hoch.';
+// what the file pickers offer: the types above (photos and scans, PDF, short videos, text files)
+export const FILE_ACCEPT = 'image/*,application/pdf,video/mp4,video/webm,text/plain,text/csv,text/markdown,application/json,.txt,.csv,.md,.json';
+export const NOT_ALLOWED = 'Dieser Dateityp wird nicht unterstützt oder der Inhalt passt nicht zur Dateiendung. Lade PDF oder Bilder (JPG, PNG, WebP, GIF) hoch.';
 
 function guessType(file) {
   const n = file.name.toLowerCase();
@@ -116,7 +118,7 @@ export async function uploadFiles(files, meta = {}) {
   let ok = 0;
   for (const file of files) {
     const id = uid('d-');
-    const base = { id, name: meta.name || file.name, type: meta.type || guessType(file), size: file.size, contentType: file.type, projectId: meta.projectId || null, componentId: meta.componentId || null, lineId: meta.lineId || null, contactId: meta.contactId || null, date: todayISO(), notes: '' };
+    const base = { id, name: meta.name || file.name, type: meta.type || guessType(file), size: file.size, contentType: file.type, projectId: meta.projectId || null, componentId: meta.componentId || null, lineId: meta.lineId || null, contactId: meta.contactId || null, meetingId: meta.meetingId || null, date: todayISO(), notes: '' };
     const stored = await storeFile(file);
     if (!stored) continue;
     putDoc('documents', id, { ...base, ...stored }, 50);
@@ -193,20 +195,51 @@ export function UploadButton({ projectId, componentId, lineId, small, label = 'H
   );
 }
 
-function Lightbox({ doc, onClose }) {
+// deletes a document together with its stored file
+export async function removeDocument(doc) {
+  if (doc.assetId) {
+    const a = await getAssets();
+    try {
+      await a?.delete(doc.assetId);
+    } catch {}
+  }
+  deleteDoc('documents', doc.id);
+}
+
+// the meeting a document is attached to: { project, meeting } or null
+export function meetingOfDoc(doc, data) {
+  if (!doc?.meetingId) return null;
+  const projects = doc.projectId && data.projects?.[doc.projectId] ? [data.projects[doc.projectId]] : Object.values(data.projects || {});
+  for (const p of projects) {
+    const m = (p.meetings || []).find((x) => x.id === doc.meetingId);
+    if (m) return { project: p, meeting: m };
+  }
+  return null;
+}
+
+// a picture in full size above everything (also above an open project); Esc or the Android back key close
+// only the picture, not the project behind it
+export function Lightbox({ doc, onClose }) {
   useEffect(() => {
-    const k = (e) => e.key === 'Escape' && onClose();
-    window.addEventListener('keydown', k);
-    return () => window.removeEventListener('keydown', k);
+    const k = (e) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      onClose();
+    };
+    window.addEventListener('keydown', k, true);
+    return () => window.removeEventListener('keydown', k, true);
   }, []);
-  return (
-    <div className="welcome" style={{ width: 'min(900px, calc(100% - 32px))' }} role="dialog" aria-label={doc.name}>
-      <div className="spread">
-        <b>{doc.name}</b>
-        <IconBtn icon="x" label="Schließen" onClick={onClose} />
+  return ReactDOM.createPortal(
+    <div className="qn-overlay doc-lightbox" onPointerDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="panel lb-panel" role="dialog" aria-modal="true" aria-label={doc.name}>
+        <div className="spread">
+          <b>{doc.name}</b>
+          <IconBtn icon="x" label="Schließen" onClick={onClose} />
+        </div>
+        <img src={fileUrl(doc)} alt={doc.name} />
       </div>
-      <img src={fileUrl(doc)} alt={doc.name} style={{ maxHeight: '70vh', objectFit: 'contain', borderRadius: 10 }} />
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -287,15 +320,11 @@ function DocCard({ doc, data, compact, onOpen }) {
   const isImg = (doc.contentType || '').startsWith('image/');
   const set = (patch) => updateDoc('documents', doc.id, (d) => ({ ...d, ...patch }));
   const remove = async () => {
-    if (doc.assetId) {
-      const a = await getAssets();
-      try {
-        await a?.delete(doc.assetId);
-      } catch {}
-    }
-    deleteDoc('documents', doc.id);
+    await removeDocument(doc);
     toast('Dokument gelöscht');
   };
+  const meet = meetingOfDoc(doc, data);
+  const meetText = meet && !doc.ink ? `Anhang der Besprechung „${meet.meeting.title || 'Besprechung'}“${isISO(meet.meeting.date) ? ` vom ${fmtDate(meet.meeting.date)}` : ''}` : '';
   const typeName = DOC_TYPES.find((t) => t.key === doc.type)?.name || 'Dokument';
   const missing = !doc.assetId && !doc.dataUrl;
   const openIt = () => isImg && onOpen(doc);
@@ -319,6 +348,7 @@ function DocCard({ doc, data, compact, onOpen }) {
             <b>{doc.name}</b>
             <span>
               {typeName} · {fmtDate(doc.date)}
+              {meet && !doc.ink ? ' · aus Besprechung' : ''}
             </span>
           </div>
           {!isImg && url && doc.assetId ? (
@@ -356,6 +386,11 @@ function DocCard({ doc, data, compact, onOpen }) {
           options={Object.values(data.projects).map((p) => ({ value: p.id, label: p.archived ? `${p.title} (deaktiviert)` : p.title }))}
           aria-label="Projekt"
         />
+        {meetText ? (
+          <button type="button" className="link small doc-meet" onClick={() => openDrawer({ type: 'project', id: meet.project.id, tab: 'besprechungen' })} title={meetText}>
+            <Icon name="link" size={12} /> {meetText}
+          </button>
+        ) : null}
         {missing ? (
           <div className="hstack" style={{ justifyContent: 'space-between' }}>
             <span className="small muted">Datei fehlt</span>

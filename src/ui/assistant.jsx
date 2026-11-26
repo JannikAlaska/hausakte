@@ -1,7 +1,7 @@
 import { Icon } from './icons.jsx';
 import { Btn, IconBtn, Drawer } from './common.jsx';
 import { Md, useAiAvailable, AiUnavailable } from './ai-ui.jsx';
-import { useDictation, mmss } from './meetings.jsx';
+import { useDictation, mmss, meetingDocs } from './meetings.jsx';
 import { closeDrawer, openDrawer, toast } from './state.js';
 import { aiChat, aiErrorText, isHardAiError, AI_DISCLAIMER } from '../ai.js';
 import { createProject, patchProject, addFunding, addCost, addConstraint, addMilestone, deleteMilestone, addMeeting, addNote, updateNote, deleteNote } from '../actions.js';
@@ -94,7 +94,7 @@ export function makeTools(log, ask = async () => false) {
           costs: (p.costs || []).map((k) => ({ id: k.id, label: k.label, estimate: k.estimate, offer: k.offer, actual: k.actual, vendor: k.vendor || '' })),
           constraints: (p.constraints || []).map((c) => ({ id: c.id, text: c.text, kind: c.kind, done: !!c.done, due: c.due || null, who: c.who || '' })),
           funding: (p.funding || []).map((f) => ({ id: f.id, program: f.program, provider: f.provider, type: f.type, status: f.status, rate: f.rate, amount: f.amount, deadline: f.deadline })),
-          meetings: (p.meetings || []).map((m) => ({ id: m.id, date: m.date, title: m.title, summary: m.summary, milestoneIds: m.milestoneIds || [], todoIds: m.todoIds || [] })),
+          meetings: (p.meetings || []).map((m) => ({ id: m.id, date: m.date, title: m.title, summary: m.summary, milestoneIds: m.milestoneIds || [], todoIds: m.todoIds || [], attachments: meetingDocs(getState(), m).map((d) => ({ documentId: d.id, name: d.name })) })),
         };
       },
     },
@@ -553,6 +553,8 @@ export function makeTools(log, ask = async () => false) {
         if (!item) throw new Error(`Unbekannte itemId für ${input.type}`);
         const what = `${ITEM_NAMES[input.type]} „${item.title || item.label || item.text || item.program || '–'}“ im Projekt „${p.title}“${input.type === 'meeting' && input.withDerived ? ' samt daraus angelegten Terminen und To-dos' : ''}`;
         if (!(await ask(what))) return DECLINED;
+        // files attached to a deleted meeting stay in the project's documents
+        if (input.type === 'meeting') for (const d of meetingDocs(getState(), item)) updateDoc('documents', d.id, (x) => ({ ...x, meetingId: null }));
         if (input.type === 'milestone') deleteMilestone(p.id, item.id);
         else if (input.type === 'meeting' && input.withDerived) {
           const ms = new Set(item.milestoneIds || []),

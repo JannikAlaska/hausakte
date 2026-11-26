@@ -1,9 +1,11 @@
 // Meeting notes per project: record a voice memo (live speech-to-text), let the AI write the note
 // and add the appointments as milestones and the to-dos as tasks.
 import { Icon } from './icons.jsx';
-import { Btn, IconBtn, Field, TextInput, DateInput, Pill, ConfirmBtn } from './common.jsx';
+import { Btn, IconBtn, Field, TextInput, DateInput, Pill, ConfirmBtn, Select } from './common.jsx';
+import { uploadFiles, fileAllowed, removeDocument, Lightbox, FILE_ACCEPT, NOT_ALLOWED } from './documents.jsx';
 import { useAiAvailable } from './ai-ui.jsx';
 import { toast, openDrawer } from './state.js';
+import { updateDoc, fileUrl } from '../store.js';
 import { addMeeting, addCost, patchProject } from '../actions.js';
 import { prepareMeeting, usePreparing, isReading, transcribeMeeting, deleteInkDoc } from '../notesai.js';
 import { InkEditor, InkPreview, createInkMeeting, updateInkMeeting } from './ink.jsx';
@@ -136,6 +138,8 @@ function Recorder({ p, data, onClose }) {
   const avail = useAiAvailable();
   const [date, setDate] = useState(todayISO());
   const [ink, setInk] = useState(false);
+  // files picked before saving; they are stored with the meeting once it exists
+  const [files, setFiles] = useState([]);
   const dict = useDictation((code) =>
     toast(code === 'audio-capture' ? 'Kein Mikrofon gefunden.' : 'Das Mikrofon ist für diese Seite nicht freigegeben. Erlaube den Zugriff in den Browser-Einstellungen – in der Vorschau in claude.ai geht es nicht.', 'warn', 7000),
   );
@@ -154,6 +158,7 @@ function Recorder({ p, data, onClose }) {
       toast('Gespeichert – die KI bereitet die Besprechung auf …');
       prepareMeeting(p.id, res.id, { derive: true });
     } else toast('Notiz gespeichert');
+    if (files.length) attachToMeeting(files, p.id, res.id);
     onClose();
   };
   return (
@@ -191,6 +196,7 @@ function Recorder({ p, data, onClose }) {
           }}
         />
       ) : null}
+      <PendingFiles files={files} setFiles={setFiles} />
       <Field label="Notiz (wird beim Sprechen mitgeschrieben, du kannst sie korrigieren)">
         <textarea className="input meet-text" rows={7} value={dict.text} readOnly={dict.on} onChange={(e) => dict.setText(e.target.value)} placeholder="z. B. Termin mit Elektriker Müller zur PV-Anlage: Zählerschrank muss erneuert werden, Angebot kommt bis Freitag, Montage voraussichtlich in KW 12 …" />
       </Field>
@@ -223,6 +229,8 @@ function MeetingCard({ m, p, data }) {
   const todos = (p.constraints || []).filter((x) => x.meetingId === m.id);
   const remove = () => {
     if (m.inkDoc) deleteInkDoc(m.inkDoc);
+    // attached files stay in the project's documents
+    for (const d of meetingDocs(data, m)) updateDoc('documents', d.id, (x) => ({ ...x, meetingId: null }));
     patchProject(p.id, (x) => ({ ...x, meetings: (x.meetings || []).filter((y) => y.id !== m.id) }));
   };
   const toggleTodo = (id, done) => patchProject(p.id, (x) => ({ ...x, constraints: (x.constraints || []).map((c) => (c.id === id ? { ...c, done } : c)) }));
@@ -281,7 +289,7 @@ function MeetingCard({ m, p, data }) {
             <TextInput multiline rows={4} value={m.summary} onChange={(v) => set({ summary: v })} />
           </Field>
           <ConfirmBtn onConfirm={remove}>Besprechung löschen</ConfirmBtn>
-          <p className="small muted">Beim Löschen bleiben die daraus angelegten Termine und To-dos erhalten.</p>
+          <p className="small muted">Beim Löschen bleiben die daraus angelegten Termine und To-dos erhalten, angehängte Dateien bleiben in der Ablage des Projekts.</p>
         </div>
       ) : m.summary ? (
         <p className="meet-summary">{m.summary}</p>
@@ -362,6 +370,7 @@ function MeetingCard({ m, p, data }) {
           </ul>
         </div>
       ) : null}
+      <MeetingFiles m={m} p={p} data={data} edit={edit} />
       {m.inkDoc && !edit ? (
         <InkPreview doc={inkDoc} onEdit={inkDoc?.ink ? () => setInk(true) : null} onRead={avail !== false && inkDoc?.ink ? () => transcribeMeeting(p.id, m.id, { derive: !m.ai }) : null} reading={preparing} />
       ) : null}
@@ -383,5 +392,167 @@ function MeetingCard({ m, p, data }) {
         </details>
       ) : null}
     </article>
+  );
+}
+
+// ---------- attached files ----------
+// Files of a meeting are ordinary documents of the project with meetingId set, so they also show up in the
+// project's documents and the Ablage. The handwritten page of a meeting has its own preview and is left out.
+export const meetingDocs = (data, m) =>
+  Object.values(data?.documents || {})
+    .filter((d) => d.meetingId === m.id && d.id !== m.inkDoc && !d.ink)
+    .sort((a, b) => String(a.name).localeCompare(String(b.name), 'de'));
+
+async function attachToMeeting(files, projectId, meetingId) {
+  if (files.length > 1) toast(`${files.length} Dateien werden angehängt …`);
+  const n = await uploadFiles(files, { projectId, meetingId, silent: true });
+  if (n) toast(n === 1 ? 'Datei angehängt' : `${n} Dateien angehängt`);
+  return n;
+}
+
+const sizeText = (b) => (b >= 1024 * 1024 ? `${(b / 1024 / 1024).toFixed(1).replace('.', ',')} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
+const isImage = (t) => String(t || '').startsWith('image/');
+
+// "Datei" (gallery, files, PDF …) and "Foto" (camera) buttons; hands over the picked files
+function PickButtons({ onPick, busy, small = true }) {
+  const fileRef = useRef(null);
+  const camRef = useRef(null);
+  const pick = (e) => {
+    const list = [...(e.target.files || [])];
+    e.target.value = '';
+    if (list.length) onPick(list);
+  };
+  return (
+    <>
+      <Btn small={small} icon="upload" disabled={busy} onClick={() => fileRef.current?.click()}>
+        {busy ? 'Lädt …' : 'Datei anhängen'}
+      </Btn>
+      <Btn small={small} kind="ghost" icon="camera" disabled={busy} onClick={() => camRef.current?.click()}>
+        Foto
+      </Btn>
+      <input ref={fileRef} type="file" multiple hidden accept={FILE_ACCEPT} onChange={pick} />
+      <input ref={camRef} type="file" accept="image/*" capture="environment" hidden onChange={pick} />
+    </>
+  );
+}
+
+// in the recorder: files to attach once the meeting is saved
+function PendingFiles({ files, setFiles }) {
+  const add = async (list) => {
+    const ok = [];
+    for (const f of list) {
+      if (await fileAllowed(f)) ok.push(f);
+      else toast(`„${f.name}“: ${NOT_ALLOWED}`, 'warn', 6000);
+    }
+    if (ok.length) setFiles((cur) => [...cur, ...ok]);
+  };
+  return (
+    <div className="meet-files">
+      <span className="field-label">Anhänge</span>
+      {files.length ? (
+        <ul className="meet-file-list">
+          {files.map((f, i) => (
+            <li key={i}>
+              <Icon name={isImage(f.type) ? 'image' : 'file'} size={15} />
+              <span className="meet-file-name">{f.name}</span>
+              <span className="small muted">{sizeText(f.size)}</span>
+              <IconBtn icon="x" size={14} label={`„${f.name}“ entfernen`} onClick={() => setFiles((cur) => cur.filter((_, j) => j !== i))} />
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="small muted">Angebot, Skizze, Fotos von der Baustelle … – werden mit der Besprechung gespeichert.</p>
+      )}
+      <div className="hstack" style={{ flexWrap: 'wrap', gap: 6 }}>
+        <PickButtons onPick={add} />
+      </div>
+    </div>
+  );
+}
+
+// on a saved meeting: open, attach more, link a document from the Ablage, detach (and delete when editing)
+function MeetingFiles({ m, p, data, edit }) {
+  const [busy, setBusy] = useState(false);
+  const [box, setBox] = useState(null);
+  const docs = meetingDocs(data, m);
+  const add = async (list) => {
+    setBusy(true);
+    await attachToMeeting(list, p.id, m.id);
+    setBusy(false);
+  };
+  // documents that can be linked: this project's first, then the others; newest first
+  const linkable = Object.values(data?.documents || {})
+    .filter((d) => !d.meetingId && !d.ink && d.type !== 'antrag' && d.type !== 'entscheidung' && (d.assetId || d.dataUrl))
+    .sort((a, b) => (a.projectId === p.id) - (b.projectId === p.id) || (a.date < b.date ? -1 : 1))
+    .reverse()
+    .slice(0, 80);
+  const link = (id) => {
+    if (!id) return;
+    updateDoc('documents', id, (d) => ({ ...d, meetingId: m.id, projectId: d.projectId || p.id }));
+    toast('Dokument verknüpft');
+  };
+  const detach = (d) => {
+    updateDoc('documents', d.id, (x) => ({ ...x, meetingId: null }));
+    toast(`„${d.name}“ gelöst – liegt weiter in der Ablage`);
+  };
+  if (!docs.length && !edit)
+    return (
+      <div className="hstack meet-files-add">
+        <PickButtons onPick={add} busy={busy} />
+      </div>
+    );
+  return (
+    <div className="meet-block meet-files">
+      <span className="field-label">Anhänge{docs.length ? ` (${docs.length})` : ''}</span>
+      {docs.length ? (
+        <ul className="meet-file-list">
+          {docs.map((d) => {
+            const url = fileUrl(d);
+            const img = isImage(d.contentType);
+            const label = (
+              <>
+                {img && url ? <img src={url} alt="" loading="lazy" /> : <Icon name={img ? 'image' : 'file'} size={15} />}
+                <span className="meet-file-name">{d.name}</span>
+              </>
+            );
+            return (
+              <li key={d.id}>
+                {img ? (
+                  <button type="button" className="meet-file-open" onClick={() => url && setBox(d)} aria-label={`${d.name} ansehen`}>
+                    {label}
+                  </button>
+                ) : url ? (
+                  <a className="meet-file-open" href={url} target="_blank" rel="noopener noreferrer" aria-label={`${d.name} öffnen`}>
+                    {label}
+                  </a>
+                ) : (
+                  <span className="meet-file-open">{label}</span>
+                )}
+                {d.size ? <span className="small muted">{sizeText(d.size)}</span> : null}
+                {edit ? (
+                  <ConfirmBtn onConfirm={async () => { await removeDocument(d); toast('Datei gelöscht'); }}>{''}</ConfirmBtn>
+                ) : (
+                  <IconBtn icon="x" size={14} label={`„${d.name}“ von der Besprechung lösen (bleibt in der Ablage)`} onClick={() => detach(d)} />
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+      <div className="hstack" style={{ flexWrap: 'wrap', gap: 6 }}>
+        <PickButtons onPick={add} busy={busy} />
+        {linkable.length ? (
+          <Select
+            value=""
+            placeholder="Aus der Ablage verknüpfen …"
+            onChange={link}
+            options={linkable.map((d) => ({ value: d.id, label: `${d.name}${d.projectId === p.id ? '' : data.projects?.[d.projectId] ? ` · ${data.projects[d.projectId].title}` : ' · ohne Projekt'}` }))}
+            aria-label="Vorhandenes Dokument verknüpfen"
+          />
+        ) : null}
+      </div>
+      {edit && docs.length ? <p className="small muted">Der Papierkorb löscht die Datei ganz. Außerhalb von „Bearbeiten“ löst das ✕ sie nur von der Besprechung, sie bleibt in der Ablage.</p> : null}
+      {box ? <Lightbox doc={box} onClose={() => setBox(null)} /> : null}
+    </div>
   );
 }

@@ -106,7 +106,7 @@ if (A) {
       setUI({ viewer: null });
       return true;
     }
-    if (document.querySelector('.more-menu')) {
+    if (document.querySelector('.more-menu, .doc-lightbox')) {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
       return true;
     }
