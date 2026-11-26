@@ -347,7 +347,7 @@ export function Seg({ value, onChange, options, small }) {
   return (
     <div className={`seg ${small ? 'seg-sm' : ''}`} role="radiogroup">
       {options.map((o) => (
-        <button key={o.value} type="button" role="radio" aria-checked={value === o.value} className={value === o.value ? 'is-on' : ''} onClick={() => onChange(o.value)} title={o.title || o.label}>
+        <button key={o.value} type="button" role="radio" aria-checked={value === o.value} className={value === o.value ? 'is-on' : ''} onClick={() => onChange(o.value)} title={o.title || o.label} disabled={o.disabled}>
           {o.icon ? <Icon name={o.icon} size={15} /> : null}
           {o.label ? <span>{o.label}</span> : null}
         </button>

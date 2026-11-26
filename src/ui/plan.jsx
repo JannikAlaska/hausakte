@@ -22,6 +22,7 @@ import { lineLength, linePlanPts, fixtureAnchor, dedup3, relink, roomOfPoint, re
 import { uid, deepClone, fmtFixed, fmtNum, parseNum } from '../util.js';
 import { furnType, furnSize, furnToPlan, hitFurniture, placeFurniture, snapToWalls, furnName } from '../furniture.js';
 import { PlanFurniture, FurnitureSymbol, FurnitureHandles, furnHandles, FurnitureToolProps, FurnitureProps, FurnitureSummary, normRot } from './furniture.jsx';
+import { ElecExportDialog } from './elecexport.jsx';
 
 const { useState, useRef, useEffect, useMemo, useCallback } = React;
 
@@ -576,6 +577,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
   const [calib, setCalib] = useState(null); // {pts:[]}
   const [lineOpts, setLineOpts] = useState({ kind: 'strom', zone: 'unten', z: 0.3, status: 'bestand', rFrom: 0, rTo: null });
   const [fixOpts, setFixOpts] = useState({ kind: 'steckdose', z: null, status: 'bestand', count: 1, switches: 1, sockets: 1 });
+  const [elecOpen, setElecOpen] = useState(false);
   // connection tool: the point just set (still "new") vs. an existing one picked to edit
   const [placedId, setPlacedId] = useState(null);
   // editing ended: back to setting new ones with the plan free (the phone sheet stays closed)
@@ -1438,10 +1440,12 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
         />
         <div className="plan-canvas" ref={boxRef}>
           <div className="plan-quick">
+            {elecOpen ? <ElecExportDialog data={data} floor={floor} filter={instF} onClose={() => setElecOpen(false)} /> : null}
             {showLines && lines.length + points.length > 0 ? <InstallFilter className="plan-instfilter" /> : null}
             <IconBtn icon={showLines ? 'eye' : 'eyeOff'} label={showLines ? 'Leitungen und Anschlüsse ausblenden' : 'Leitungen und Anschlüsse einblenden'} active={showLines && lines.length + points.length > 0} onClick={() => setUI({ planLines: !showLines })} />
             <IconBtn icon="sofa" className={showFurn ? '' : 'is-struck'} label={showFurn ? 'Möbel ausblenden' : 'Möbel einblenden'} active={showFurn && furniture.length > 0} aria-pressed={showFurn} onClick={() => { if (showFurn && selFurn) setSel(null); setUI({ planFurniture: !showFurn }); }} />
             {photoSpots.length ? <IconBtn icon="camera" className={showPhotos ? '' : 'is-struck'} label={showPhotos ? 'Fotopunkte ausblenden' : 'Fotopunkte einblenden'} active={showPhotos} aria-pressed={showPhotos} onClick={() => { if (showPhotos && selSpot) setSel(null); setUI({ planPhotos: !showPhotos }); }} /> : null}
+            {!ctx ? <IconBtn icon="download" label="Elektroplan als PDF" className="plan-elec-btn" onClick={() => setElecOpen(true)} /> : null}
             <IconBtn icon="undo" label="Rückgängig (Strg+Z)" onClick={undo} disabled={!hist.current.undo.length} />
             <IconBtn icon="redo" label="Wiederholen (Strg+Y)" onClick={redo} disabled={!hist.current.redo.length} />
             <FullBtn />

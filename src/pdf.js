@@ -162,6 +162,12 @@ export function buildPdf(blocks, { title = 'Bericht', footer = '' } = {}) {
     p.push(`0.55 g BT /F1 7.5 Tf 1 0 0 1 ${n2(M)} ${n2(M - 14)} Tm ${pdfStr(f)} Tj ET`);
   });
 
+  return writePdf(pages, PAGE_W, PAGE_H, title);
+}
+
+// the file around the pages' content streams: catalog, pages, the two Helvetica fonts, info
+function writePdf(pages, W, H, title) {
+  const N = pages.length;
   // objects: 1 catalog, 2 pages, 3/4 fonts, 5 info, then page + content per page
   const objs = [];
   const kids = pages.map((_, k) => `${6 + k * 2} 0 R`).join(' ');
@@ -172,7 +178,7 @@ export function buildPdf(blocks, { title = 'Bericht', footer = '' } = {}) {
   objs[5] = `<< /Title ${pdfStr(title)} /Producer (Hausakte) >>`;
   pages.forEach((p, k) => {
     const content = p.join('\n');
-    objs[6 + k * 2] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${n2(PAGE_W)} ${n2(PAGE_H)}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${7 + k * 2} 0 R >>`;
+    objs[6 + k * 2] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${n2(W)} ${n2(H)}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${7 + k * 2} 0 R >>`;
     objs[7 + k * 2] = `<< /Length ${content.length} >>\nstream\n${content}\nendstream`;
   });
   let out = '%PDF-1.4\n';
@@ -186,4 +192,103 @@ export function buildPdf(blocks, { title = 'Bericht', footer = '' } = {}) {
   for (let i = 1; i < objs.length; i++) out += `${String(offs[i]).padStart(10, '0')} 00000 n \n`;
   out += `trailer\n<< /Size ${objs.length} /Root 1 0 R /Info 5 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
   return out;
+}
+
+// ---------- drawings (plans) ----------
+// Landscape pages; every page is drawn by a function that gets a small canvas with coordinates in points
+// from the top left (like the screen): line, path, circle, arc, rect, text, clip. Vector output, so plans stay
+// sharp at any zoom, and still pure ASCII.
+export const PAPER = { A4: [841.89, 595.28], A3: [1190.55, 841.89] };
+const rgb = (hex) => {
+  const h = String(hex || '#000000').replace('#', '');
+  return [0, 2, 4].map((i) => n2(parseInt(h.slice(i, i + 2), 16) / 255)).join(' ');
+};
+
+function drawCanvas(W, H) {
+  const ops = [];
+  const X = (x) => n2(x);
+  const Y = (y) => n2(H - y);
+  // stroke/fill settings, then the paint operator for the path just built
+  const paint = (o, closed) => {
+    const pre = [];
+    if (o.stroke) pre.push(`${rgb(o.stroke)} RG ${n2(o.w ?? 0.6)} w ${o.dash ? `[${o.dash.map(n2).join(' ')}] 0 d` : '[] 0 d'} ${o.cap ?? 1} J 1 j`);
+    if (o.fill) pre.push(`${rgb(o.fill)} rg`);
+    const op = o.fill && o.stroke ? (closed ? 'b' : 'B') : o.fill ? 'f' : closed ? 's' : 'S';
+    return { pre: pre.join(' '), op };
+  };
+  const emit = (pathOps, o, closed) => {
+    if (!o.fill && !o.stroke) return;
+    const { pre, op } = paint(o, closed);
+    ops.push(`q ${pre} ${pathOps} ${op} Q`);
+  };
+  // circular arc as cubic Béziers (at most 90° each); angles in radians, screen orientation (y down)
+  const arcOps = (cx, cy, r, a0, a1, move = true) => {
+    const parts = Math.max(1, Math.ceil(Math.abs(a1 - a0) / (Math.PI / 2)));
+    const da = (a1 - a0) / parts;
+    const k = (4 / 3) * Math.tan(da / 4);
+    let s = '';
+    for (let i = 0; i < parts; i++) {
+      const t0 = a0 + i * da,
+        t1 = t0 + da;
+      const p0 = [cx + r * Math.cos(t0), cy + r * Math.sin(t0)];
+      const p3 = [cx + r * Math.cos(t1), cy + r * Math.sin(t1)];
+      const p1 = [p0[0] - k * r * Math.sin(t0), p0[1] + k * r * Math.cos(t0)];
+      const p2 = [p3[0] + k * r * Math.sin(t1), p3[1] - k * r * Math.cos(t1)];
+      if (i === 0 && move) s += `${X(p0[0])} ${Y(p0[1])} m `;
+      s += `${X(p1[0])} ${Y(p1[1])} ${X(p2[0])} ${Y(p2[1])} ${X(p3[0])} ${Y(p3[1])} c `;
+    }
+    return s;
+  };
+  return {
+    W,
+    H,
+    ops,
+    line(x1, y1, x2, y2, o = {}) {
+      emit(`${X(x1)} ${Y(y1)} m ${X(x2)} ${Y(y2)} l`, { stroke: '#000000', ...o, fill: null });
+    },
+    path(pts, o = {}) {
+      if (!pts || pts.length < 2) return;
+      const closed = !!o.close;
+      emit(pts.map((p, i) => `${X(p[0])} ${Y(p[1])} ${i ? 'l' : 'm'}`).join(' ') + (closed ? ' h' : ''), o, closed);
+    },
+    rect(x, y, w, h, o = {}) {
+      emit(`${X(x)} ${Y(y + h)} ${n2(w)} ${n2(h)} re`, o, true);
+    },
+    circle(cx, cy, r, o = {}) {
+      emit(arcOps(cx, cy, r, 0, 2 * Math.PI) + 'h', o, true);
+    },
+    arc(cx, cy, r, a0, a1, o = {}) {
+      emit(arcOps(cx, cy, r, a0, a1), { stroke: '#000000', ...o, fill: null });
+    },
+    // anchor: start | middle | end; y is the baseline
+    text(x, y, s, o = {}) {
+      const size = o.size ?? 8;
+      const w = textWidth(s, size, o.bold);
+      const x0 = o.anchor === 'middle' ? x - w / 2 : o.anchor === 'end' ? x - w : x;
+      ops.push(`q ${rgb(o.color || '#1a1a1a')} rg BT /${o.bold ? 'F2' : 'F1'} ${n2(size)} Tf 1 0 0 1 ${X(x0)} ${Y(y)} Tm ${pdfStr(s)} Tj ET Q`);
+      return w;
+    },
+    // everything until unclip() is cut off outside the rectangle
+    clip(x, y, w, h) {
+      ops.push(`q ${X(x)} ${Y(y + h)} ${n2(w)} ${n2(h)} re W n`);
+    },
+    unclip() {
+      ops.push('Q');
+    },
+  };
+}
+
+export function buildDrawingPdf(draws, { title = 'Plan', paper = 'A4', footer = '' } = {}) {
+  const [W, H] = PAPER[paper] || PAPER.A4;
+  const pages = draws.map((draw) => {
+    const g = drawCanvas(W, H);
+    draw(g);
+    return g.ops;
+  });
+  const N = pages.length;
+  pages.forEach((p, k) => {
+    const f = `${footer || title} · Seite ${k + 1} von ${N}`;
+    p.push(`0.45 g BT /F1 7 Tf 1 0 0 1 ${n2(W - 28 - textWidth(f, 7))} ${n2(16)} Tm ${pdfStr(f)} Tj ET`);
+  });
+  return writePdf(pages, W, H, title);
 }

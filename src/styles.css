@@ -1933,6 +1933,10 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .new-subitem:hover { border-color: var(--accent); color: var(--accent-ink); }
 .qn-overlay { position: fixed; inset: 0; z-index: 70; background: rgba(15, 20, 35, 0.32); display: grid; place-items: start center; padding: 10vh 16px 16px; overflow: auto; animation: fadeIn 0.12s ease-out; }
 .qn-modal { width: min(560px, 100%); }
+.elec-export .seg { flex-wrap: wrap; }
+.elec-sum { display: grid; gap: 4px; padding: 8px 10px; border-radius: 10px; background: var(--surface-2); }
+.elec-sum .kv b { font-weight: 600; }
+.seg button:disabled { opacity: 0.45; cursor: not-allowed; }
 .qn-modal > .panel, .qn-modal > form.panel { box-shadow: var(--shadow-lg); margin: 0; }
 .qn-modal .inv-capture.is-compact { display: flex; flex-wrap: wrap; gap: 8px; }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
