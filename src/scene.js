@@ -267,10 +267,11 @@ export function fixtureMesh(q) {
       spout.position.z = 0.1;
       grp.add(spout);
     }
-    if (q.rot != null) {
-      const a = (q.rot * Math.PI) / 180;
-      grp.rotation.y = Math.atan2(Math.cos(a), Math.sin(a));
-    }
+  }
+  // wall connections (the combination frame too) face the room: rot is the direction the face points to
+  if (q.kind !== 'lampe' && q.rot != null) {
+    const a = (q.rot * Math.PI) / 180;
+    grp.rotation.y = Math.atan2(Math.cos(a), Math.sin(a));
   }
   grp.traverse((o) => {
     if (o.isMesh) o.renderOrder = 5;
