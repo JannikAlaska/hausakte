@@ -1440,12 +1440,12 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
         />
         <div className="plan-canvas" ref={boxRef}>
           <div className="plan-quick">
-            {elecOpen ? <ElecExportDialog data={data} floor={floor} filter={instF} onClose={() => setElecOpen(false)} /> : null}
+            {elecOpen ? <ElecExportDialog data={data} floor={floor} filter={instF} roomId={focus?.room?.id || selRoom?.id || null} onClose={() => setElecOpen(false)} /> : null}
             {showLines && lines.length + points.length > 0 ? <InstallFilter className="plan-instfilter" /> : null}
             <IconBtn icon={showLines ? 'eye' : 'eyeOff'} label={showLines ? 'Leitungen und Anschlüsse ausblenden' : 'Leitungen und Anschlüsse einblenden'} active={showLines && lines.length + points.length > 0} onClick={() => setUI({ planLines: !showLines })} />
             <IconBtn icon="sofa" className={showFurn ? '' : 'is-struck'} label={showFurn ? 'Möbel ausblenden' : 'Möbel einblenden'} active={showFurn && furniture.length > 0} aria-pressed={showFurn} onClick={() => { if (showFurn && selFurn) setSel(null); setUI({ planFurniture: !showFurn }); }} />
             {photoSpots.length ? <IconBtn icon="camera" className={showPhotos ? '' : 'is-struck'} label={showPhotos ? 'Fotopunkte ausblenden' : 'Fotopunkte einblenden'} active={showPhotos} aria-pressed={showPhotos} onClick={() => { if (showPhotos && selSpot) setSel(null); setUI({ planPhotos: !showPhotos }); }} /> : null}
-            {!ctx ? <IconBtn icon="download" label="Elektroplan als PDF" className="plan-elec-btn" onClick={() => setElecOpen(true)} /> : null}
+            {!ctx ? <IconBtn icon="download" label="Elektroplan exportieren (PDF oder JPEG)" className="plan-elec-btn" onClick={() => setElecOpen(true)} /> : null}
             <IconBtn icon="undo" label="Rückgängig (Strg+Z)" onClick={undo} disabled={!hist.current.undo.length} />
             <IconBtn icon="redo" label="Wiederholen (Strg+Y)" onClick={redo} disabled={!hist.current.redo.length} />
             <FullBtn />

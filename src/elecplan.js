@@ -5,7 +5,7 @@
 import { add, mul, sub, norm, perp, dist, labelPoint, bbox, pointInPoly, segIntersect } from './geometry.js';
 import { fixtureKind, comboParts } from './catalog.js';
 import { roomArea, sortFloors } from './metrics.js';
-import { statusShown } from './focus.js';
+import { statusShown, roomDims } from './focus.js';
 import { furnCorners } from './furniture.js';
 import { linePlanPts, roomOfPoint } from './planops.js';
 import { buildDrawingPdf, textWidth, PAPER } from './pdf.js';
@@ -54,23 +54,28 @@ export function floorsWithFixtures(data) {
   return sortFloors(Object.values(data.floors || {})).filter((f) => (f.points || []).length);
 }
 
-// ---------- one storey ----------
-function drawFloor(g, floor, data, opts) {
+// ---------- one storey, or one room of it ----------
+function drawFloor(g, floor, data, opts, room = null) {
   const { W, H } = g;
   const M = 26;
   const legendW = opts.paper === 'A3' ? 250 : 196;
   const headH = 40;
   const area = { x: M, y: M + headH, w: W - 2 * M - legendW - 14, h: H - 2 * M - headH - 30 };
-  const points = (floor.points || []).filter((q) => statusShown(opts.filter, q.status || 'bestand'));
+  const inRoom = (q) => !room || roomOfPoint(floor, q)?.id === room.id;
+  const points = (floor.points || []).filter((q) => statusShown(opts.filter, q.status || 'bestand') && inRoom(q));
   const walls = floor.walls || [];
+  const named = (floor.rooms || []).filter((r) => r.poly?.length && (!room || r.id === room.id));
 
-  // extent of the storey: walls, rooms and connections
+  // extent: the whole storey (walls, rooms, connections) or just the room with its connections
   const pts = [];
-  for (const w of walls) pts.push(w.a, w.b);
-  for (const r of floor.rooms || []) pts.push(...(r.poly || []));
+  if (room) pts.push(...room.poly);
+  else {
+    for (const w of walls) pts.push(w.a, w.b);
+    for (const r of floor.rooms || []) pts.push(...(r.poly || []));
+  }
   for (const q of points) pts.push([q.x, q.y]);
   const bb = pts.length ? bbox(pts) : { minX: 0, minY: 0, maxX: 10, maxY: 8, w: 10, h: 8 };
-  const pad = 0.6;
+  const pad = room ? 0.45 : 0.6;
   const mw = (bb.maxX - bb.minX) + 2 * pad,
     mh = (bb.maxY - bb.minY) + 2 * pad;
   const denom = SCALES.find((d) => (mw * PT_PER_M) / d <= area.w && (mh * PT_PER_M) / d <= area.h) || SCALES[SCALES.length - 1];
@@ -78,19 +83,23 @@ function drawFloor(g, floor, data, opts) {
   const ox = area.x + (area.w - mw * k) / 2 - (bb.minX - pad) * k;
   const oy = area.y + (area.h - mh * k) / 2 - (bb.minY - pad) * k;
   const P = (p) => [ox + p[0] * k, oy + p[1] * k];
-  const sym = opts.paper === 'A3' ? 1.2 : 1;
+  // a single room is drawn larger, so its symbols grow a little too
+  const sym = (opts.paper === 'A3' ? 1.2 : 1) * (room ? 1.3 : 1);
 
   // header
   const house = data.house || {};
-  g.text(M, M + 14, `Elektroplan · ${floor.name || 'Etage'}${floor.short ? ` (${floor.short})` : ''}`, { size: 15, bold: true, color: INK });
-  g.text(M, M + 28, [house.name || house.street, [house.zip, house.city].filter(Boolean).join(' ')].filter(Boolean).join(', ') || 'Hausakte', { size: 8.5, color: MUTED });
+  const address = [house.name || house.street, [house.zip, house.city].filter(Boolean).join(' ')].filter(Boolean).join(', ') || 'Hausakte';
+  const dims = room ? roomDims(room, floor) : null;
+  g.text(M, M + 14, `Elektroplan · ${room ? room.name || 'Raum' : floor.name || 'Etage'}${floor.short ? ` (${floor.short})` : ''}`, { size: 15, bold: true, color: INK });
+  g.text(M, M + 28, room ? `${floor.name || 'Etage'} · ${fmtFixed(roomArea(room), 1)} m²${dims ? ` · ${dims.rect ? '' : 'max. '}${fmtFixed(dims.width, 2)} × ${fmtFixed(dims.depth, 2)} m` : ''} · ${address}` : address, { size: 8.5, color: MUTED });
   g.text(W - M, M + 14, `Maßstab 1:${denom} (${opts.paper} quer)`, { size: 9, bold: true, color: INK, anchor: 'end' });
   g.text(W - M, M + 28, `Stand ${fmtDate(todayISO())} · ${FILTER_NAMES[opts.filter] || FILTER_NAMES.alle}`, { size: 8.5, color: MUTED, anchor: 'end' });
   g.line(M, M + headH - 6, W - M, M + headH - 6, { stroke: '#c9ccd3', w: 0.6 });
 
   g.clip(area.x, area.y, area.w, area.h);
   // rooms (white floor), furniture, stairs
-  for (const r of floor.rooms || []) if (r.poly?.length > 2) g.path(r.poly.map(P), { close: true, fill: '#ffffff' });
+  // the room of a room plan stays white, the neighbours turn grey
+  for (const r of floor.rooms || []) if (r.poly?.length > 2) g.path(r.poly.map(P), { close: true, fill: !room || r.id === room.id ? '#ffffff' : '#eceef2' });
   if (opts.furniture)
     for (const f of floor.furniture || []) {
       if (f.hidden) continue;
@@ -168,8 +177,7 @@ function drawFloor(g, floor, data, opts) {
     }
   }
   // room names
-  for (const r of floor.rooms || []) {
-    if (!r.poly?.length) continue;
+  for (const r of named) {
     const lp = P(labelPoint(r.poly));
     g.text(lp[0], lp[1] - 2, r.name || '', { size: 8.5 * sym, bold: true, color: '#7a808c', anchor: 'middle' });
     g.text(lp[0], lp[1] + 8 * sym, `${fmtFixed(roomArea(r), 1)} m²`, { size: 6.5 * sym, color: '#9aa0aa', anchor: 'middle' });
@@ -177,8 +185,7 @@ function drawFloor(g, floor, data, opts) {
 
   // symbols, then their labels where there is room
   const boxes = [];
-  for (const r of floor.rooms || []) {
-    if (!r.poly?.length) continue;
+  for (const r of named) {
     const lp = P(labelPoint(r.poly));
     const tw = Math.max(textWidth(r.name || '', 8.5 * sym, true), 30);
     boxes.push({ x: lp[0] - tw / 2, y: lp[1] - 11 * sym, w: tw, h: 22 * sym });
@@ -406,11 +413,12 @@ function drawLegend(g, box, floor, points) {
 
 // ---------- list of all connections ----------
 const STATUS_NAMES = { bestand: 'Bestand', geplant: 'geplant', stillgelegt: 'stillgelegt' };
-function listRows(floor, opts) {
+function listRows(floor, opts, room = null) {
   const rows = [];
   for (const q of (floor.points || []).filter((p) => statusShown(opts.filter, p.status || 'bestand'))) {
     const k = fixtureKind(q.kind);
     const r = roomOfPoint(floor, q);
+    if (room && r?.id !== room.id) continue;
     const c = k.combo ? comboParts(q) : null;
     rows.push({
       room: r?.name || 'ohne Raum',
@@ -426,8 +434,8 @@ function listRows(floor, opts) {
   return rows.sort((a, b) => a.order.localeCompare(b.order, 'de'));
 }
 
-function listPages(floor, opts) {
-  const rows = listRows(floor, opts);
+function listPages(floor, opts, room = null) {
+  const rows = listRows(floor, opts, room);
   if (!rows.length) return [];
   const cols = [
     { key: 'room', label: 'Raum', w: 0.15 },
@@ -445,7 +453,7 @@ function listPages(floor, opts) {
   const chunks = [];
   for (let i = 0; i < rows.length; i += perPage) chunks.push(rows.slice(i, i + perPage));
   return chunks.map((chunk, ci) => (g) => {
-    g.text(M, M + 14, `Anschlussliste · ${floor.name || 'Etage'}${floor.short ? ` (${floor.short})` : ''}${chunks.length > 1 ? ` (${ci + 1}/${chunks.length})` : ''}`, { size: 15, bold: true, color: INK });
+    g.text(M, M + 14, `Anschlussliste · ${room ? room.name || 'Raum' : floor.name || 'Etage'}${floor.short ? ` (${floor.short})` : ''}${chunks.length > 1 ? ` (${ci + 1}/${chunks.length})` : ''}`, { size: 15, bold: true, color: INK });
     g.text(g.W - M, M + 14, `${rows.length} Anschlüsse · ${FILTER_NAMES[opts.filter] || FILTER_NAMES.alle}`, { size: 8.5, color: MUTED, anchor: 'end' });
     const tw = g.W - 2 * M;
     const xs = [];
@@ -472,22 +480,42 @@ function listPages(floor, opts) {
   });
 }
 
-// pdf for the given storeys (ids), or all storeys with connections
-export function elecPlanPdf(data, { floorIds, paper = 'A4', furniture = true, lines = false, list = true, filter = 'alle' } = {}) {
-  const all = sortFloors(Object.values(data.floors || {}));
-  const floors = floorIds ? all.filter((f) => floorIds.includes(f.id)) : all.filter((f) => (f.points || []).length);
+// The pages for a scope: {type: 'floors', floorIds} (one plan per storey) or {type: 'rooms', floorId, roomIds}
+// (one plan per room). Each page: {kind: 'plan' | 'list', name, draw(g)}; plans can also be rendered as images.
+export function elecPages(data, { scope, paper = 'A4', furniture = true, lines = false, list = true, filter = 'alle' } = {}) {
   const opts = { paper, furniture, lines, filter };
-  const draws = [];
-  for (const f of floors) {
-    draws.push((g) => drawFloor(g, f, data, opts));
-    if (list) draws.push(...listPages(f, opts));
+  const pages = [];
+  const all = sortFloors(Object.values(data.floors || {}));
+  if (scope?.type === 'rooms') {
+    const f = data.floors?.[scope.floorId];
+    for (const rid of scope.roomIds || []) {
+      const r = (f?.rooms || []).find((x) => x.id === rid && x.poly?.length > 2);
+      if (!r) continue;
+      pages.push({ kind: 'plan', name: `${f.short || f.name || 'Etage'} ${r.name || 'Raum'}`, draw: (g) => drawFloor(g, f, data, opts, r) });
+      if (list) pages.push(...listPages(f, opts, r).map((draw) => ({ kind: 'list', draw })));
+    }
+    return pages;
   }
-  const name = floors.length === 1 ? floors[0].name : 'Alle Etagen';
-  return buildDrawingPdf(draws, { title: `Elektroplan ${name}`, paper, footer: `Elektroplan · ${data.house?.name || 'Hausakte'}` });
+  const floors = scope?.floorIds ? all.filter((f) => scope.floorIds.includes(f.id)) : all.filter((f) => (f.points || []).length);
+  for (const f of floors) {
+    pages.push({ kind: 'plan', name: f.short || f.name || 'Etage', draw: (g) => drawFloor(g, f, data, opts) });
+    if (list) pages.push(...listPages(f, opts).map((draw) => ({ kind: 'list', draw })));
+  }
+  return pages;
 }
 
-export function elecSummary(floor, filter = 'alle') {
+// pdf for a scope (see elecPages); floorIds alone is short for {type: 'floors', floorIds}
+export function elecPlanPdf(data, { floorIds, scope, ...rest } = {}) {
+  const sc = scope || { type: 'floors', floorIds };
+  const pages = elecPages(data, { scope: sc, ...rest });
+  const plans = pages.filter((p) => p.kind === 'plan');
+  const name = plans.length === 1 ? plans[0].name : sc.type === 'rooms' ? 'Räume' : 'Alle Etagen';
+  return buildDrawingPdf(pages.map((p) => p.draw), { title: `Elektroplan ${name}`, paper: rest.paper || 'A4', footer: `Elektroplan · ${data.house?.name || 'Hausakte'}` });
+}
+
+export function elecSummary(floor, filter = 'alle', room = null) {
   const sum = {};
-  for (const q of (floor.points || []).filter((p) => statusShown(filter, p.status || 'bestand'))) for (const [kk, v] of Object.entries(gangs(q))) sum[kk] = (sum[kk] || 0) + v;
+  for (const q of (floor.points || []).filter((p) => statusShown(filter, p.status || 'bestand') && (!room || roomOfPoint(floor, p)?.id === room.id)))
+    for (const [kk, v] of Object.entries(gangs(q))) sum[kk] = (sum[kk] || 0) + v;
   return sum;
 }

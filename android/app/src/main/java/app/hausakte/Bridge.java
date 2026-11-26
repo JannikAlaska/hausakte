@@ -8,6 +8,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
 import android.provider.MediaStore;
+import android.util.Base64;
 import android.speech.SpeechRecognizer;
 import android.webkit.JavascriptInterface;
 import android.widget.Toast;
@@ -85,21 +86,38 @@ public class Bridge {
 
     // ---------- files ----------
 
-    /** Saves a text file (e.g. the JSON backup) to "Downloads". */
+    /** Saves a text file (e.g. the JSON backup, a plan as PDF) to "Downloads". */
     @JavascriptInterface
     public void saveText(String name, String mime, String text) {
+        saveBytes(name, mime, (text == null ? "" : text).getBytes(StandardCharsets.UTF_8));
+    }
+
+    /** Saves a binary file (e.g. a plan as JPEG), handed over base64 encoded, to "Downloads". */
+    @JavascriptInterface
+    public void saveBase64(String name, String mime, String base64) {
+        byte[] bytes;
+        try {
+            bytes = Base64.decode(base64 == null ? "" : base64, Base64.DEFAULT);
+        } catch (IllegalArgumentException e) {
+            activity.runOnMain(() -> Toast.makeText(activity, "Speichern fehlgeschlagen: ungültige Daten", Toast.LENGTH_LONG).show());
+            return;
+        }
+        saveBytes(name, mime, bytes);
+    }
+
+    private void saveBytes(String name, String mime, byte[] bytes) {
         // a plain file name only: no folders, no "..", no control characters
         String clean = (name == null ? "" : name).replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]", "_").replaceAll("^\\.+", "");
         if (clean.isEmpty()) clean = "hausakte.txt";
         if (clean.length() > 120) clean = clean.substring(clean.length() - 120);
         final String fileName = clean;
+        final String type = mime == null || mime.isEmpty() ? "application/octet-stream" : mime;
         activity.runOnMain(() -> {
             try {
-                byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
                 if (Build.VERSION.SDK_INT >= 29) {
                     ContentValues v = new ContentValues();
                     v.put(MediaStore.MediaColumns.DISPLAY_NAME, fileName);
-                    v.put(MediaStore.MediaColumns.MIME_TYPE, mime);
+                    v.put(MediaStore.MediaColumns.MIME_TYPE, type);
                     v.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
                     Uri uri = activity.getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, v);
                     if (uri == null) throw new IllegalStateException("no uri");
@@ -117,10 +135,10 @@ public class Bridge {
                     }
                     Uri uri = FileProvider.getUriForFile(activity, "app.hausakte.files", f);
                     Intent send = new Intent(Intent.ACTION_SEND);
-                    send.setType(mime);
+                    send.setType(type);
                     send.putExtra(Intent.EXTRA_STREAM, uri);
                     send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                    activity.startActivity(Intent.createChooser(send, "Sicherung speichern"));
+                    activity.startActivity(Intent.createChooser(send, "Datei speichern"));
                 }
             } catch (Exception e) {
                 Toast.makeText(activity, "Speichern fehlgeschlagen: " + e.getMessage(), Toast.LENGTH_LONG).show();

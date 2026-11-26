@@ -57,6 +57,23 @@ export function pushWidgets(data) {
   }, 1500);
 }
 
+// binary file (e.g. a JPEG) to the phone's Downloads; false when the app is too old for it
+export async function saveBinaryFile(name, mime, blob) {
+  if (!A?.saveBase64) return false;
+  const b64 = await new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(String(r.result).split(',')[1] || '');
+    r.onerror = rej;
+    r.readAsDataURL(blob);
+  });
+  try {
+    A.saveBase64(name, mime, b64);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // text file to the phone's Downloads (instead of a browser download)
 export function saveTextFile(name, mime, text) {
   if (!A) return false;

@@ -9,6 +9,8 @@ export const nativeBridge = AND
       version: () => AND.version(),
       setWidgetData: (json) => AND.setWidgetData(json),
       saveText: (name, mime, text) => AND.saveText(name, mime, text),
+      // images and other binary files, base64 encoded (apps from version 1.0.4 on)
+      saveBase64: typeof AND.saveBase64 === 'function' ? (name, mime, b64) => AND.saveBase64(name, mime, b64) : null,
       speechAvailable: () => AND.speechAvailable(),
       // dictation keeps the phone's recognizer running through pauses (apps from version 1.0.3 on)
       speechStart: (id, lang, interim, continuous) =>
