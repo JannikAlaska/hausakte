@@ -77,5 +77,15 @@ export function drawToBlob(draw, { paper = 'A4', scale = 2.5, type = 'image/jpeg
     },
   };
   draw(g);
-  return new Promise((res, rej) => cv.toBlob((b) => (b ? res(b) : rej(new Error('Das Bild konnte nicht erstellt werden.'))), type, quality));
+  return new Promise((res, rej) =>
+    cv.toBlob(
+      (b) => {
+        // give the pixel memory back at once: iPad Safari allows only a few big canvases at a time
+        cv.width = cv.height = 0;
+        b ? res(b) : rej(new Error('Das Bild konnte nicht erstellt werden.'));
+      },
+      type,
+      quality,
+    ),
+  );
 }
