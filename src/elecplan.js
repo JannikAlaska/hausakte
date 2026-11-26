@@ -13,6 +13,7 @@ import { fmtFixed, fmtDate, todayISO } from './util.js';
 
 export const ELEC = { lamp: '#d32f2f', switch: '#2e8b3a', socket: '#1f6fd1', net: '#7b4fc9', water: '#1f6fd1', gas: '#9a6a22', off: '#9aa0a8' };
 const INK = '#2b2f38';
+const NOTE = '#5a3d8f';
 const MUTED = '#6b7180';
 const PT_PER_M = 2834.6457; // 1 m at 1:1 in points
 const SCALES = [20, 25, 50, 75, 100, 125, 150, 200, 250, 300, 400, 500];
@@ -48,6 +49,46 @@ function shortLabel(q) {
   // ceiling lamps hang from the ceiling, no height needed
   if (!(q.kind === 'lampe' && q.rot == null)) parts.push(fmtH(q.z));
   return parts.join(' · ');
+}
+
+// what the user wrote at a connection: its name ("Bezeichnung") and notes, each squeezed into one line
+export function fixtureNote(q) {
+  const one = (v) => String(v || '').replace(/\s+/g, ' ').trim();
+  return { label: one(q.label), notes: one(q.notes) };
+}
+export const hasNote = (q) => {
+  const n = fixtureNote(q);
+  return !!(n.label || n.notes);
+};
+
+// break a text into lines no wider than maxW; at most maxLines, the last one ends in "…" if text is left over
+function wrapText(text, size, maxW, maxLines, bold = false) {
+  const lines = [];
+  let cur = '';
+  const fits = (t) => textWidth(t, size, bold) <= maxW;
+  for (let word of String(text).split(' ')) {
+    while (!fits(word) && word.length > 1) {
+      // a word longer than a line: cut it
+      let i = word.length - 1;
+      while (i > 1 && !fits(word.slice(0, i))) i--;
+      if (cur) lines.push(cur), (cur = '');
+      lines.push(word.slice(0, i));
+      word = word.slice(i);
+    }
+    const next = cur ? cur + ' ' + word : word;
+    if (fits(next)) cur = next;
+    else {
+      lines.push(cur);
+      cur = word;
+    }
+  }
+  if (cur) lines.push(cur);
+  if (lines.length <= maxLines) return lines;
+  const out = lines.slice(0, maxLines);
+  let last = out[maxLines - 1] + ' …';
+  while (!fits(last) && last.length > 2) last = last.slice(0, -3).trimEnd() + ' …';
+  out[maxLines - 1] = last;
+  return out;
 }
 
 export function floorsWithFixtures(data) {
@@ -191,7 +232,12 @@ function drawFloor(g, floor, data, opts, room = null) {
     boxes.push({ x: lp[0] - tw / 2, y: lp[1] - 11 * sym, w: tw, h: 22 * sym });
   }
   const labels = [];
-  for (const q of points) {
+  const fs = 5.8 * sym;
+  const fsNote = 5.3 * sym;
+  const noteW = 96 * sym;
+  const roomPolys = (floor.rooms || []).filter((r) => r.poly?.length > 2).map((r) => r.poly.map(P));
+  // top left to bottom right: the order the notes get their numbers in
+  for (const q of [...points].sort((a, b) => a.y - b.y || a.x - b.x)) {
     const kd = fixtureKind(q.kind);
     const W0 = P([q.x, q.y]);
     const a = ((q.rot ?? 90) * Math.PI) / 180;
@@ -202,39 +248,94 @@ function drawFloor(g, floor, data, opts, room = null) {
     const col = (c) => (off ? ELEC.off : c);
     const ext = drawSymbol(g, q, W0, nn, tt, { col, dash, sym, kd });
     boxes.push(ext);
-    labels.push({ q, W0, nn, tt, ext, text: shortLabel(q), color: off ? ELEC.off : '#3a3f4b' });
+    let note = null;
+    if (opts.notes && hasNote(q)) {
+      const n = fixtureNote(q);
+      const all = n.notes ? wrapText(n.notes, fsNote, noteW, 99) : [];
+      note = {
+        ...n,
+        where: [roomOfPoint(floor, q)?.name, kd.combo ? 'Schalter + Steckdose' : kd.name].filter(Boolean).join(' · '),
+        lab: n.label ? wrapText(n.label, fsNote, noteW, 1, true) : [],
+        body: all.slice(0, 2),
+        long: all.length > 2 || textWidth(n.label, fsNote, true) > noteW,
+        color: off ? ELEC.off : NOTE,
+      };
+    }
+    // the room the connection serves: its label should stay in there
+    const home = roomPolys.find((rp) => pointInPoly(add(W0, mul(nn, 4)), rp)) || null;
+    labels.push({ q, nn, tt, ext, head: shortLabel(q), color: off ? ELEC.off : '#3a3f4b', note, home });
   }
-  const fs = 5.8 * sym;
-  for (const L of labels) {
-    if (!L.text) continue;
-    const tw = textWidth(L.text, fs);
+
+  // where a label box fits best: beyond the symbol into the room, then to the sides along the wall, then further
+  // out; the spot that covers the least (other labels and symbols, walls, other rooms, the edge of the plan) wins
+  const inArea = (b) => b.x > area.x && b.y > area.y && b.x + b.w < area.x + area.w && b.y + b.h < area.y + area.h;
+  const overlap = (b) => boxes.reduce((sum, o) => sum + Math.max(0, Math.min(b.x + b.w, o.x + o.w) - Math.max(b.x, o.x)) * Math.max(0, Math.min(b.y + b.h, o.y + o.h) - Math.max(b.y, o.y)), 0);
+  const place = (L, rows) => {
+    const tw = Math.max(...rows.map((l) => textWidth(l.text, l.size, l.bold)));
+    const th = rows.reduce((h, l) => h + l.size * 1.16, 0);
     const cx = L.ext.x + L.ext.w / 2,
       cy = L.ext.y + L.ext.h / 2;
     const reach = Math.max(L.ext.w, L.ext.h) / 2 + 3;
-    // beyond the symbol into the room, then to the sides along the wall, then further out; the spot that
-    // covers the least (other labels and symbols, walls, the edge of the plan) wins
-    const cands = [];
+    // half the box measured along the wall normal and along the wall: tall boxes step further out
+    const hn = Math.abs(L.nn[0]) * (tw / 2 + 1) + Math.abs(L.nn[1]) * (th / 2 + 1);
+    const ht = Math.abs(L.tt[0]) * (tw / 2 + 1) + Math.abs(L.tt[1]) * (th / 2 + 1);
+    const lift = Math.max(0, hn - fs / 2 - 1);
+    const boxAt = (c) => ({ x: c[0] - tw / 2 - 1, y: c[1] - th / 2 - 1, w: tw + 2, h: th + 2 });
+    let best = null;
+    let i = 0;
     for (const dd of [reach, reach + 7, reach + 14, reach + 22, reach + 31])
-      for (const [sn, st] of [[1, 0], [0.7, 0.9], [0.7, -0.9], [0, 1.3], [0, -1.3]]) cands.push([cx + L.nn[0] * dd * sn + L.tt[0] * (tw / 2 + 4) * st, cy + L.nn[1] * dd * sn + L.tt[1] * (tw / 2 + 4) * st]);
-    const boxAt = (c) => ({ x: c[0] - tw / 2 - 1, y: c[1] - fs * 0.75 - 1, w: tw + 2, h: fs + 2 });
-    const overlap = (b) => boxes.reduce((sum, o) => sum + Math.max(0, Math.min(b.x + b.w, o.x + o.w) - Math.max(b.x, o.x)) * Math.max(0, Math.min(b.y + b.h, o.y + o.h) - Math.max(b.y, o.y)), 0);
-    const inArea = (b) => b.x > area.x && b.y > area.y && b.x + b.w < area.x + area.w && b.y + b.h < area.y + area.h;
-    const score = (c, i) => {
-      const b = boxAt(c);
-      return overlap(b) * 4 + (wallPolys.some((wp) => boxHitsPoly(b, wp)) ? 400 : 0) + (inArea(b) ? 0 : 5000) + i * 0.8;
-    };
-    let pick = cands[0],
-      best = Infinity;
-    cands.forEach((c, i) => {
-      const sc = score(c, i);
-      if (sc < best) (best = sc), (pick = c);
-    });
-    const b = boxAt(pick);
-    // a label that had to move further away gets a thin line to its symbol
-    if (Math.hypot(pick[0] - cx, pick[1] - cy) > reach + tw / 2 + 10) g.line(cx, cy, pick[0], pick[1], { stroke: '#b5b9c2', w: 0.35 });
+      // (the last three: the other side; for ceiling lamps that is below, for wall connections behind the wall)
+      for (const [sn, st] of [[1, 0], [0.7, 0.9], [0.7, -0.9], [0, 1.3], [0, -1.3], [-1, 0], [-0.7, 0.9], [-0.7, -0.9]]) {
+        const c = [cx + L.nn[0] * (dd + lift) * sn + L.tt[0] * (ht + 3) * st, cy + L.nn[1] * (dd + lift) * sn + L.tt[1] * (ht + 3) * st];
+        const b = boxAt(c);
+        const score = overlap(b) * 4 + (wallPolys.some((wp) => boxHitsPoly(b, wp)) ? 600 : 0) + (L.home && !pointInPoly(c, L.home) ? 250 : 0) + (inArea(b) ? 0 : 5000) + i++ * 0.8;
+        if (!best || score < best.score) best = { c, b, score };
+      }
+    // gap between the label box and the symbol: a label set apart gets a thin line to its symbol
+    const e = L.ext,
+      bb = best.b;
+    const gap = Math.hypot(Math.max(0, bb.x - (e.x + e.w), e.x - (bb.x + bb.w)), Math.max(0, bb.y - (e.y + e.h), e.y - (bb.y + bb.h)));
+    return { ...best, rows, far: gap > 7, cx, cy };
+  };
+  const footnotes = [];
+  for (const L of labels) {
+    const head = L.head ? [{ text: L.head, size: fs, color: L.color }] : [];
+    let spot;
+    if (L.note) {
+      const N = L.note;
+      // the note at the symbol (cut after two lines with "… [n]"), or, where that does not fit, only "[n] name"
+      const full = (num) => {
+        const lab = [...N.lab],
+          body = [...N.body];
+        if (num) {
+          const tag = ` … [${num}]`;
+          const arr = body.length ? body : lab;
+          const bold = !body.length;
+          let last = arr[arr.length - 1].replace(/ …$/, '');
+          while (last.length > 1 && textWidth(last + tag, fsNote, bold) > noteW) last = last.slice(0, -1).trimEnd();
+          arr[arr.length - 1] = last + tag;
+        }
+        return [...head, ...lab.map((text) => ({ text, size: fsNote, bold: true, color: N.color })), ...body.map((text) => ({ text, size: fsNote, color: N.color }))];
+      };
+      const next = footnotes.length + 1;
+      let num = N.long ? next : null;
+      spot = place(L, full(num));
+      if (spot.score >= 200) {
+        const short = place(L, [...head, { text: wrapText(N.label ? `[${next}] ${N.label}` : `[${next}]`, fsNote, noteW, 1, true)[0], size: fsNote, bold: true, color: N.color }]);
+        if (short.score < spot.score) (spot = short), (num = next);
+      }
+      if (num) footnotes.push({ num, where: N.where, label: N.label, notes: N.notes });
+    } else if (head.length) spot = place(L, head);
+    else continue;
+    const { b, c, rows } = spot;
+    if (spot.far) g.line(spot.cx, spot.cy, c[0], c[1], { stroke: '#b5b9c2', w: 0.35 });
     boxes.push(b);
     g.rect(b.x, b.y, b.w, b.h, { fill: '#ffffff' });
-    g.text(pick[0], pick[1] + fs * 0.35, L.text, { size: fs, color: L.color, anchor: 'middle' });
+    let y = b.y + 1;
+    for (const l of rows) {
+      g.text(c[0], y + l.size * 0.86, l.text, { size: l.size, bold: l.bold, color: l.color, anchor: 'middle' });
+      y += l.size * 1.16;
+    }
   }
   g.unclip();
   g.rect(area.x, area.y, area.w, area.h, { stroke: '#d5d8de', w: 0.5 });
@@ -248,9 +349,12 @@ function drawFloor(g, floor, data, opts, room = null) {
   }
   for (let i = 0; i <= meters; i += meters <= 5 ? 1 : 2) g.text(sx + i * k, sbY + 7, String(i), { size: 6, color: MUTED, anchor: 'middle' });
   g.text(sx + meters * k + 6, sbY + 1, 'm', { size: 6.5, color: MUTED });
-  g.text(area.x + area.w, sbY + 1, 'Höhen: Mitte des Anschlusses über Fertigfußboden; Schalter + Steckdose: Mitte des obersten Schalters.', { size: 6.2, color: MUTED, anchor: 'end' });
+  const hNote = 'Höhen: Mitte des Anschlusses über Fertigfußboden; Schalter + Steckdose: Mitte des obersten Schalters.';
+  // a long scale bar (big scales) pushes the note one line down
+  const clash = sx + meters * k + 16 > area.x + area.w - textWidth(hNote, 6.2);
+  g.text(area.x + area.w, sbY + (clash ? 10 : 1), hNote, { size: 6.2, color: MUTED, anchor: 'end' });
 
-  drawLegend(g, { x: W - M - legendW, y: area.y, w: legendW, h: area.h + 16 }, floor, points);
+  drawLegend(g, { x: W - M - legendW, y: area.y, w: legendW, h: area.h + 16 }, floor, points, opts.notes && points.some(hasNote), footnotes);
   g.text(M, H - 16, 'Erstellt mit der Hausakte · ersetzt keine Elektroplanung nach DIN 18015 durch einen Fachbetrieb.', { size: 6.5, color: '#9aa0aa' });
 }
 
@@ -334,7 +438,7 @@ function drawSymbol(g, q, W, n, t, { col, dash, sym, kd }) {
 }
 
 // legend and the number of gangs per room
-function drawLegend(g, box, floor, points) {
+function drawLegend(g, box, floor, points, notes = false, footnotes = []) {
   let y = box.y + 4;
   const x = box.x;
   g.text(x, y + 8, 'Legende', { size: 10, bold: true, color: INK });
@@ -360,6 +464,11 @@ function drawLegend(g, box, floor, points) {
   g.text(x, y + 6, 'Beschriftung: Anzahl · Höhe über Fußboden', { size: 6.6, color: MUTED });
   g.text(x, y + 15, '„1+2“ = 1 Schalter + 2 Steckdosen untereinander', { size: 6.6, color: MUTED });
   g.text(x, y + 24, 'gestrichelt = geplant · grau = stillgelegt', { size: 6.6, color: MUTED });
+  if (notes) {
+    g.text(x, y + 33, 'Bezeichnung', { size: 6.6, bold: true, color: NOTE });
+    g.text(x + textWidth('Bezeichnung ', 6.6, true), y + 33, footnotes.length ? 'und Notiz · [1] = ganz unter „Notizen“' : 'und Notiz des Anschlusses', { size: 6.6, color: NOTE });
+    y += 9;
+  }
   y += 36;
 
   // summary per room
@@ -409,6 +518,35 @@ function drawLegend(g, box, floor, points) {
     g.text(x, y + 10, 'Summe', { size: 7.4, bold: true, color: INK });
     cols.forEach((c, i) => g.text(x + nameW + cw * (i + 1) - 3, y + 10, String(sum[c.key] || 0), { size: 7.4, bold: true, color: INK, anchor: 'end' }));
   } else g.text(x, y + 10, 'Noch keine Anschlüsse eingezeichnet.', { size: 7, color: MUTED });
+  y += 16;
+
+  // notes that did not fit at their symbol, in full
+  if (!footnotes.length) return;
+  const bottom = box.y + box.h - 4;
+  if (y + 40 > bottom) {
+    g.text(x, bottom - 2, `${footnotes.length} lange Notiz${footnotes.length === 1 ? '' : 'en'} [1…] stehen in der Anschlussliste.`, { size: 6.5, color: MUTED });
+    return;
+  }
+  y += 8;
+  g.text(x, y + 8, 'Notizen', { size: 10, bold: true, color: INK });
+  y += 14;
+  for (let i = 0; i < footnotes.length; i++) {
+    const f = footnotes[i];
+    const head = `[${f.num}] ${f.where}${f.label ? ' · ' + f.label : ''}`;
+    const body = wrapText(f.notes || '', 6.4, box.w - 4, 6);
+    const need = 9 + body.length * 8 + 4;
+    if (y + need > bottom) {
+      g.text(x, y + 8, `… ${footnotes.length - i} weitere in der Anschlussliste`, { size: 6.5, color: MUTED });
+      break;
+    }
+    g.text(x, y + 8, wrapText(head, 6.6, box.w - 4, 1, true)[0], { size: 6.6, bold: true, color: NOTE });
+    y += 9;
+    for (const l of body) {
+      g.text(x + 2, y + 8, l, { size: 6.4, color: INK });
+      y += 8;
+    }
+    y += 4;
+  }
 }
 
 // ---------- list of all connections ----------
@@ -425,9 +563,9 @@ function listRows(floor, opts, room = null) {
       kind: k.combo ? 'Schalter + Steckdose' : k.name,
       count: c ? `${c.switches} Schalter, ${c.sockets} Steckdose${c.sockets === 1 ? '' : 'n'}` : (q.count || 1) > 1 ? `${q.count}-fach` : '1',
       height: q.kind === 'lampe' && q.rot == null ? 'Decke' : fmtH(q.z),
-      label: q.label || '',
+      label: fixtureNote(q).label,
       status: STATUS_NAMES[q.status || 'bestand'] || q.status,
-      notes: String(q.notes || '').replace(/\s+/g, ' ').trim(),
+      notes: fixtureNote(q).notes,
       order: (r?.name || '~') + ' ' + k.name,
     });
   }
@@ -437,15 +575,23 @@ function listRows(floor, opts, room = null) {
 function listPages(floor, opts, room = null) {
   const rows = listRows(floor, opts, room);
   if (!rows.length) return [];
-  const cols = [
-    { key: 'room', label: 'Raum', w: 0.15 },
-    { key: 'kind', label: 'Anschluss', w: 0.16 },
-    { key: 'count', label: 'Anzahl', w: 0.17 },
-    { key: 'height', label: 'Höhe', w: 0.07 },
-    { key: 'label', label: 'Bezeichnung', w: 0.17 },
-    { key: 'status', label: 'Zustand', w: 0.08 },
-    { key: 'notes', label: 'Notiz', w: 0.2 },
-  ];
+  const cols = opts.notes
+    ? [
+        { key: 'room', label: 'Raum', w: 0.15 },
+        { key: 'kind', label: 'Anschluss', w: 0.16 },
+        { key: 'count', label: 'Anzahl', w: 0.17 },
+        { key: 'height', label: 'Höhe', w: 0.07 },
+        { key: 'label', label: 'Bezeichnung', w: 0.17 },
+        { key: 'status', label: 'Zustand', w: 0.08 },
+        { key: 'notes', label: 'Notiz', w: 0.2 },
+      ]
+    : [
+        { key: 'room', label: 'Raum', w: 0.24 },
+        { key: 'kind', label: 'Anschluss', w: 0.24 },
+        { key: 'count', label: 'Anzahl', w: 0.26 },
+        { key: 'height', label: 'Höhe', w: 0.12 },
+        { key: 'status', label: 'Zustand', w: 0.14 },
+      ];
   const M = 26,
     top = M + 39,
     rowH = 15;
@@ -482,8 +628,8 @@ function listPages(floor, opts, room = null) {
 
 // The pages for a scope: {type: 'floors', floorIds} (one plan per storey) or {type: 'rooms', floorId, roomIds}
 // (one plan per room). Each page: {kind: 'plan' | 'list', name, draw(g)}; plans can also be rendered as images.
-export function elecPages(data, { scope, paper = 'A4', furniture = true, lines = false, list = true, filter = 'alle' } = {}) {
-  const opts = { paper, furniture, lines, filter };
+export function elecPages(data, { scope, paper = 'A4', furniture = true, lines = false, list = true, filter = 'alle', notes = true } = {}) {
+  const opts = { paper, furniture, lines, filter, notes };
   const pages = [];
   const all = sortFloors(Object.values(data.floors || {}));
   if (scope?.type === 'rooms') {
@@ -511,6 +657,11 @@ export function elecPlanPdf(data, { floorIds, scope, ...rest } = {}) {
   const plans = pages.filter((p) => p.kind === 'plan');
   const name = plans.length === 1 ? plans[0].name : sc.type === 'rooms' ? 'Räume' : 'Alle Etagen';
   return buildDrawingPdf(pages.map((p) => p.draw), { title: `Elektroplan ${name}`, paper: rest.paper || 'A4', footer: `Elektroplan · ${data.house?.name || 'Hausakte'}` });
+}
+
+// how many connections (in the storey or room, after the filter) carry a name or notes
+export function noteCount(floor, filter = 'alle', room = null) {
+  return (floor.points || []).filter((p) => statusShown(filter, p.status || 'bestand') && (!room || roomOfPoint(floor, p)?.id === room.id) && hasNote(p)).length;
 }
 
 export function elecSummary(floor, filter = 'alle', room = null) {

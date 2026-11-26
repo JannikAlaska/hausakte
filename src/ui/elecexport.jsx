@@ -4,7 +4,7 @@
 import { Icon } from './icons.jsx';
 import { Btn, IconBtn, Field, Seg, Toggle, Select } from './common.jsx';
 import { toast } from './state.js';
-import { elecPages, elecPlanPdf, elecSummary, floorsWithFixtures } from '../elecplan.js';
+import { elecPages, elecPlanPdf, elecSummary, floorsWithFixtures, noteCount } from '../elecplan.js';
 import { drawToBlob } from '../drawimg.js';
 import { saveFilesStatus, isIOS } from '../download.js';
 import { todayISO } from '../util.js';
@@ -43,6 +43,7 @@ export function ElecExportDialog({ data, floor, filter: startFilter = 'alle', ro
   const [filter, setFilter] = useState(startFilter);
   const [furniture, setFurniture] = useState(true);
   const [lines, setLines] = useState(false);
+  const [notes, setNotes] = useState(true);
   const [list, setList] = useState(true);
   const [busy, setBusy] = useState(false);
   // files that are made but not yet saved: { status: 'tap' | 'old-app' | 'failed', files, error }
@@ -58,6 +59,7 @@ export function ElecExportDialog({ data, floor, filter: startFilter = 'alle', ro
   const floors = scope === 'all' ? withFx : [floor];
   const pickedRooms = scope === 'room' ? (room === ALL_ROOMS ? rooms : rooms.filter((r) => r.id === room)) : [];
   const hasPower = floors.some((f) => (f.lines || []).some((l) => l.kind === 'strom'));
+  const notesHere = scope === 'room' ? pickedRooms.reduce((n, r) => n + noteCount(floor, filter, r), 0) : floors.reduce((n, f) => n + noteCount(f, filter), 0);
   const planCount = scope === 'room' ? pickedRooms.length : floors.length;
   const empty = scope === 'room' ? pickedRooms.every((r) => !Object.keys(elecSummary(floor, filter, r)).length) : floors.every((f) => !(f.points || []).length);
   const optsFor = (fmt) => ({
@@ -65,6 +67,7 @@ export function ElecExportDialog({ data, floor, filter: startFilter = 'alle', ro
     paper,
     furniture,
     lines: lines && hasPower,
+    notes: notes && notesHere > 0,
     list: fmt === 'pdf' && list,
     filter,
   });
@@ -152,6 +155,12 @@ export function ElecExportDialog({ data, floor, filter: startFilter = 'alle', ro
           <div className="stack" style={{ gap: 8 }}>
             <Toggle checked={furniture} onChange={setFurniture} label="Möbel zur Orientierung" />
             <Toggle checked={lines && hasPower} onChange={setLines} label={hasPower ? 'Stromleitungen einzeichnen' : 'Stromleitungen (keine gezeichnet)'} />
+            <Toggle
+              checked={notes && notesHere > 0}
+              onChange={setNotes}
+              label={notesHere ? `Notizen an den Anschlüssen (${notesHere})` : 'Notizen an den Anschlüssen (keine eingetragen)'}
+            />
+            {notes && notesHere > 0 ? <p className="small muted elec-note-hint">Bezeichnung und Notiz stehen am Symbol{format === 'pdf' && list ? ' und in der Anschlussliste' : ''}. Wo dort kein Platz ist, steht am Symbol eine Nummer wie [1] und der ganze Text rechts unter „Notizen“.</p> : null}
             {format === 'pdf' ? <Toggle checked={list} onChange={setList} label="Anschlussliste als Extraseite" /> : null}
           </div>
           <div className="elec-sum">

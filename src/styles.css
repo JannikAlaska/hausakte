@@ -1938,6 +1938,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .elec-sum .kv b { font-weight: 600; }
 .elec-result { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface-2); font-size: 13px; }
 .elec-result p { margin: 0; }
+.elec-note-hint { margin: -4px 0 0 46px; }
 .elec-result a.btn { text-decoration: none; }
 .elec-result.is-old-app { border-color: color-mix(in srgb, var(--warn) 55%, var(--line)); background: color-mix(in srgb, var(--warn) 10%, var(--surface)); }
 .elec-result.is-failed { border-color: color-mix(in srgb, var(--danger) 55%, var(--line)); background: color-mix(in srgb, var(--danger) 8%, var(--surface)); }
