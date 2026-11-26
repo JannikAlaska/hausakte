@@ -294,13 +294,14 @@ function Gantt({ data }) {
         </span>
       </div>
       <div className="gantt-wrap" ref={wrapRef} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={() => setDrag(null)}>
-        <div className="gantt" style={{ width: 190 + W }}>
+        {/* the name column is 190 px wide, 120 px on phones (--gname); everything right of it starts there */}
+        <div className="gantt" style={{ width: `calc(var(--gname) + ${W}px)` }}>
           <div className="g-head">
             <div className="g-namecol">Projekt</div>
             <div className="g-months" style={{ width: W }}>
               {months.map((mo) => (
                 <div key={mo.iso} className="g-month" style={{ left: X(mo.iso), width: diffDays(mo.iso, addDays(toISO(new Date(parseISO(mo.iso).getFullYear(), parseISO(mo.iso).getMonth() + 1, 1)), 0)) * ppd }}>
-                  {zoom !== 'quartal' || mo.m % 3 === 0 ? (
+                  {zoom !== 'quartal' || mo.m % 3 === 0 || mo === months[0] ? (
                     <>
                       <b>{mo.m === 0 || mo === months[0] ? mo.year : ' '}</b>
                       {mo.label}
@@ -349,7 +350,7 @@ function Gantt({ data }) {
                 </div>
               );
             })}
-            <svg className="g-arrows" width={190 + W} height={view.length * ROW} style={{ left: 190 }}>
+            <svg className="g-arrows" width={W} height={view.length * ROW} style={{ left: 'var(--gname)' }}>
               <defs>
                 <marker id="ah" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto">
                   <path d="M0,0 L7,3.5 L0,7 z" fill="var(--ink-3)" />
@@ -362,7 +363,7 @@ function Gantt({ data }) {
                 <path key={a.key} d={a.d} fill="none" stroke={a.bad ? 'var(--warn)' : 'var(--ink-3)'} strokeWidth="1.5" strokeDasharray={a.bad ? '4 3' : 'none'} markerEnd={`url(#${a.bad ? 'ahw' : 'ah'})`} />
               ))}
             </svg>
-            <div className="g-today" style={{ left: 190 + X(today) }}>
+            <div className="g-today" style={{ left: `calc(var(--gname) + ${X(today)}px)` }}>
               <span>Heute</span>
             </div>
           </div>
