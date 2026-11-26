@@ -6,7 +6,7 @@ import { roomFocus, roomDims, inwardNormal, statusShown, inRoom } from '../focus
 import { PlanPhotoSpots, PlanSpotProps, spotBusy } from './photos.jsx';
 import { photoDocs, deleteSpot } from '../photos.js';
 import { downscaleImage, fileAllowed } from './documents.jsx';
-import { ROOM_TYPES, roomType, ROOM_COLORS, LINE_KINDS, LINE_ZONES, lineKind, FIXTURE_KINDS, fixtureKind, fixtureZ, WALL_BUILDS, wallBuild } from '../catalog.js';
+import { ROOM_TYPES, roomType, ROOM_COLORS, LINE_KINDS, LINE_ZONES, lineKind, FIXTURE_KINDS, fixtureKind, fixtureZ, comboParts, fixtureLabel, WALL_BUILDS, wallBuild } from '../catalog.js';
 import { DocList, UploadButton } from './documents.jsx';
 import { ADJ } from '../heat.js';
 import { ROOF_TYPES, autoRoofBase, sectionGeometry } from '../roof.js';
@@ -575,7 +575,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
   const [ortho, setOrtho] = useState(true);
   const [calib, setCalib] = useState(null); // {pts:[]}
   const [lineOpts, setLineOpts] = useState({ kind: 'strom', zone: 'unten', z: 0.3, status: 'bestand', rFrom: 0, rTo: null });
-  const [fixOpts, setFixOpts] = useState({ kind: 'steckdose', z: null, status: 'bestand', count: 1 });
+  const [fixOpts, setFixOpts] = useState({ kind: 'steckdose', z: null, status: 'bestand', count: 1, switches: 1, sockets: 1 });
   // connection tool: the point just set (still "new") vs. an existing one picked to edit
   const [placedId, setPlacedId] = useState(null);
   // editing ended: back to setting new ones with the plan free (the phone sheet stays closed)
@@ -864,7 +864,7 @@ function FloorEditor({ data, floor, floors, persist, guide, ctx }) {
       const sf = snapFixture(p, fixOpts.kind, walls, grid);
       const id = uid('pt');
       const k = fixtureKind(fixOpts.kind);
-      mutate((f) => ({ ...f, points: [...(f.points || []), { id, kind: fixOpts.kind, x: sf.p[0], y: sf.p[1], z: r3(fixOpts.z ?? fixtureZ(fixOpts.kind, floor)), rot: sf.rot, status: fixOpts.status, count: k.multi ? fixOpts.count || 1 : 1, label: '', notes: '' }] }), { refresh: false });
+      mutate((f) => ({ ...f, points: [...(f.points || []), { id, kind: fixOpts.kind, x: sf.p[0], y: sf.p[1], z: r3(fixOpts.z ?? fixtureZ(fixOpts.kind, floor)), rot: sf.rot, status: fixOpts.status, count: k.multi ? fixOpts.count || 1 : 1, ...(k.combo ? comboParts(fixOpts) : {}), label: '', notes: '' }] }), { refresh: false });
       setPlacedId(id);
       setSel({ kind: 'point', id });
       return;
@@ -1795,12 +1795,20 @@ function PlanPoints({ points, sel, px, faded, editId, newId }) {
         const r = px(9.5);
         return (
           <g key={q.id} transform={`translate(${q.x},${q.y})`} opacity={q.status === 'stillgelegt' ? 0.5 : 1} className={faded?.(q) ? 'is-faded' : undefined}>
-            <title>{`${q.label || k.name}${q.count > 1 ? ` (${q.count}-fach)` : ''} · ${fmtFixed(q.z ?? 0, 2)} m`}</title>
+            <title>{`${q.label ? q.label + ' · ' : ''}${k.combo ? fixtureLabel(q) : `${k.name}${q.count > 1 ? ` (${q.count}-fach)` : ''}`} · ${fmtFixed(q.z ?? 0, 2)} m`}</title>
             {isSel ? <circle r={r + px(4)} fill={hl} fillOpacity="0.25" /> : null}
             {q.id === editId ? <circle r={r + px(7)} fill="none" stroke={hl} strokeWidth={px(1.6)} strokeDasharray={`${px(4)} ${px(3)}`} /> : null}
             <circle r={r} fill="var(--surface)" stroke={isSel ? hl : k.color} strokeWidth={px(isSel ? 2.4 : 1.8)} strokeDasharray={q.status === 'geplant' ? `${px(3)} ${px(2)}` : undefined} />
             <FixtureGlyph kind={q.kind} size={px(13)} />
-            {q.count > 1 ? (
+            {k.combo ? (
+              // "1+2": switches + sockets
+              <g transform={`translate(${r * 0.95},${-r * 0.85})`}>
+                <rect x={-px(9.5)} y={-px(6)} width={px(19)} height={px(12)} rx={px(6)} fill={k.color} />
+                <text y={px(3.2)} textAnchor="middle" fontSize={px(8.5)} fontWeight="700" fill="#fff">
+                  {`${comboParts(q).switches}+${comboParts(q).sockets}`}
+                </text>
+              </g>
+            ) : q.count > 1 ? (
               <g transform={`translate(${r * 0.85},${-r * 0.85})`}>
                 <circle r={px(6)} fill={k.color} />
                 <text y={px(3.2)} textAnchor="middle" fontSize={px(8.5)} fontWeight="700" fill="#fff">
@@ -1834,6 +1842,7 @@ function fixturePresets(kind, floor) {
   const ceil = fixtureZ('lampe', floor);
   if (kind === 'lampe') return [{ label: 'Decke', z: r3(ceil) }, { label: 'Wand 2,0 m', z: 2.0 }];
   if (kind === 'schalter') return [{ label: 'Standard 1,05 m', z: 1.05 }, { label: 'Barrierefrei 0,85 m', z: 0.85 }];
+  if (kind === 'kombi') return [{ label: 'Schalter auf 1,05 m', z: 1.05 }, { label: 'Barrierefrei 0,85 m', z: 0.85 }];
   if (kind === 'steckdose' || kind === 'netzwerk') return [{ label: 'Unten 0,30 m', z: 0.3 }, { label: 'Arbeitsplatte 1,15 m', z: 1.15 }, { label: 'Neben Schalter 1,05 m', z: 1.05 }];
   if (kind === 'wasser') return [{ label: 'Waschtisch 0,55 m', z: 0.55 }, { label: 'Spüle 0,50 m', z: 0.5 }, { label: 'Dusche 1,10 m', z: 1.1 }, { label: 'Waschmaschine 1,00 m', z: 1.0 }];
   return [{ label: 'Herd 0,50 m', z: 0.5 }, { label: 'Therme 1,20 m', z: 1.2 }];
@@ -1842,7 +1851,7 @@ function fixturePresets(kind, floor) {
 function FixtureHeight({ kind, z, floor, onChange }) {
   return (
     <>
-      <Field label="Höhe über Fußboden">
+      <Field label={fixtureKind(kind).combo ? 'Höhe des Schalters (oben)' : 'Höhe über Fußboden'} hint={fixtureKind(kind).combo ? 'Die Steckdosen sitzen direkt darunter im selben Rahmen.' : undefined}>
         <NumInput value={z} onChange={(v) => v != null && onChange(v)} unit="m" digits={2} />
       </Field>
       <div className="chips">
@@ -1853,6 +1862,20 @@ function FixtureHeight({ kind, z, floor, onChange }) {
         ))}
       </div>
     </>
+  );
+}
+
+// switches and sockets of a combination, each 1–5
+function ComboCounts({ value, onChange }) {
+  return (
+    <div className="grid2">
+      <Field label="Schalter" hint="oben im Rahmen">
+        <NumInput value={value.switches} onChange={(v) => v >= 1 && v <= 5 && onChange({ ...value, switches: Math.round(v) })} digits={0} min={1} max={5} />
+      </Field>
+      <Field label="Steckdosen" hint="direkt darunter">
+        <NumInput value={value.sockets} onChange={(v) => v >= 1 && v <= 5 && onChange({ ...value, sockets: Math.round(v) })} digits={0} min={1} max={5} />
+      </Field>
+    </div>
   );
 }
 
@@ -1897,6 +1920,7 @@ function FixtureToolProps({ opts, setOpts, floor, placed, onEdit, onDelete }) {
             <NumInput value={opts.count} onChange={(v) => v >= 1 && setOpts({ ...opts, count: Math.round(v) })} digits={0} min={1} max={12} />
           </Field>
         ) : null}
+        {k.combo ? <ComboCounts value={comboParts(opts)} onChange={(c) => setOpts({ ...opts, ...c })} /> : null}
         <Field label="Zustand">
           <Seg small value={opts.status} onChange={(v) => setOpts({ ...opts, status: v })} options={LINE_STATUS} />
         </Field>
@@ -1972,9 +1996,9 @@ function FixtureProps({ pt, floor, data, mutate, onDelete }) {
         </h4>
         <ConfirmBtn onConfirm={onDelete}>{''}</ConfirmBtn>
       </div>
-      <FixtureKindSelect value={pt.kind} onChange={(kind) => set({ kind, z: r3(fixtureZ(kind, floor)), count: fixtureKind(kind).multi ? pt.count || 1 : 1 })} />
+      <FixtureKindSelect value={pt.kind} onChange={(kind) => set({ kind, z: r3(fixtureZ(kind, floor)), count: fixtureKind(kind).multi ? pt.count || 1 : 1, ...(fixtureKind(kind).combo ? comboParts(pt) : {}) })} />
       <Field label="Bezeichnung">
-        <TextInput id={'pt-label-' + pt.id} value={pt.label} onChange={(v) => set({ label: v })} placeholder={{ steckdose: 'z. B. Herd, Waschmaschine, Außensteckdose', schalter: 'z. B. Serienschalter Flur', lampe: 'z. B. Esstisch', netzwerk: 'z. B. LAN 2× Cat7', wasser: 'z. B. Waschtisch, Außenhahn', gas: 'z. B. Herd, Therme' }[pt.kind]} />
+        <TextInput id={'pt-label-' + pt.id} value={pt.label} onChange={(v) => set({ label: v })} placeholder={{ steckdose: 'z. B. Herd, Waschmaschine, Außensteckdose', schalter: 'z. B. Serienschalter Flur', kombi: 'z. B. Eingang Wohnzimmer, neben der Tür', lampe: 'z. B. Esstisch', netzwerk: 'z. B. LAN 2× Cat7', wasser: 'z. B. Waschtisch, Außenhahn', gas: 'z. B. Herd, Therme' }[pt.kind]} />
       </Field>
       <FixtureHeight kind={pt.kind} z={pt.z ?? 0} floor={floor} onChange={(z) => set({ z })} />
       {k.multi ? (
@@ -1982,6 +2006,7 @@ function FixtureProps({ pt, floor, data, mutate, onDelete }) {
           <NumInput value={pt.count || 1} onChange={(v) => v >= 1 && set({ count: Math.round(v) })} digits={0} min={1} max={12} />
         </Field>
       ) : null}
+      {k.combo ? <ComboCounts value={comboParts(pt)} onChange={(c) => set(c)} /> : null}
       <Field label="Zustand">
         <Seg small value={pt.status || 'bestand'} onChange={(v) => set({ status: v })} options={LINE_STATUS} />
       </Field>
@@ -1990,7 +2015,7 @@ function FixtureProps({ pt, floor, data, mutate, onDelete }) {
         <b>{room ? room.name : pt.rot != null ? 'außen / nicht zugeordnet' : '–'}</b>
       </div>
       <Field label="Notizen">
-        <TextInput multiline rows={3} value={pt.notes} onChange={(v) => set({ notes: v })} placeholder={pt.kind === 'steckdose' ? 'Stromkreis, Sicherung, Schuko/CEE …' : pt.kind === 'gas' ? 'Absperrung, Prüfung, Leitung …' : 'Details …'} />
+        <TextInput multiline rows={3} value={pt.notes} onChange={(v) => set({ notes: v })} placeholder={pt.kind === 'steckdose' || pt.kind === 'kombi' ? 'Stromkreis, Sicherung, Schuko/CEE …' : pt.kind === 'gas' ? 'Absperrung, Prüfung, Leitung …' : 'Details …'} />
       </Field>
       <div className="divider" />
       <div className="spread">
@@ -2883,7 +2908,14 @@ function LineSummary({ lines, points = [] }) {
   const by = new Map();
   for (const l of lines) by.set(l.kind, (by.get(l.kind) || 0) + lineLength(l));
   const pc = new Map();
-  for (const q of points) pc.set(q.kind, (pc.get(q.kind) || 0) + (q.count || 1));
+  let combo = { switches: 0, sockets: 0 };
+  for (const q of points) {
+    pc.set(q.kind, (pc.get(q.kind) || 0) + (fixtureKind(q.kind).combo ? 1 : q.count || 1));
+    if (fixtureKind(q.kind).combo) {
+      const c = comboParts(q);
+      combo = { switches: combo.switches + c.switches, sockets: combo.sockets + c.sockets };
+    }
+  }
   return (
     <>
       <div className="divider" />
@@ -2910,7 +2942,10 @@ function LineSummary({ lines, points = [] }) {
                 <span style={{ color: k.color, display: 'inline-flex' }}>
                   <Icon name={k.icon} size={14} />
                 </span>
-                <span>{k.name}</span>
+                <span>
+                  {k.name}
+                  {k.combo ? <small className="muted"> · {combo.switches} Schalter, {combo.sockets} Steckdosen</small> : null}
+                </span>
                 <b>{pc.get(k.key)}</b>
               </li>
             ))}

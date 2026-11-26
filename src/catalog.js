@@ -400,12 +400,26 @@ export const lineKind = (k) => LINE_KINDS.find((x) => x.key === k) || LINE_KINDS
 export const FIXTURE_KINDS = [
   { key: 'steckdose', name: 'Steckdose', icon: 'socket', color: '#d49b00', wall: true, z: 0.3, multi: true, lines: ['strom'] },
   { key: 'schalter', name: 'Lichtschalter', icon: 'switch', color: '#d49b00', wall: true, z: 1.05, multi: true, lines: ['strom'] },
+  // switches on top, sockets right below in one vertical frame (e.g. at the door); z = height of the top switch
+  { key: 'kombi', name: 'Schalter + Steckdose', icon: 'combo', color: '#d49b00', wall: true, z: 1.05, combo: true, lines: ['strom'] },
   { key: 'lampe', name: 'Deckenlampe', icon: 'lamp', color: '#c98a00', wall: false, z: null, lines: ['strom'] },
   { key: 'netzwerk', name: 'Netzwerkdose', icon: 'network', color: '#8e5cd9', wall: true, z: 0.3, multi: true, lines: ['netzwerk'] },
   { key: 'wasser', name: 'Wasserhahn', icon: 'tap', color: '#2f80ed', wall: true, z: 0.9, lines: ['wasser', 'warmwasser'] },
   { key: 'gas', name: 'Gashahn', icon: 'valve', color: '#a3712a', wall: true, z: 0.5, lines: ['gas'] },
 ];
 export const fixtureKind = (k) => FIXTURE_KINDS.find((x) => x.key === k) || FIXTURE_KINDS[0];
+// how many switches and sockets a combination holds (1–5 each)
+const gang = (v) => Math.max(1, Math.min(5, Math.round(Number(v) || 1)));
+export const comboParts = (q) => ({ switches: gang(q?.switches ?? 1), sockets: gang(q?.sockets ?? 1) });
+// "3× Steckdose", "Schalter-Steckdosen-Kombi (1 Schalter, 2 Steckdosen)", "Deckenlampe"
+export function fixtureLabel(q) {
+  const k = fixtureKind(q?.kind);
+  if (k.combo) {
+    const { switches, sockets } = comboParts(q);
+    return `Schalter-Steckdosen-Kombi (${switches} Schalter, ${sockets} Steckdose${sockets === 1 ? '' : 'n'})`;
+  }
+  return `${q?.count > 1 ? q.count + '× ' : ''}${k.name}`;
+}
 // lamps sit on the ceiling
 export const fixtureZ = (kind, floor) => fixtureKind(kind).z ?? Math.max(1, (floor?.height ?? 2.75) - (floor?.slab ?? 0.2));
 

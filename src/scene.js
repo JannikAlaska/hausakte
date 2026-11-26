@@ -9,7 +9,7 @@ import { outerOutline, outlineFromWalls, pointInPoly, labelPoint, polyCentroid, 
 import { roofModel, sectionClipPlanes, pvPotential, sectionGeometry } from './roof.js';
 import { pvSelection } from './pv.js';
 import { People } from './people.js';
-import { roomType, projectKind, status as statusOf, ROOM_COLORS, lineKind, fixtureKind } from './catalog.js';
+import { roomType, projectKind, status as statusOf, ROOM_COLORS, lineKind, fixtureKind, comboParts } from './catalog.js';
 import { sortFloors, roomArea, isDone } from './metrics.js';
 import { sunPosition, sunVector, yearSteps, poa, houseGeo, shadeColor } from './solar.js';
 import { fmtFixed, fmtDayMonth, todayISO, escapeHtml } from './util.js';
@@ -189,8 +189,42 @@ function prismGeometry(pts3, dir, thickness, uvAxes) {
   return g;
 }
 
+// The front of one gang at x/y on the plate: a switch with 1 or 2 rockers side by side (2 = series switch)
+// or a socket with its round recess and two pin holes - like the combinations in a vertical frame.
+function gangInsert(type, x, y, opacity = 1, rockers = 1) {
+  const fade = opacity < 1 ? { transparent: true, opacity } : {};
+  const white = new THREE.MeshStandardMaterial({ color: '#fbf8f0', emissive: '#fff4d6', emissiveIntensity: 0.25, roughness: 0.45, ...fade });
+  const g = new THREE.Group();
+  const base = new THREE.Mesh(new THREE.BoxGeometry(0.094, 0.094, 0.008), white);
+  base.position.z = 0.032;
+  g.add(base);
+  if (type === 'switch') {
+    const w = rockers > 1 ? 0.04 : 0.082;
+    for (let i = 0; i < rockers; i++) {
+      const r = new THREE.Mesh(new THREE.BoxGeometry(w, 0.082, 0.01), white);
+      r.position.set(rockers > 1 ? (i ? 0.021 : -0.021) : 0, 0, 0.041);
+      g.add(r);
+    }
+  } else {
+    const dark = new THREE.MeshStandardMaterial({ color: '#8f8a7e', roughness: 0.8, ...fade });
+    const recess = new THREE.Mesh(new THREE.CylinderGeometry(0.036, 0.036, 0.006, 24), dark);
+    recess.rotation.x = Math.PI / 2;
+    recess.position.z = 0.035;
+    g.add(recess);
+    const pinMat = new THREE.MeshStandardMaterial({ color: '#2b2824', roughness: 0.9, ...fade });
+    for (const px of [-0.0115, 0.0115]) {
+      const pin = new THREE.Mesh(new THREE.CylinderGeometry(0.0045, 0.0045, 0.004, 10), pinMat);
+      pin.rotation.x = Math.PI / 2;
+      pin.position.set(px, 0, 0.038);
+      g.add(pin);
+    }
+  }
+  g.position.set(x, y, 0);
+  return g;
+}
+
 // Outlet, switch, tap … as a small plate on the wall face (rot = direction the face points to), lamps as a ceiling disc.
-function fixtureMesh(q) {
+export function fixtureMesh(q) {
   const k = fixtureKind(q.kind);
   const off = q.status === 'stillgelegt',
     planned = q.status === 'geplant';
@@ -205,6 +239,19 @@ function fixtureMesh(q) {
     const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.09, 14, 10), new THREE.MeshStandardMaterial({ color: '#fff6d8', emissive: '#ffd36b', emissiveIntensity: 0.9 }));
     bulb.position.y = -0.1;
     grp.add(disc, bulb);
+  } else if (k.combo) {
+    // switches on top (two per gang, side by side like a series switch), each socket in its own gang right
+    // below, all in one vertical frame; the group sits at the height of the top switch
+    const { switches, sockets } = comboParts(q);
+    const gangs = [];
+    for (let left = switches; left > 0; left -= 2) gangs.push({ type: 'switch', rockers: Math.min(2, left) });
+    for (let i = 0; i < sockets; i++) gangs.push({ type: 'socket' });
+    const step = 0.105;
+    const n = gangs.length;
+    const frame = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.125 + step * (n - 1), 0.03), mat);
+    frame.position.set(0, (-step * (n - 1)) / 2, 0.015);
+    grp.add(frame);
+    gangs.forEach((gg, i) => grp.add(gangInsert(gg.type, 0, -step * i, mat.opacity, gg.rockers)));
   } else {
     const n = Math.max(1, Math.min(6, q.count || 1));
     // drawn a bit larger than real (8 cm) so they stay visible in the house view
@@ -212,6 +259,8 @@ function fixtureMesh(q) {
     const plate = new THREE.Mesh(new THREE.BoxGeometry(w, 0.12, 0.03), mat);
     plate.position.z = 0.015;
     grp.add(plate);
+    if (q.kind === 'steckdose' || q.kind === 'schalter')
+      for (let i = 0; i < n; i++) grp.add(gangInsert(q.kind === 'schalter' ? 'switch' : 'socket', -w / 2 + 0.06 + i * 0.105, 0, mat.opacity));
     if (q.kind === 'wasser' || q.kind === 'gas') {
       const spout = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.16, 8), mat);
       spout.rotation.x = Math.PI / 2;

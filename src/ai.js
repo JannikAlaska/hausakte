@@ -1,7 +1,7 @@
 // AI features via the viewer's Claude (the artifact `sample` capability).
 // Every call sends the instruction, the relevant house data and the expected JSON shape.
 
-import { FUNDING_KNOWLEDGE, gewerk, projectKind, status as statusOf, PROJECT_KINDS, medium, CONSTRAINT_KINDS, lineKind, fixtureKind, wallBuild } from './catalog.js';
+import { FUNDING_KNOWLEDGE, gewerk, projectKind, status as statusOf, PROJECT_KINDS, medium, CONSTRAINT_KINDS, lineKind, fixtureKind, fixtureLabel, wallBuild } from './catalog.js';
 import { pointInPoly } from './geometry.js';
 import { roomOfPoint } from './planops.js';
 import { furnLabel } from './furniture.js';
@@ -157,7 +157,7 @@ export function houseContext(d, { withProjects = true, withComponents = true, wi
     L.push('NEBENGEBÄUDE');
     for (const b of outb) {
       const rooms = (b.rooms || []).map((r) => `${r.name} ${fmtNum(roomArea(r), 1)} m²${r.locked ? ' (gemessen, Maße gesperrt)' : ''}`).join(', ');
-      const fx = (b.points || []).map((q) => `${q.count > 1 ? q.count + '× ' : ''}${fixtureKind(q.kind).name}`).join(', ');
+      const fx = (b.points || []).map((q) => fixtureLabel(q)).join(', ');
       L.push(`- ${b.name || 'Nebengebäude'}: ${fmtNum(b.w, 1)} × ${fmtNum(b.d, 1)} m, Wandhöhe ${fmtNum(b.h ?? 2.4, 1)} m${b.open ? ', offen' : ''}${rooms ? `; Räume: ${rooms}` : ''}${(b.lines || []).length ? `; ${b.lines.length} Leitungen (${[...new Set(b.lines.map((l) => lineKind(l.kind).name))].join(', ')})` : ''}${fx ? `; Anschlüsse: ${fx}` : ''}${b.notes ? `; Notiz: ${String(b.notes).slice(0, 160)}` : ''}`);
     }
   }
@@ -184,7 +184,7 @@ export function houseContext(d, { withProjects = true, withComponents = true, wi
       });
       const key = rm?.name || 'ohne Raum';
       if (!by.has(key)) by.set(key, []);
-      by.get(key).push(`${q.count > 1 ? q.count + '× ' : ''}${fixtureKind(q.kind).name}${q.label ? ` „${q.label}“` : ''}${q.status && q.status !== 'bestand' ? ` (${q.status})` : ''}`);
+      by.get(key).push(`${fixtureLabel(q)}${q.label ? ` „${q.label}“` : ''}${q.status && q.status !== 'bestand' ? ` (${q.status})` : ''}`);
     }
     for (const [room, items] of by) fixInfo.push(`- ${f.short || f.name} ${room}: ${items.join(', ')}`);
   }
