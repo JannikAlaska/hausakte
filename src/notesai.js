@@ -106,7 +106,7 @@ export async function prepareMeeting(projectId, meetingId, { derive = true, quie
     const res = applyMeetingAi(projectId, meetingId, r, { derive });
     if (!quiet)
       toast(
-        `Besprechung aufbereitet${r.isMeeting === false ? '' : ' – Termin erkannt'}${res.milestones ? ` · ${res.milestones} Termin${res.milestones > 1 ? 'e' : ''} eingetragen` : ''}${res.todos ? ` · ${res.todos} To-do${res.todos > 1 ? 's' : ''}` : ''}`,
+        `Besprechung aufbereitet${r.isMeeting === false ? '' : ' – Termin erkannt'}${res.milestones ? ` · ${res.milestones} Termin${res.milestones > 1 ? 'e' : ''} eingetragen` : ''}${res.todos ? ` · ${res.todos} To-do${res.todos > 1 ? 's' : ''}` : ''}${res.decisions ? ` · ${res.decisions} Entscheidung${res.decisions > 1 ? 'en' : ''} festgehalten` : ''}`,
       );
     return true;
   } catch (e) {

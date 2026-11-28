@@ -1131,6 +1131,16 @@ textarea.auto-text { display: block; resize: none; overflow: hidden; line-height
 .meet-derived li span { flex: 1; min-width: 0; }
 .meet-derived li.is-done span { text-decoration: line-through; color: var(--ink-3); }
 .meet-derived input[type='checkbox'] { width: 16px; height: 16px; accent-color: var(--accent); flex: none; }
+.meet-decs { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+.meet-dec { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 7px 8px 7px 10px; border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line)); border-radius: 9px; background: var(--accent-soft); color: var(--ink); font: inherit; font-size: 13px; cursor: pointer; }
+.meet-dec > span { flex: 1; min-width: 0; }
+.meet-dec .ico { color: var(--accent-ink); flex: none; }
+.dec-source { display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; border-radius: 10px; background: var(--surface-2); color: var(--ink-2); }
+.dec-source > .ico { margin-top: 2px; flex: none; }
+.dec-opt-plain { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; font-size: 13.5px; }
+.dec-opt-plain li { display: flex; align-items: center; gap: 6px; }
+.dec-opt-plain li.is-lead { font-weight: 600; }
+.dec-opt-dot { width: 6px; height: 6px; margin: 0 4px 0 3px; border-radius: 50%; background: var(--ink-3); flex: none; }
 .meet-files { display: flex; flex-direction: column; gap: 6px; }
 .meet-files-add { gap: 6px; flex-wrap: wrap; }
 .meet-files .select, .meet-files select { max-width: 260px; }

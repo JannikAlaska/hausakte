@@ -1,9 +1,10 @@
 // Mutations shared by several views (and by the AI assistant's tools).
 import { putDoc, updateDoc, getState, deleteDoc } from './store.js';
-import { uid, todayISO, addDays, parseISO, toISO, diffDays, isISO } from './util.js';
+import { uid, todayISO, addDays, parseISO, toISO, diffDays, isISO, fmtDate } from './util.js';
 import { projectKind, PROJECT_KINDS, CONSTRAINT_KINDS, FUNDING_TYPES } from './catalog.js';
 import { resolveRef } from './metrics.js';
 import { matchContact } from './contacts.js';
+import { recordDecision } from './decisions.js';
 
 export function nextMonday(iso, minDays = 0) {
   const d = parseISO(addDays(iso, minDays));
@@ -206,7 +207,8 @@ export function addMeeting(projectId, r, { transcript = '', date, source = 'ki',
     createdAt: Date.now(),
   };
   patchProject(projectId, (p) => ({ ...p, meetings: [meeting, ...(p.meetings || [])], milestones: [...(p.milestones || []), ...milestones], constraints: [...(p.constraints || []), ...todos] }));
-  return { id, milestones: milestones.length, todos: todos.length };
+  const decs = meetingDecisionsFromAi(projectId, meeting, r);
+  return { id, milestones: milestones.length, todos: todos.length, decisions: decs.length };
 }
 
 // Spoken note saved first, prepared by the AI afterwards: fills in the meeting in place. derive = false
@@ -215,6 +217,7 @@ export function applyMeetingAi(projectId, meetingId, r, { derive = true } = {}) 
   const { fields, milestones, todos } = meetingFromAi(meetingId, r, null);
   const ms = derive ? milestones : [];
   const td = derive ? todos : [];
+  const prev = getState().projects?.[projectId]?.meetings?.find((m) => m.id === meetingId);
   patchProject(projectId, (p) => ({
     ...p,
     meetings: (p.meetings || []).map((m) =>
@@ -223,7 +226,32 @@ export function applyMeetingAi(projectId, meetingId, r, { derive = true } = {}) 
     milestones: [...(p.milestones || []), ...ms],
     constraints: [...(p.constraints || []), ...td],
   }));
-  return { milestones: ms.length, todos: td.length };
+  // significant decisions become decided entries of the decision tool – also for older notes (they stay true)
+  const decs = meetingDecisionsFromAi(projectId, { ...prev, ...fields, id: meetingId, date: fields.date || prev?.date }, r);
+  return { milestones: ms.length, todos: td.length, decisions: decs.length };
+}
+
+// r.keyDecisions: [{ question, choice, alternatives, reason, by }] -> decided entries pointing back to the meeting
+function meetingDecisionsFromAi(projectId, m, r) {
+  const items = Array.isArray(r?.keyDecisions) ? r.keyDecisions.filter((x) => x && String(x.question || '').trim() && String(x.choice || '').trim()).slice(0, 6) : [];
+  const who = (m.participants || []).filter((x) => !/^ich$/i.test(x)).join(', ');
+  const ctx = [`Besprechung „${m.title || 'Besprechung'}“ am ${isISO(m.date) ? fmtDate(m.date) : '?'}${who ? ` mit ${who}` : ''}.`, m.summary || ''].filter(Boolean).join(' ');
+  return items
+    .map((x, i) =>
+      recordDecision({
+        order: i,
+        question: x.question,
+        choice: x.choice,
+        alternatives: Array.isArray(x.alternatives) ? x.alternatives : [],
+        reason: x.reason || '',
+        by: x.by && !/^(ich|eigentümer|eigentuemer)$/i.test(String(x.by).trim()) ? x.by : '',
+        date: m.date,
+        projectId,
+        context: ctx,
+        source: { kind: 'besprechung', projectId, meetingId: m.id, title: m.title || 'Besprechung', date: m.date || null },
+      }),
+    )
+    .filter(Boolean);
 }
 
 // ---------- general notes (not tied to a project) ----------

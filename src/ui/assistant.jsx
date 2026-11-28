@@ -176,7 +176,7 @@ export function makeTools(log, ask = async () => false) {
     },
     {
       name: 'add_meeting_note',
-      description: 'Legt an einem Projekt eine Besprechungsnotiz an (z. B. nach einem Termin mit einem Handwerker) und trägt die daraus abgeleiteten Termine als Meilensteine und die To-dos als Aufgaben ein. Relative Datumsangaben vorher in YYYY-MM-DD umrechnen.',
+      description: 'Legt an einem Projekt eine Besprechungsnotiz an (z. B. nach einem Termin mit einem Handwerker) und trägt die daraus abgeleiteten Termine als Meilensteine, die To-dos als Aufgaben und bedeutsame getroffene Entscheidungen (keyDecisions) als entschiedene Einträge unter „Entscheidungen“ ein. Relative Datumsangaben vorher in YYYY-MM-DD umrechnen.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -187,6 +187,11 @@ export function makeTools(log, ask = async () => false) {
           summary: { type: 'string', description: '2–4 Sätze' },
           points: { type: 'array', items: { type: 'string' } },
           decisions: { type: 'array', items: { type: 'string' } },
+          keyDecisions: {
+            type: 'array',
+            description: 'Nur bedeutsame, verbindlich getroffene Entscheidungen (Wahl von Produkt/System, Firma, Umfang, Budget, Zeitraum, Verzicht) – keine Termine, Aufgaben oder bloßen Überlegungen',
+            items: { type: 'object', properties: { question: { type: 'string', description: 'z. B. Welche Heizung bauen wir ein?' }, choice: { type: 'string' }, alternatives: { type: 'array', items: { type: 'string' } }, reason: { type: 'string' }, by: { type: 'string' } }, required: ['question', 'choice'] },
+          },
           openQuestions: { type: 'array', items: { type: 'string' } },
           appointments: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' }, date: { type: 'string' }, time: { type: 'string' }, note: { type: 'string' } }, required: ['title'] } },
           todos: { type: 'array', description: 'Je Eintrag genau ein Arbeitsschritt; Fälligkeit in due, nicht im Text', items: { type: 'object', properties: { text: { type: 'string' }, who: { type: 'string' }, due: { type: 'string' }, kind: { type: 'string', enum: CONSTRAINT_KINDS.map((k) => k.key) } }, required: ['text'] } },
@@ -197,7 +202,7 @@ export function makeTools(log, ask = async () => false) {
       execute(input) {
         const p = getProject(input.projectId);
         const r = addMeeting(p.id, input, { transcript: str(input.transcript, 20000), date: isISO(input.date) ? input.date : undefined });
-        log({ kind: 'project', id: p.id, tab: 'besprechungen', text: `Besprechung bei „${p.title}“${r.milestones ? ` · ${r.milestones} Termin${r.milestones > 1 ? 'e' : ''}` : ''}${r.todos ? ` · ${r.todos} To-do${r.todos > 1 ? 's' : ''}` : ''}` });
+        log({ kind: 'project', id: p.id, tab: 'besprechungen', text: `Besprechung bei „${p.title}“${r.milestones ? ` · ${r.milestones} Termin${r.milestones > 1 ? 'e' : ''}` : ''}${r.todos ? ` · ${r.todos} To-do${r.todos > 1 ? 's' : ''}` : ''}${r.decisions ? ` · ${r.decisions} Entscheidung${r.decisions > 1 ? 'en' : ''}` : ''}` });
         return r;
       },
     },

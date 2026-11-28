@@ -6,6 +6,7 @@ import { uploadFiles, fileAllowed, removeDocument, Lightbox, FILE_ACCEPT, NOT_AL
 import { useAiAvailable } from './ai-ui.jsx';
 import { toast, openDrawer } from './state.js';
 import { updateDoc, fileUrl } from '../store.js';
+import { meetingDecisions, decOf } from '../decisions.js';
 import { addMeeting, addCost, patchProject } from '../actions.js';
 import { prepareMeeting, usePreparing, isReading, transcribeMeeting, deleteInkDoc } from '../notesai.js';
 import { InkEditor, InkPreview, createInkMeeting, updateInkMeeting } from './ink.jsx';
@@ -226,6 +227,7 @@ function MeetingCard({ m, p, data }) {
   const raw = !m.ai && !m.summary && !(m.points || []).length && String(m.transcript || '').trim().length >= 10;
   const set = (patch) => patchProject(p.id, (x) => ({ ...x, meetings: (x.meetings || []).map((y) => (y.id === m.id ? { ...y, ...patch } : y)) }));
   const ms = (p.milestones || []).filter((x) => x.meetingId === m.id);
+  const mdecs = meetingDecisions(data, m.id);
   const todos = (p.constraints || []).filter((x) => x.meetingId === m.id);
   const remove = () => {
     if (m.inkDoc) deleteInkDoc(m.inkDoc);
@@ -317,6 +319,23 @@ function MeetingCard({ m, p, data }) {
       ) : null}
       <Block title="Besprochen" items={m.points} />
       <Block title="Beschlossen / vereinbart" items={m.decisions} icon="check" />
+      {mdecs.length ? (
+        <div className="meet-block">
+          <span className="field-label">Als Entscheidung festgehalten</span>
+          <div className="meet-decs">
+            {mdecs.map((d) => (
+              <button key={d.id} type="button" className="meet-dec" onClick={() => openDrawer({ type: 'decision', id: d.id })}>
+                <Icon name="scale" size={14} />
+                <span>
+                  <b>{decOf(d).question}</b>
+                  <span className="small muted"> → {decOf(d).status === 'entschieden' ? decOf(d).decision?.optionName : 'wieder offen'}</span>
+                </span>
+                <Icon name="chevR" size={14} />
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
       <Block title="Offene Fragen" items={m.openQuestions} icon="info" />
       {ms.length || todos.length ? (
         <div className="meet-block">

@@ -166,5 +166,48 @@ export function reopen(id, reason = '') {
 }
 
 export const newOption = (name = '') => ({ id: uid('o'), name, note: '' });
+
+// ---------- decisions taken elsewhere (in a meeting) ----------
+// A decision that was already taken, e.g. recognised in a meeting note: stored as decided, without matrix and
+// pre-mortem; source points back ({ kind: 'besprechung', projectId, meetingId, title, date }).
+const norm = (t) => String(t || '').toLowerCase().replace(/[^a-z0-9äöüß]+/g, ' ').trim();
+export const isFromMeeting = (dec) => dec?.source?.kind === 'besprechung';
+// in the order the meeting named them
+export const meetingDecisions = (data, meetingId) =>
+  decisions(data)
+    .filter((d) => decOf(d).source?.meetingId === meetingId)
+    .sort((a, b) => (decOf(a).createdAt || 0) - (decOf(b).createdAt || 0));
+
+export function recordDecision({ question, choice, alternatives = [], reason = '', by = '', date, projectId = null, context = '', source = null, order = 0 }) {
+  const q = String(question || '').trim().slice(0, 200);
+  const c = String(choice || '').trim().slice(0, 200);
+  if (!q || !c) return null;
+  // the same decision of the same meeting is not stored twice (e.g. when a note is prepared again)
+  if (source?.meetingId && meetingDecisions(getState(), source.meetingId).some((d) => norm(decOf(d).question) === norm(q) || norm(decOf(d).decision?.optionName) === norm(c))) return null;
+  const id = uid('d-');
+  const chosen = { ...newOption(c) };
+  const others = [...new Set((alternatives || []).map((a) => String(a || '').trim().slice(0, 200)).filter((a) => a && norm(a) !== norm(c)))].slice(0, 5).map((a) => newOption(a));
+  const now = Date.now() + order;
+  const day = date || todayISO();
+  const from = source?.kind === 'besprechung' ? `Aus der Besprechung „${source.title || 'Besprechung'}“ übernommen` : 'Entscheidung festgehalten';
+  const dec = {
+    question: q,
+    context: String(context || '').trim().slice(0, 1500),
+    deadline: null,
+    who: String(by || '').trim().slice(0, 120),
+    status: 'entschieden',
+    options: [chosen, ...others],
+    criteria: [],
+    scores: {},
+    risks: [],
+    decision: { optionId: chosen.id, optionName: c, rationale: String(reason || '').trim().slice(0, 1500), by: String(by || '').trim().slice(0, 120), date: day, next: '', at: now, snapshot: { ranking: [], maxPts: 0, criteria: [], followedMatrix: false, risks: [] } },
+    source,
+    createdAt: now,
+    updatedAt: now,
+    history: [{ at: now, text: from }],
+  };
+  putDoc('documents', id, { id, type: 'entscheidung', noFile: true, name: q, date: day, projectId, notes: '', dec }, 50);
+  return id;
+}
 export const newCriterion = (name = '', weight = 3) => ({ id: uid('c'), name, weight, note: '' });
 export const newRisk = (optionId = null, text = '') => ({ id: uid('r'), optionId, text, likelihood: 2, impact: 2, measure: '' });

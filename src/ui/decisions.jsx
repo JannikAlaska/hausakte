@@ -4,7 +4,7 @@ import { Icon } from './icons.jsx';
 import { Btn, IconBtn, Field, TextInput, Select, DateInput, Pill, Section, Drawer, Empty, ConfirmBtn, Seg, AutoText } from './common.jsx';
 import { AiRunner } from './ai-ui.jsx';
 import { closeDrawer, openDrawer, toast } from './state.js';
-import { decOf, decisions, DEC_STATUS, WEIGHTS, SCORES, LEVELS, levelName, CRITERIA_PRESETS, createDecision, setDec, matrix, riskScore, riskTone, risksFor, riskSummary, readiness, decide, reopen, newOption, newCriterion, newRisk } from '../decisions.js';
+import { decOf, decisions, isFromMeeting, DEC_STATUS, WEIGHTS, SCORES, LEVELS, levelName, CRITERIA_PRESETS, createDecision, setDec, matrix, riskScore, riskTone, risksFor, riskSummary, readiness, decide, reopen, newOption, newCriterion, newRisk } from '../decisions.js';
 import { liveProjects, isDone } from '../metrics.js';
 import { deleteDoc, updateDoc } from '../store.js';
 import { addConstraint } from '../actions.js';
@@ -45,7 +45,7 @@ export function DecisionList({ data, projectId, showProject = true, emptyText })
         <span className="dec-row-main">
           <b>{dec.question || d.name}</b>
           <span className="small muted">
-            {decided ? `Entschieden: ${dec.decision?.optionName || '–'} · ${fmtDate(dec.decision?.date)}` : m.leader ? `Favorit: ${nameOf(m.leader.option)} (${pct(m.leader.pct)})` : `${(dec.options || []).length} Optionen · ${m.criteria.length} Kriterien`}
+            {decided ? `Entschieden: ${dec.decision?.optionName || '–'} · ${fmtDate(dec.decision?.date)}${isFromMeeting(dec) ? ' · aus Besprechung' : ''}` : m.leader ? `Favorit: ${nameOf(m.leader.option)} (${pct(m.leader.pct)})` : `${(dec.options || []).length} Optionen · ${m.criteria.length} Kriterien`}
             {showProject && p ? ` · ${p.title}` : ''}
           </span>
         </span>
@@ -573,12 +573,24 @@ function StepDecide({ d, dec, data, m, rd, onDone, onGo }) {
 }
 
 // ---------- protocol ----------
+// the meeting a decision was taken in, if it still exists: { project, meeting }
+function sourceMeeting(dec, data) {
+  const src = dec.source;
+  if (src?.kind !== 'besprechung') return null;
+  const project = data.projects?.[src.projectId];
+  const meeting = project?.meetings?.find((m) => m.id === src.meetingId);
+  return meeting ? { project, meeting } : null;
+}
+
 function Protocol({ d, data }) {
   const dec = decOf(d);
   const x = dec.decision || {};
   const s = x.snapshot || {};
   const p = d.projectId ? data.projects?.[d.projectId] : null;
   const [why, setWhy] = useState('');
+  const fromMeeting = isFromMeeting(dec);
+  const meet = sourceMeeting(dec, data);
+  const noMatrix = !(s.ranking || []).length;
   return (
     <div className="dec-protocol">
       <div className="dec-verdict">
@@ -586,16 +598,31 @@ function Protocol({ d, data }) {
         <div>
           <span className="small">Entschieden am {fmtDate(x.date)}{x.by ? ` von ${x.by}` : ''}</span>
           <b>{x.optionName}</b>
-          <span className="small">{s.followedMatrix ? 'entspricht dem Favoriten der Matrix' : 'weicht vom Favoriten der Matrix ab'}</span>
+          <span className="small">{fromMeeting ? `in der Besprechung „${dec.source.title || 'Besprechung'}“ festgehalten` : noMatrix ? 'ohne Entscheidungsmatrix' : s.followedMatrix ? 'entspricht dem Favoriten der Matrix' : 'weicht vom Favoriten der Matrix ab'}</span>
         </div>
       </div>
+      {fromMeeting ? (
+        <div className="dec-source">
+          <Icon name="mic" size={14} />
+          <div>
+            <span className="small">
+              {meet ? `Aus der Besprechung „${meet.meeting.title || 'Besprechung'}“ vom ${fmtDate(meet.meeting.date)} übernommen.` : `Aus einer Besprechung vom ${fmtDate(dec.source.date)} übernommen (die Besprechung gibt es nicht mehr).`}
+            </span>{' '}
+            {meet ? (
+              <button type="button" className="link small" onClick={() => openDrawer({ type: 'project', id: meet.project.id, tab: 'besprechungen' })}>
+                Zur Besprechung
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
       <Section title="Frage">
         <p>{dec.question}</p>
         {dec.context ? <p className="small muted pre-wrap">{dec.context}</p> : null}
         {p ? <p className="small muted">Projekt: {p.title}</p> : null}
       </Section>
       <Section title="Begründung">
-        <p className="pre-wrap">{x.rationale}</p>
+        {x.rationale ? <p className="pre-wrap">{x.rationale}</p> : <p className="small muted">Keine Begründung festgehalten.</p>}
         {x.next ? (
           <>
             <span className="field-label">Nächste Schritte / Bedingungen</span>
@@ -603,6 +630,19 @@ function Protocol({ d, data }) {
           </>
         ) : null}
       </Section>
+      {noMatrix ? (
+        <Section title="Optionen">
+          <ul className="dec-opt-plain">
+            {(dec.options || []).filter((o) => String(o.name || '').trim()).map((o) => (
+              <li key={o.id} className={o.id === x.optionId ? 'is-lead' : ''}>
+                {o.id === x.optionId ? <Icon name="check" size={13} /> : <span className="dec-opt-dot" />} {o.name}
+                {o.id === x.optionId ? <span className="small muted"> – gewählt</span> : <span className="small muted"> – verworfen</span>}
+              </li>
+            ))}
+          </ul>
+          <p className="small muted">{fromMeeting ? 'Ohne Entscheidungsmatrix – entschieden in der Besprechung.' : 'Ohne Entscheidungsmatrix entschieden.'} Mit „Wieder öffnen“ kannst du sie nachträglich mit Matrix und Pre-Mortem prüfen; diese Entscheidung bleibt dabei im Verlauf.</p>
+        </Section>
+      ) : (
       <Section title="Matrix zum Zeitpunkt der Entscheidung">
         {(s.ranking || []).map((r, i) => (
           <div key={r.id} className={`dec-bar-row ${r.id === x.optionId ? 'is-lead' : ''}`}>
@@ -625,6 +665,8 @@ function Protocol({ d, data }) {
           ))}
         </div>
       </Section>
+      )}
+      {noMatrix && !(s.risks || []).length ? null : (
       <Section title={`Pre-Mortem für „${x.optionName}“`}>
         {(s.risks || []).length ? (
           (s.risks || []).map((r, i) => (
@@ -640,6 +682,7 @@ function Protocol({ d, data }) {
           <p className="small muted">Für diese Option wurde kein Pre-Mortem gemacht.</p>
         )}
       </Section>
+      )}
       <Section title="Verlauf">
         <ul className="dec-history">
           {[...(dec.history || [])].reverse().map((h, i) => (
@@ -673,17 +716,18 @@ export function exportProtocol(d, data) {
     { t: 'small', text: `${data.house?.name || 'Hausakte'}${p ? ` · Projekt ${p.title}` : ''} · Protokoll erstellt am ${fmtDate(todayISO())}` },
     { t: 'h', text: 'Ergebnis' },
     { t: 'p', text: `Entschieden für: ${x.optionName}` },
-    { t: 'p', text: `Am ${fmtDate(x.date)}${x.by ? ` von ${x.by}` : ''} – ${s.followedMatrix ? 'entspricht dem Favoriten der Matrix.' : 'weicht vom Favoriten der Matrix ab.'}` },
+    { t: 'p', text: `Am ${fmtDate(x.date)}${x.by ? ` von ${x.by}` : ''} – ${isFromMeeting(dec) ? `in der Besprechung „${dec.source.title || 'Besprechung'}“ festgehalten (ohne Entscheidungsmatrix).` : !(s.ranking || []).length ? 'ohne Entscheidungsmatrix.' : s.followedMatrix ? 'entspricht dem Favoriten der Matrix.' : 'weicht vom Favoriten der Matrix ab.'}` },
     { t: 'h', text: 'Begründung' },
     { t: 'p', text: x.rationale || '–' },
   ];
+  const noMatrix = !crits.length;
   if (x.next) blocks.push({ t: 'h', text: 'Nächste Schritte / Bedingungen' }, { t: 'p', text: x.next });
   if (dec.context) blocks.push({ t: 'h', text: 'Hintergrund & Ziel' }, { t: 'p', text: dec.context });
   blocks.push({ t: 'h', text: 'Optionen' });
   opts.forEach((o, i) => blocks.push({ t: 'p', text: `${String.fromCharCode(65 + i)}) ${nameOf(o)}${o.note ? ` – ${o.note}` : ''}` }));
-  blocks.push({ t: 'h', text: 'Entscheidungsmatrix (Punkte 1–5, Gewicht 1–5)' });
+  if (!noMatrix) blocks.push({ t: 'h', text: 'Entscheidungsmatrix (Punkte 1–5, Gewicht 1–5)' });
   const ow = Math.max(40, Math.floor(300 / Math.max(1, opts.length)));
-  blocks.push({
+  if (!noMatrix) blocks.push({
     t: 'table',
     cols: [{ w: 170 }, { w: 45, right: true }, ...opts.map(() => ({ w: ow, right: true }))],
     head: ['Kriterium', 'Gewicht', ...opts.map((o, i) => String.fromCharCode(65 + i))],
@@ -693,8 +737,9 @@ export function exportProtocol(d, data) {
       return r ? `${fmtNum(r.pct, 0)} %` : '–';
     })],
   });
-  blocks.push({ t: 'h', text: `Pre-Mortem für „${x.optionName}“` });
-  if ((s.risks || []).length)
+  if (!noMatrix || (s.risks || []).length) blocks.push({ t: 'h', text: `Pre-Mortem für „${x.optionName}“` });
+  if (noMatrix && !(s.risks || []).length);
+  else if ((s.risks || []).length)
     blocks.push({ t: 'table', cols: [{ w: 210 }, { w: 60 }, { w: 60 }, { w: 180 }], head: ['Was ist schiefgegangen?', 'Wahrsch.', 'Auswirk.', 'Gegenmaßnahme'], rows: s.risks.map((r) => [r.text, levelName(r.likelihood), levelName(r.impact), r.measure || '–']) });
   else blocks.push({ t: 'p', text: 'Kein Pre-Mortem für diese Option.' });
   const others = (dec.risks || []).filter((r) => r.optionId !== x.optionId && String(r.text || '').trim());

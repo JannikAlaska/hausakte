@@ -272,7 +272,7 @@ export function houseContext(d, { withProjects = true, withComponents = true, wi
     for (const x of decs.slice(0, 15)) {
       const dec = decOf(x);
       const pr = x.projectId ? d.projects?.[x.projectId]?.title : null;
-      if (dec.status === 'entschieden') L.push(`- „${dec.question}“${pr ? ` (${pr})` : ''}: entschieden am ${dec.decision?.date || '?'} für „${dec.decision?.optionName || '?'}“ – Begründung: ${String(dec.decision?.rationale || '').slice(0, 200)}`);
+      if (dec.status === 'entschieden') L.push(`- „${dec.question}“${pr ? ` (${pr})` : ''}: entschieden am ${dec.decision?.date || '?'} für „${dec.decision?.optionName || '?'}“${dec.source?.kind === 'besprechung' ? ` (in der Besprechung „${dec.source.title || ''}“)` : ''} – Begründung: ${String(dec.decision?.rationale || '').slice(0, 200) || '–'}`);
       else {
         const m = matrix(dec);
         L.push(`- „${dec.question}“${pr ? ` (${pr})` : ''}: offen${dec.deadline ? `, entscheiden bis ${dec.deadline}` : ''}; Optionen: ${(dec.options || []).map((o) => o.name).filter(Boolean).join(', ') || 'noch keine'}${m.leader ? `; Favorit laut Matrix: ${m.leader.option.name} (${Math.round(m.leader.pct)} %)` : ''}`);
@@ -517,6 +517,11 @@ export async function aiMeeting(p, transcript, d, { date, signal } = {}) {
   const ms = (p.milestones || []).map((m) => `- ${m.title} (${m.date || 'ohne Datum'}${m.done ? ', erledigt' : ''})`).join('\n') || 'keine';
   const todos = (p.constraints || []).filter((c) => !c.done).map((c) => `- ${c.text}${c.due ? ` (bis ${c.due})` : ''}`).join('\n') || 'keine';
   const contacts = Object.values(d.contacts || {});
+  const decided =
+    Object.values(d.documents || {})
+      .filter((x) => x.type === 'entscheidung' && x.projectId === p.id)
+      .map((x) => `- ${decOf(x).question}${decOf(x).status === 'entschieden' ? ` → ${decOf(x).decision?.optionName || '?'}` : ' (offen)'}`)
+      .join('\n') || 'keine';
   const prompt = `Du hilfst bei der Modernisierung eines Wohnhauses. Aus einer gesprochenen Notiz zu einem Termin oder Gespräch im Projekt erstellst du eine knappe Besprechungsnotiz und leitest Termine und Aufgaben ab.
 Die Notiz wurde automatisch aus Sprache in Text umgewandelt und kann Erkennungsfehler enthalten – korrigiere offensichtlich falsch erkannte Fachbegriffe (z. B. „Wechsel Richter“ = Wechselrichter, „Zähler Schrank“ = Zählerschrank).
 Datum der Besprechung: ${date || todayISO()} (heute ist ${todayISO()}). Rechne relative Angaben wie „nächsten Dienstag“, „in zwei Wochen“ oder „Ende November“ von diesem Datum aus in YYYY-MM-DD um.
@@ -524,12 +529,16 @@ Termine (appointments) nur, wenn ein Zeitpunkt genannt oder klar ableitbar ist (
 Aufgaben (todos) sind konkrete nächste Schritte mit Verantwortlichem (who: „ich“ für den Eigentümer oder Firma/Person) und Fälligkeit, wenn erkennbar. Jede Aufgabe ist genau ein Schritt in einem kurzen Satz – mehrere Schritte werden mehrere todos; das Datum steht nur in due, nicht im Text.
 Prüfe, ob es überhaupt um einen Termin geht (Besprechung, Vor-Ort-Termin, Besichtigung, Telefonat, Beratung, Handwerkertermin) – isMeeting true/false; meetingType nennt die Art und den Anlass. Ist es kein Termin (z. B. eine Idee oder Beobachtung), bleiben participants und decisions leer und date ist das Datum der Notiz.
 Erfinde nichts; Unklares gehört in openQuestions. Lege nichts doppelt an, was schon unten steht. Genannte Preise oder Angebotssummen in costs (Euro brutto).
+decisions listet alle Beschlüsse und Vereinbarungen knapp. Zusätzlich keyDecisions: nur bedeutsame, verbindlich getroffene Entscheidungen, die man später nachvollziehen will – eine Wahl zwischen Alternativen oder eine Festlegung mit Tragweite: welches Produkt oder System (z. B. Wärmepumpe statt Gastherme, Hersteller, Modell, Material), welche Firma den Auftrag bekommt, Umfang oder Ausführung einer Maßnahme, Budget, Reihenfolge oder Zeitraum eines Gewerks, Verzicht auf oder Verschieben einer Maßnahme. NICHT: Termine, Aufgaben, Zusagen wie „Angebot kommt bis Freitag“, bloße Überlegungen, Absichten („wir überlegen“, „eventuell“) oder Selbstverständliches. Lieber keine als eine unbedeutende. question ist die Frage, die damit beantwortet ist (z. B. „Welche Heizung bauen wir ein?“), choice die gewählte Antwort, alternatives nur ausdrücklich genannte Alternativen, reason die genannte Begründung (sonst leer), by wer entschieden hat („ich“ für den Eigentümer, sonst Person/Firma). Was unter VORHANDENE ENTSCHEIDUNGEN schon festgehalten ist, nicht noch einmal.
 
 PROJEKT
 ${projectBlock(p, d)}
 
 VORHANDENE MEILENSTEINE
 ${ms}
+
+VORHANDENE ENTSCHEIDUNGEN
+${decided}
 
 OFFENE AUFGABEN
 ${todos}
@@ -542,7 +551,7 @@ GESPROCHENE NOTIZ
 
 ${JSON_RULES}
 Format:
-{"title":"Kurzer Titel, z. B. Vor-Ort-Termin Elektriker PV","isMeeting":true,"meetingType":"z. B. Vor-Ort-Termin mit dem Elektriker zum Zählerschrank","date":"YYYY-MM-DD","time":"HH:MM oder null","participants":["Person oder Firma"],"contactIds":["Kontakt-ID der Teilnehmer"],"summary":"2–4 Sätze","points":["Besprochener Punkt"],"decisions":["Entscheidung oder Vereinbarung"],"openQuestions":["Offene Frage"],"appointments":[{"title":"Termin","date":"YYYY-MM-DD","time":"HH:MM oder null","note":"kurz"}],"todos":[{"text":"Was ist zu tun","who":"ich|Firma|Person","contactId":"Kontakt-ID oder null","due":"YYYY-MM-DD oder null","kind":"${CONSTRAINT_KINDS.map((k) => k.key).join('|')}"}],"costs":[{"label":"Position","amount":1234}]}`;
+{"title":"Kurzer Titel, z. B. Vor-Ort-Termin Elektriker PV","isMeeting":true,"meetingType":"z. B. Vor-Ort-Termin mit dem Elektriker zum Zählerschrank","date":"YYYY-MM-DD","time":"HH:MM oder null","participants":["Person oder Firma"],"contactIds":["Kontakt-ID der Teilnehmer"],"summary":"2–4 Sätze","points":["Besprochener Punkt"],"decisions":["Entscheidung oder Vereinbarung"],"keyDecisions":[{"question":"Welche … ?","choice":"Gewählte Lösung","alternatives":["Verworfene Alternative"],"reason":"Begründung oder leer","by":"ich|Person|Firma"}],"openQuestions":["Offene Frage"],"appointments":[{"title":"Termin","date":"YYYY-MM-DD","time":"HH:MM oder null","note":"kurz"}],"todos":[{"text":"Was ist zu tun","who":"ich|Firma|Person","contactId":"Kontakt-ID oder null","due":"YYYY-MM-DD oder null","kind":"${CONSTRAINT_KINDS.map((k) => k.key).join('|')}"}],"costs":[{"label":"Position","amount":1234}]}`;
   return askJSON(prompt, { signal });
 }
 
